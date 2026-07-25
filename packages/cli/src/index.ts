@@ -12,13 +12,13 @@ import {
   type AgentPayHttpServer,
   type StartAgentPayHttpServerOptions,
   type StartAgentPayMcpServerOptions,
-} from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/mcp-server-arc";
 import {
   createSetupWebDependencies,
   parseSetupWebEnv,
   startSetupWebServer,
   type SetupWebDependencies,
-} from "@agentpay-ai/setup-web-celo";
+} from "@agentpay-ai/setup-web-arc";
 
 const runtimeNames = ["codex", "claude", "cursor", "generic", "hermes"] as const;
 const DEFAULT_HOSTED_MCP_URL = "https://wallet.agentpay.site/celo/mcp";
@@ -628,7 +628,7 @@ function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl: string 
       agentpay: options.selfHosted
         ? {
             command: "npx",
-            args: ["-y", "@agentpay-ai/agentpay-celo", "mcp"],
+            args: ["-y", "@agentpay-ai/agentpay-arc", "mcp"],
             env: {
               AGENTPAY_CONFIG: "~/.agentpay/config.json",
             },
@@ -873,7 +873,7 @@ function resolveAgentPaySkillRoot(packageRoot: string): string {
   }
 
   try {
-    return dirname(require.resolve("@agentpay-ai/skill-celo/package.json"));
+    return dirname(require.resolve("@agentpay-ai/skill-arc/package.json"));
   } catch {
     throw new Error("AgentPay skill package was not found.");
   }

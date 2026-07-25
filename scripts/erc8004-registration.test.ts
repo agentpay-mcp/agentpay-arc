@@ -6,7 +6,7 @@ import {
   AGENTPAY_ERC8004_METADATA_URL,
   CELO_MAINNET_IDENTITY_REGISTRY,
   createAgentPayErc8004Registration,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import {
   buildErc8004RegisterTransaction,

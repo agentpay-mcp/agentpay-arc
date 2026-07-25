@@ -64,6 +64,13 @@ export const STABLE_TOKENS_BY_CHAIN: Record<number, Partial<Record<StableTokenSy
       decimals: 6,
     },
   },
+  5042002: {
+    USDC: {
+      symbol: "USDC",
+      address: "0x3600000000000000000000000000000000000000",
+      decimals: 6,
+    },
+  },
   8453: {
     USDC: {
       symbol: "USDC",

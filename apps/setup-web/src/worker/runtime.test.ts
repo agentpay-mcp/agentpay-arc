@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 
 import { Wallet, keccak256 } from "ethers";
 
-import { MAINNET_SETUP_USDC } from "@agentpay-ai/shared-celo";
+import { MAINNET_SETUP_USDC } from "@agentpay-ai/shared-arc";
 import {
   assertProductionSetupWorkerChainId,
   parseProductionSetupWorkerConfig,

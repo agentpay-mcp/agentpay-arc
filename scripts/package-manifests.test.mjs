@@ -13,11 +13,11 @@ const publishablePackages = [
 ];
 const publishScope = "@agentpay-ai";
 const expectedPackageNames = new Map([
-  ["packages/skill", "@agentpay-ai/skill-celo"],
-  ["packages/shared", "@agentpay-ai/shared-celo"],
-  ["apps/mcp-server", "@agentpay-ai/mcp-server-celo"],
-  ["apps/setup-web", "@agentpay-ai/setup-web-celo"],
-  ["packages/cli", "@agentpay-ai/agentpay-celo"],
+  ["packages/skill", "@agentpay-ai/skill-arc"],
+  ["packages/shared", "@agentpay-ai/shared-arc"],
+  ["apps/mcp-server", "@agentpay-ai/mcp-server-arc"],
+  ["apps/setup-web", "@agentpay-ai/setup-web-arc"],
+  ["packages/cli", "@agentpay-ai/agentpay-arc"],
 ]);
 
 async function readPackageJson(packageDir) {
@@ -103,22 +103,22 @@ describe("publishable AgentPay package manifests", () => {
     const rootManifest = await readPackageJson(".");
     const skillManifest = await readPackageJson("packages/skill");
     const expectedDependencies = {
-      "@agentpay-ai/shared-celo": {
+      "@agentpay-ai/shared-arc": {
         "@noble/hashes": rootManifest.dependencies["@noble/hashes"],
         zod: rootManifest.dependencies.zod,
       },
-      "@agentpay-ai/mcp-server-celo": {
+      "@agentpay-ai/mcp-server-arc": {
         "@x402/core": rootManifest.dependencies["@x402/core"],
         "@x402/evm": rootManifest.dependencies["@x402/evm"],
         "@supabase/supabase-js": rootManifest.dependencies["@supabase/supabase-js"],
         ethers: rootManifest.dependencies.ethers,
       },
-      "@agentpay-ai/setup-web-celo": {
+      "@agentpay-ai/setup-web-arc": {
         ethers: rootManifest.dependencies.ethers,
         zod: rootManifest.dependencies.zod,
       },
-      "@agentpay-ai/agentpay-celo": {
-        "@agentpay-ai/skill-celo": skillManifest.version,
+      "@agentpay-ai/agentpay-arc": {
+        "@agentpay-ai/skill-arc": skillManifest.version,
       },
     };
 

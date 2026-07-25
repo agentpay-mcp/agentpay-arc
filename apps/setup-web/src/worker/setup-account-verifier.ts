@@ -1,7 +1,7 @@
 import { Interface, TypedDataEncoder, keccak256 } from "ethers";
 
-import type { SetupWorkerClaim } from "@agentpay-ai/mcp-server-celo";
-import { MAINNET_SETUP_USDC } from "@agentpay-ai/shared-celo";
+import type { SetupWorkerClaim } from "@agentpay-ai/mcp-server-arc";
+import { MAINNET_SETUP_USDC } from "@agentpay-ai/shared-arc";
 
 export const MAINNET_SETUP_DISALLOWED_USDT = "0x48065fbbe25f71c9282ddf5e1cd6d6a887483d5e";
 export const SETUP_LOG_BLOCK_RANGE = 100;

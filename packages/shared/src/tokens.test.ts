@@ -65,6 +65,14 @@ describe("stable token metadata", () => {
     });
   });
 
+  it("returns Arc Testnet's ERC-20 view of native USDC", () => {
+    assert.deepEqual(getStableTokenMetadata(5042002, "USDC"), {
+      symbol: "USDC",
+      address: "0x3600000000000000000000000000000000000000",
+      decimals: 6,
+    });
+  });
+
   it("returns X Layer testnet faucet stablecoin metadata", () => {
     assert.deepEqual(getStableTokenMetadata(1952, "USDT0"), {
       symbol: "USDT0",

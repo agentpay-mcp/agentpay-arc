@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import {
   createSessionContext,
   type SessionContext,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { createSiweChallenge, verifySiweChallengeSignature } from "../auth/siwe.ts";
 import type { ServiceSessionRecord } from "../auth/session.ts";
 import type { OAuthAuthorizationRecord, OAuthClientRecord } from "../auth/oauth.ts";

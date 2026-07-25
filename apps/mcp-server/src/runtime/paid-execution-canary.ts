@@ -3,7 +3,7 @@ import {
   DIRECT_PAYMENT_ROUTE_CALLDATA,
   DIRECT_PAYMENT_ROUTE_TARGET,
   type PaymentIntentRecord,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 export interface CanaryCaps {
   maxAcceptedLifecycles: number;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import { executePaymentInputSchema, type ExecutePaymentInput } from "@agentpay-ai/shared-celo";
+import { executePaymentInputSchema, type ExecutePaymentInput } from "@agentpay-ai/shared-arc";
 
 const PAYMENT_IDENTIFIER = "payment-identifier";
 const PAYMENT_IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;

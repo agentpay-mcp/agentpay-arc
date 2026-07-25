@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { mainnetWalletSetupPublicStatusSchema } from "@agentpay-ai/shared-celo";
+import { mainnetWalletSetupPublicStatusSchema } from "@agentpay-ai/shared-arc";
 import { z } from "zod";
 
 import {

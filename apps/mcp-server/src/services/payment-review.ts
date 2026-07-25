@@ -8,7 +8,7 @@ import { Signature } from "ethers";
 import {
   paymentReviewTokenSchema,
   type PaymentReviewHandoffRecord,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 export interface PaymentReviewRepository {
   createPaymentReviewHandoff(record: PaymentReviewHandoffRecord): Promise<void>;

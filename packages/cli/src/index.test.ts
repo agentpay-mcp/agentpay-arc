@@ -13,7 +13,7 @@ import {
   runAgentPayDoctor,
   runAgentPayCli,
 } from "./index.ts";
-import { AGENT_PAY_ACCOUNT_V2_REQUIRED_SELECTORS } from "@agentpay-ai/setup-web-celo";
+import { AGENT_PAY_ACCOUNT_V2_REQUIRED_SELECTORS } from "@agentpay-ai/setup-web-arc";
 
 const cliFixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const v2TestBytecode = `0x${AGENT_PAY_ACCOUNT_V2_REQUIRED_SELECTORS.map((selector) => selector.slice(2)).join("")}`;
@@ -141,7 +141,7 @@ describe("installAgentPay", () => {
       assert.equal(config.AGENTPAY_ACCOUNT_BYTECODE_PATH, bytecodePath);
       assert.match(bytecode, /^0x[a-fA-F0-9]{200,}\n$/);
       assert.equal(mcpConfig.mcpServers.agentpay.command, "npx");
-      assert.deepEqual(mcpConfig.mcpServers.agentpay.args, ["-y", "@agentpay-ai/agentpay-celo", "mcp"]);
+      assert.deepEqual(mcpConfig.mcpServers.agentpay.args, ["-y", "@agentpay-ai/agentpay-arc", "mcp"]);
       assert.deepEqual(mcpConfig.mcpServers.agentpay.env, {
         AGENTPAY_CONFIG: "~/.agentpay/config.json",
       });

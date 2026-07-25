@@ -6,8 +6,8 @@ import {
   MAINNET_SETUP_USDC,
   createMainnetWalletSetupTypedData,
   toEip712Sha256Bytes32,
-} from "@agentpay-ai/shared-celo";
-import { createProductionSetupWebStoreFromConfig } from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/shared-arc";
+import { createProductionSetupWebStoreFromConfig } from "@agentpay-ai/mcp-server-arc";
 import {
   Contract,
   JsonRpcProvider,

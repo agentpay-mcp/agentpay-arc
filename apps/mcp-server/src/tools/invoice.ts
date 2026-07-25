@@ -3,7 +3,7 @@ import {
   type ParseInvoicePaymentInput,
   parseInvoicePaymentInputSchema,
   type StableTokenSymbol,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 export interface ParseInvoicePaymentOutput {
   status: "PARSED";

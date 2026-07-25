@@ -17,7 +17,7 @@ import {
   createAgentPayErc8004Registration,
   createSessionContext,
   type SessionContext,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { createConsumerOAuthApi } from "../auth/oauth-api.ts";
 import type {
   OAuthAuthorizationRecord,
@@ -34,7 +34,7 @@ import type { RuntimeEnvironmentIdentity } from "../runtime/production-readiness
 import type { CanaryLedgerStore } from "../runtime/paid-execution-canary-ledger.ts";
 import { createInMemoryInvoiceExecutionOutboxStore } from "../services/paid-execution-outbox.ts";
 import { createInMemoryPaidExecutionLifecycleStore } from "../services/paid-execution-lifecycle.ts";
-import type { PaymentIntentRecord } from "@agentpay-ai/shared-celo";
+import type { PaymentIntentRecord } from "@agentpay-ai/shared-arc";
 import type {
   AgentPayMcpPaymentProcessor,
   ExpectedX402PaymentRequirements,

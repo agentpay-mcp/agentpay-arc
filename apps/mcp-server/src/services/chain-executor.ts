@@ -3,7 +3,7 @@ import type { AbstractProvider, BigNumberish } from "ethers";
 import {
   appendCeloAttributionTag,
   getStableTokenDecimalsForChain,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type {
   ContractCallExecutionRequest,

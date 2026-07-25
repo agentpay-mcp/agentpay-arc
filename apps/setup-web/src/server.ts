@@ -6,7 +6,7 @@ import {
   completeWalletSetupInputSchema,
   type CompleteWalletSetupInput,
   type SetupIntentRecord,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type { CompleteWalletSetupOutput } from "./services/complete-wallet-setup.ts";
 import {

@@ -1,4 +1,5 @@
 export * from "./approval.ts";
+export * from "./arc.ts";
 export * from "./account-admin.ts";
 export * from "./auth.ts";
 export * from "./balance.ts";

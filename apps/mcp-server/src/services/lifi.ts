@@ -1,4 +1,4 @@
-import { createRouteCalldataHash, getStableTokenDecimalsForChain, type RouteQuote } from "@agentpay-ai/shared-celo";
+import { createRouteCalldataHash, getStableTokenDecimalsForChain, type RouteQuote } from "@agentpay-ai/shared-arc";
 
 import type { RouteStatusProvider, RouteStatusRequest, RouteStatusResult } from "../tools/payment-tracking.ts";
 import type { RouteQuoteProvider, RouteQuoteRequest } from "../tools/prepare-payment.ts";

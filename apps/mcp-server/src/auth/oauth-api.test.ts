@@ -3,7 +3,7 @@ import { Wallet } from "ethers";
 import { describe, it } from "node:test";
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 
-import type { SessionEnvironment, SessionScope } from "@agentpay-ai/shared-celo";
+import type { SessionEnvironment, SessionScope } from "@agentpay-ai/shared-arc";
 
 import {
   type OAuthAuthorizationRecord,

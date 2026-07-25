@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { SetupIntentRecord } from "@agentpay-ai/shared-celo";
+import type { SetupIntentRecord } from "@agentpay-ai/shared-arc";
 
 import { checkWalletCreation, getAgentWallet, prepareWalletCreation } from "./wallet-setup.ts";
 

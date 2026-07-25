@@ -10,8 +10,8 @@ import {
   mainnetWalletSetupPublicStatusSchema,
   type MainnetWalletSetupPolicyContext,
   type MainnetWalletSetupTypedData,
-} from "@agentpay-ai/shared-celo";
-import type { ProductionSetupWebStore } from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/shared-arc";
+import type { ProductionSetupWebStore } from "@agentpay-ai/mcp-server-arc";
 import { TypedDataEncoder, getAddress } from "ethers";
 
 import {

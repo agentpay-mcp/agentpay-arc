@@ -6,7 +6,7 @@ import {
   MAINNET_WALLET_SETUP_TYPES,
   mainnetWalletSetupMessageSchema,
   type MainnetWalletSetupMessage,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import { MAINNET_CHAIN_ID, MAINNET_USDC_ADDRESS } from "../runtime/production-readiness.ts";
 export const MAINNET_ACCOUNT_CREATION_BYTECODE_HASH =

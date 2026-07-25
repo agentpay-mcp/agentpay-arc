@@ -10,7 +10,7 @@ import {
   mainnetWalletSetupTypedDataSchema,
   type MainnetWalletSetupPolicyContext,
   type MainnetWalletSetupTypedDataEnvelope,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 const HALF_SECP256K1_ORDER = BigInt("0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
 type EthersTypedDataTypes = Record<string, Array<{ name: string; type: string }>>;

@@ -7,7 +7,7 @@ import {
   createMainnetWalletSetupTypedData,
   type MainnetWalletSetupPolicyContext,
   type MainnetWalletSetupTypedData,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import { verifyProductionSetupAuthorization } from "./authorization.ts";
 

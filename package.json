@@ -1,5 +1,5 @@
 {
-  "name": "agentpay",
+  "name": "agentpay-arc",
   "version": "0.1.0",
   "private": true,
   "description": "Owner-authorized cross-chain payments for AI agents.",

@@ -24,7 +24,7 @@ import {
   assertNoCallerAuthority,
   type SessionContext,
   type SessionScope,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type { AgentPayRuntime } from "../runtime/agentpay-runtime.ts";
 import { prepareAccountAdminTransactionTool } from "../tools/account-admin.ts";

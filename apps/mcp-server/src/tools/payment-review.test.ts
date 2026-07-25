@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Wallet } from "ethers";
 
-import type { PaymentIntentRecord, PaymentReviewHandoffRecord } from "@agentpay-ai/shared-celo";
+import type { PaymentIntentRecord, PaymentReviewHandoffRecord } from "@agentpay-ai/shared-arc";
 import { createPaymentAuthorizationFromIntent, hashPaymentAuthorization } from "../services/payment-authorization.ts";
 import type { PaymentReviewRepository } from "../services/payment-review.ts";
 import { getPaymentSignature } from "./payment-review.ts";

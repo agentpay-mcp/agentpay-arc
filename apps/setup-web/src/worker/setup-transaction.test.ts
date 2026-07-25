@@ -4,13 +4,13 @@ import { describe, it } from "node:test";
 import { fromDataSuffix } from "@celo/attribution-tags";
 import { Interface, Transaction, TypedDataEncoder, keccak256 } from "ethers";
 
-import type { SetupWorkerClaim } from "@agentpay-ai/mcp-server-celo";
+import type { SetupWorkerClaim } from "@agentpay-ai/mcp-server-arc";
 import {
   MAINNET_SETUP_ROUTE_ALLOWLIST_HASH,
   MAINNET_SETUP_TOKEN_ALLOWLIST_HASH,
   MAINNET_SETUP_USDC,
   MAINNET_WALLET_SETUP_TYPES,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import {
   buildSetupAuthorizationFromClaim,
   buildSetupDeploymentTransaction,

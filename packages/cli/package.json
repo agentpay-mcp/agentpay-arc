@@ -1,5 +1,5 @@
 {
-  "name": "@agentpay-ai/agentpay-celo",
+  "name": "@agentpay-ai/agentpay-arc",
   "version": "0.1.18",
   "type": "module",
   "bin": {
@@ -20,9 +20,9 @@
     "typecheck": "tsc -p ../../tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agentpay-ai/mcp-server-celo": "0.1.11",
-    "@agentpay-ai/setup-web-celo": "0.1.12",
-    "@agentpay-ai/skill-celo": "0.1.6",
+    "@agentpay-ai/mcp-server-arc": "0.1.11",
+    "@agentpay-ai/setup-web-arc": "0.1.12",
+    "@agentpay-ai/skill-arc": "0.1.6",
     "tsx": "^4.22.5"
   }
 }

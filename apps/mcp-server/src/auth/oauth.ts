@@ -5,7 +5,7 @@ import {
   sessionScopeSchema,
   type SessionEnvironment,
   type SessionScope,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import { DEFAULT_SESSION_SCOPES } from "./siwe.ts";
 import type { ServiceSessionRecord } from "./session.ts";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AbiCoder, concat, keccak256, toUtf8Bytes, Wallet } from "ethers";
 
-import type { PaymentIntentRecord } from "@agentpay-ai/shared-celo";
+import type { PaymentIntentRecord } from "@agentpay-ai/shared-arc";
 
 import {
   createDirectPaymentAuthorizationFromIntent,

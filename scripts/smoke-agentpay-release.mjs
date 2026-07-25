@@ -36,23 +36,23 @@ async function main() {
     run(npmCommand, ["init", "-y"], { cwd: appDir, quiet: true });
     await mkdir(join(appDir, ".codex"));
     run(npmCommand, ["install", "--ignore-scripts", ...tarballs], { cwd: appDir, quiet: true });
-    run(npxCommand, ["@agentpay-ai/agentpay-celo", "install", "--output-dir", installDir], { cwd: appDir });
-    run(npxCommand, ["@agentpay-ai/agentpay-celo", "install", "--self-hosted", "--output-dir", selfHostedInstallDir], {
+    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--output-dir", installDir], { cwd: appDir });
+    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--self-hosted", "--output-dir", selfHostedInstallDir], {
       cwd: appDir,
     });
-    run(npxCommand, ["@agentpay-ai/agentpay-celo", "install", "--runtime", "claude", "--output-dir", claudeInstallDir], {
+    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "claude", "--output-dir", claudeInstallDir], {
       cwd: appDir,
       env: claudeHomeEnv,
     });
-    run(npxCommand, ["@agentpay-ai/agentpay-celo", "install", "--runtime", "cursor", "--output-dir", cursorInstallDir], {
+    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "cursor", "--output-dir", cursorInstallDir], {
       cwd: appDir,
       env: cursorHomeEnv,
     });
-    run(npxCommand, ["@agentpay-ai/agentpay-celo", "install", "--runtime", "hermes", "--output-dir", hermesInstallDir], {
+    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "hermes", "--output-dir", hermesInstallDir], {
       cwd: appDir,
       env: hermesHomeEnv,
     });
-    run(npxCommand, ["@agentpay-ai/agentpay-celo", "doctor"], {
+    run(npxCommand, ["@agentpay-ai/agentpay-arc", "doctor"], {
       cwd: appDir,
       env: {
         AGENTPAY_CONFIG: join(selfHostedInstallDir, "config.json"),

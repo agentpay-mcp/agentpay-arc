@@ -6,7 +6,7 @@ import {
   DEFAULT_STABLE_TOKEN_SYMBOLS,
   type CompleteWalletSetupInput,
   type SetupIntentRecord,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 const MAINNET_USDC_ADDRESS = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C";
 

@@ -10,7 +10,7 @@ import {
   type PrepareContractCallInput,
   prepareContractCallInputSchema,
   type StableTokenSymbol,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type { AgentWalletRepository, PaymentIntentRepository } from "./prepare-payment.ts";
 import { assertSufficientSourceTokenBalance } from "./prepare-payment.ts";

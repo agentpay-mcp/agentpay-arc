@@ -15,7 +15,7 @@ import {
   CELO_MAINNET_IDENTITY_REGISTRY,
   agentPayErc8004RegistrationSchema,
   type AgentPayErc8004Registration,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 const registryInterface = new Interface([
   "function register(string agentURI) returns (uint256 agentId)",

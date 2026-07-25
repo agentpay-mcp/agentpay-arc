@@ -5,8 +5,8 @@ import {
   getPaymentSignature,
   preparePayment,
   type PaymentReviewRepository,
-} from "@agentpay-ai/mcp-server-celo";
-import type { PaymentIntentRecord, PaymentReviewHandoffRecord } from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/mcp-server-arc";
+import type { PaymentIntentRecord, PaymentReviewHandoffRecord } from "@agentpay-ai/shared-arc";
 
 import { startSetupWebServer } from "../src/server.ts";
 

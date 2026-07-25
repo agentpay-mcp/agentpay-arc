@@ -3,7 +3,7 @@ import {
   CELO_MAINNET_IDENTITY_REGISTRY,
   createAgentPayErc8004Registration,
   type AgentPayErc8004Registration,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { Contract, JsonRpcProvider } from "ethers";
 
 const enabledValues = new Set(["1", "true", "yes", "on"]);

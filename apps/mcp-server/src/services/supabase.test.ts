@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createSessionContext, type PaymentReviewHandoffRecord } from "@agentpay-ai/shared-celo";
+import { createSessionContext, type PaymentReviewHandoffRecord } from "@agentpay-ai/shared-arc";
 
 import {
   type AgentPaySupabaseClient,

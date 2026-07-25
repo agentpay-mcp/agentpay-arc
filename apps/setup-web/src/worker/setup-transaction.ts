@@ -9,7 +9,7 @@ import {
   type TransactionRequest,
 } from "ethers";
 
-import type { EncryptedSetupTransaction, SetupWorkerClaim } from "@agentpay-ai/mcp-server-celo";
+import type { EncryptedSetupTransaction, SetupWorkerClaim } from "@agentpay-ai/mcp-server-arc";
 import {
   appendCeloAttributionTag,
   MAINNET_SETUP_ENVIRONMENT,
@@ -18,7 +18,7 @@ import {
   MAINNET_SETUP_USDC,
   MAINNET_WALLET_SETUP_TYPES,
   mainnetWalletSetupMessageSchema,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 const factoryInterface = new Interface([
   "function deployAccount((string setupIntentId,bytes32 deploymentNonce,address owner,address executor,uint256 homeChainId,string environment,uint256 deadline,address factory,bytes32 factoryRuntimeCodeHash,bytes32 deploymentSalt,address predictedAccount,bytes32 accountCreationCodeHash,bytes32 accountRuntimeCodeHash,address token,bytes32 tokenAllowlistHash,bytes32 routeAllowlistHash,bytes32 manifestSha256) authorization,bytes ownerSignature)",

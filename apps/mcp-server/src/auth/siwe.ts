@@ -5,7 +5,7 @@ import {
   sessionScopeSchema,
   type CeloHomeChainId,
   type SessionScope,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 export const AGENTPAY_SIWE_DOMAIN = "wallet.agentpay.site";
 export const AGENTPAY_CONSUMER_URI = "https://wallet.agentpay.site/celo/mcp";

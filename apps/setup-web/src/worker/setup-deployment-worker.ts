@@ -3,10 +3,10 @@ import { Transaction, getAddress, keccak256, type TransactionRequest } from "eth
 import type {
   ProductionSetupWorkerStore,
   SetupWorkerClaim,
-} from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/mcp-server-arc";
 import {
   isAssignedCeloAttributionTag,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import {
   buildSetupDeploymentTransaction,
   decryptSetupRawTransaction,

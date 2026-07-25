@@ -1,4 +1,4 @@
-import { normalizeX402BazaarResource, type ParsedSearchX402ServicesInput, type X402BazaarResource } from "@agentpay-ai/shared-celo";
+import { normalizeX402BazaarResource, type ParsedSearchX402ServicesInput, type X402BazaarResource } from "@agentpay-ai/shared-arc";
 
 import type { X402BazaarDiscoveryProvider } from "../tools/x402-bazaar.ts";
 

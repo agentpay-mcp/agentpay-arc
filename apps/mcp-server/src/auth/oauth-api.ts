@@ -4,7 +4,7 @@ import {
   AgentPayAuthError,
   type SessionEnvironment,
   type SessionScope,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { getAddress, isAddress } from "ethers";
 
 import {

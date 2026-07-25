@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { MainnetWalletSetupPublicStatus } from "@agentpay-ai/shared-celo";
+import type { MainnetWalletSetupPublicStatus } from "@agentpay-ai/shared-arc";
 export type ProductionSetupStatus =
   | "PENDING"
   | "ADMITTED"

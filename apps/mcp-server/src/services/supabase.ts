@@ -10,7 +10,7 @@ import {
   type SessionContext,
   type SessionEnvironment,
   type SetupIntentRecord,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type { ExecutePaymentIntentRepository } from "../tools/execute-payment.ts";
 import type {

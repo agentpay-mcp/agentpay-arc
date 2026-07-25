@@ -1,32 +1,32 @@
 import { randomBytes } from "node:crypto";
 
-import type { CeloHomeChainId, ExecutePaymentInput } from "@agentpay-ai/shared-celo";
-import type { PreparePaymentInput } from "@agentpay-ai/shared-celo";
-import type { GetPaymentSignatureInput } from "@agentpay-ai/shared-celo";
-import type { GetBalanceInput } from "@agentpay-ai/shared-celo";
-import type { ListPaymentEventsInput, ListTransactionsInput, TrackPaymentInput } from "@agentpay-ai/shared-celo";
-import type { ParseInvoicePaymentInput } from "@agentpay-ai/shared-celo";
-import type { ParseX402PaymentRequiredInput } from "@agentpay-ai/shared-celo";
-import type { RetryX402RequestInput } from "@agentpay-ai/shared-celo";
-import type { PrepareX402ServiceRequestInput, SearchX402ServicesInput } from "@agentpay-ai/shared-celo";
-import type { PrepareContractCallInput } from "@agentpay-ai/shared-celo";
-import type { PrepareAccountAdminTransactionInput } from "@agentpay-ai/shared-celo";
-import type { QuotePaymentRouteInput } from "@agentpay-ai/shared-celo";
-import type { SessionContext, SessionEnvironment } from "@agentpay-ai/shared-celo";
+import type { CeloHomeChainId, ExecutePaymentInput } from "@agentpay-ai/shared-arc";
+import type { PreparePaymentInput } from "@agentpay-ai/shared-arc";
+import type { GetPaymentSignatureInput } from "@agentpay-ai/shared-arc";
+import type { GetBalanceInput } from "@agentpay-ai/shared-arc";
+import type { ListPaymentEventsInput, ListTransactionsInput, TrackPaymentInput } from "@agentpay-ai/shared-arc";
+import type { ParseInvoicePaymentInput } from "@agentpay-ai/shared-arc";
+import type { ParseX402PaymentRequiredInput } from "@agentpay-ai/shared-arc";
+import type { RetryX402RequestInput } from "@agentpay-ai/shared-arc";
+import type { PrepareX402ServiceRequestInput, SearchX402ServicesInput } from "@agentpay-ai/shared-arc";
+import type { PrepareContractCallInput } from "@agentpay-ai/shared-arc";
+import type { PrepareAccountAdminTransactionInput } from "@agentpay-ai/shared-arc";
+import type { QuotePaymentRouteInput } from "@agentpay-ai/shared-arc";
+import type { SessionContext, SessionEnvironment } from "@agentpay-ai/shared-arc";
 import type {
   CheckWalletCreationInput,
   CheckRouteTargetAllowanceInput,
   GetAgentWalletInput,
   PrepareRouteTargetAllowanceInput,
   PrepareWalletCreationInput,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import {
   configureStableTokenMetadataOverrides,
   CELO_NETWORKS,
   isAssignedCeloAttributionTag,
   MAINNET_ONBOARDING_URL,
   type StableTokenMetadataOverrides,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { Wallet } from "ethers";
 
 import { createEthersRuntimeAdapters, type EthersRuntimeConfig } from "../services/chain-executor.ts";
@@ -261,7 +261,7 @@ export interface AgentPayRuntime {
   canaryLedger?: CanaryLedgerStore;
   reconcileInvoiceExecutions?(): Promise<InvoiceExecutionReconciliationResult>;
   executeAuthorizedPayment(
-    input: import("@agentpay-ai/shared-celo").ExecuteAuthorizedPaymentInput,
+    input: import("@agentpay-ai/shared-arc").ExecuteAuthorizedPaymentInput,
   ): ReturnType<ReturnType<typeof createExecuteAuthorizedPaymentHandler>>;
   trackPayment(input: TrackPaymentInput): ReturnType<ReturnType<typeof createTrackPaymentHandler>>;
   listTransactions(input: ListTransactionsInput): ReturnType<ReturnType<typeof createListTransactionsHandler>>;

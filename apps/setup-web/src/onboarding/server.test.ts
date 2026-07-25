@@ -7,12 +7,12 @@ import {
   createMainnetWalletSetupTypedData,
   type MainnetWalletSetupPolicyContext,
   type MainnetWalletSetupPublicStatus,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import type {
   ProductionSetupChallengeInput,
   ProductionSetupWebStore,
   SetupAdmissionInput,
-} from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/mcp-server-arc";
 
 import {
   createProductionOnboardingHandler,

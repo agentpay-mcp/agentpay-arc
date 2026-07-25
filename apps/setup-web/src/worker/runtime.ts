@@ -13,13 +13,13 @@ import { z } from "zod";
 import {
   createProductionSetupWorkerStoreFromConfig,
   type SetupWorkerClaim,
-} from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/mcp-server-arc";
 import {
   assertAssignedCeloAttributionTag,
   MAINNET_SETUP_CHAIN_ID,
   MAINNET_SETUP_USDC,
   toEip712Sha256Bytes32,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { bindOwnerRuntimeArtifact, type AccountRuntimeArtifact } from "../onboarding/runtime.ts";
 import {
   verifySetupAccount,

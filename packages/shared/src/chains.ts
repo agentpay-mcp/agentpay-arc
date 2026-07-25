@@ -17,6 +17,14 @@ export const SUPPORTED_CHAINS = {
       decimals: 18,
     },
   },
+  5042002: {
+    id: 5042002,
+    name: "Arc Testnet",
+    nativeCurrency: {
+      symbol: "USDC",
+      decimals: 18,
+    },
+  },
   8453: {
     id: 8453,
     name: "Base",
@@ -71,11 +79,31 @@ export const CELO_NETWORKS = {
   },
 } as const;
 
+export const ARC_NETWORKS = {
+  testnet: {
+    chainId: 5042002,
+    caip2: "eip155:5042002",
+    circleChain: "ARC-TESTNET",
+    name: "Arc Testnet",
+    nativeCurrency: { symbol: "USDC", decimals: 18 },
+    rpcUrl: "https://rpc.testnet.arc.network",
+    wsRpcUrl: "wss://rpc.testnet.arc.network",
+    explorerUrl: "https://testnet.arcscan.app",
+  },
+} as const;
+
 export const AGENTPAY_CELO_PUBLIC_URLS = {
   consumerMcp: "https://wallet.agentpay.site/celo/mcp",
   paidMcp: "https://mcp.agentpay.site/celo/mcp",
   setup: "https://wallet.agentpay.site/celo/setup",
   review: "https://wallet.agentpay.site/celo/review",
+} as const;
+
+export const AGENTPAY_ARC_PUBLIC_URLS = {
+  consumerMcp: "https://wallet.agentpay.site/arc/mcp",
+  paidMcp: "https://mcp.agentpay.site/arc/mcp",
+  setup: "https://wallet.agentpay.site/arc/setup",
+  review: "https://wallet.agentpay.site/arc/review",
 } as const;
 
 export const celoNetworkSchema = z.enum(["mainnet", "testnet"]);

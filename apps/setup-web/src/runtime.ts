@@ -5,14 +5,14 @@ import { join } from "node:path";
 import {
   createSupabaseAgentPayRepositoriesFromConfig,
   type SupabaseRuntimeConfig,
-} from "@agentpay-ai/mcp-server-celo";
-import type { PaymentReviewRepository } from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/mcp-server-arc";
+import type { PaymentReviewRepository } from "@agentpay-ai/mcp-server-arc";
 import {
   configureStableTokenMetadataOverrides,
   type CeloHomeChainId,
   type SetupIntentRecord,
   type StableTokenMetadataOverrides,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import {
   createEthersAgentPayAccountDeployer,

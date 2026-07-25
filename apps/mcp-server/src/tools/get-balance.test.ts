@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { configureStableTokenMetadataOverrides } from "@agentpay-ai/shared-celo";
+import { configureStableTokenMetadataOverrides } from "@agentpay-ai/shared-arc";
 
 import { getBalance } from "./get-balance.ts";
 

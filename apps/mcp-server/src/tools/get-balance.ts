@@ -7,7 +7,7 @@ import {
   type CeloHomeChainId,
   type GetBalanceInput,
   type StableTokenSymbol,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type { AgentWalletRepository } from "./prepare-payment.ts";
 

@@ -6,7 +6,7 @@ import {
   isAssignedCeloAttributionTag,
   type PaymentIntentRecord,
   type SessionEnvironment,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import type { MainnetAccountVerificationResult } from "../services/mainnet-account-verifier.ts";
 

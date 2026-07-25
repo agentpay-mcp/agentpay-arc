@@ -12,14 +12,14 @@ import {
 import {
   createInMemoryProductionSetupStores,
   type ProductionSetupWorkerStore,
-} from "@agentpay-ai/mcp-server-celo";
+} from "@agentpay-ai/mcp-server-arc";
 import {
   MAINNET_SETUP_ROUTE_ALLOWLIST_HASH,
   MAINNET_SETUP_TOKEN_ALLOWLIST_HASH,
   MAINNET_SETUP_USDC,
   createMainnetWalletSetupTypedData,
   type MainnetWalletSetupPolicyContext,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 
 import {
   createProductionOnboardingHandler,

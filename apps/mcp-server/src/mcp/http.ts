@@ -16,7 +16,7 @@ import {
   AgentPayAuthError,
   type AgentPayErc8004Registration,
   type SessionContext,
-} from "@agentpay-ai/shared-celo";
+} from "@agentpay-ai/shared-arc";
 import { AGENTPAY_CONSUMER_URI } from "../auth/siwe.ts";
 import { authenticateServiceSession } from "../auth/session.ts";
 import { createConsumerSessionApi, type ConsumerSessionApi } from "../auth/consumer-session-api.ts";

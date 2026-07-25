@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { CELO_MAINNET_AGENT_REGISTRY } from "@agentpay-ai/shared-celo";
+import { CELO_MAINNET_AGENT_REGISTRY } from "@agentpay-ai/shared-arc";
 
 import {
   parseAgentPayErc8004Env,

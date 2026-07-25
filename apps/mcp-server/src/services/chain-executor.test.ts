@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AbiCoder, FallbackProvider, JsonRpcProvider, keccak256 } from "ethers";
 import { fromDataSuffix } from "@celo/attribution-tags";
-import { appendCeloAttributionTag } from "@agentpay-ai/shared-celo";
+import { appendCeloAttributionTag } from "@agentpay-ai/shared-arc";
 
 import {
   agentPayAccountInterface,
