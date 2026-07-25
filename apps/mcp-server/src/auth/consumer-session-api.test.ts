@@ -46,7 +46,7 @@ function dependencies(overrides: Partial<ConsumerSessionApiDependencies> = {}): 
     challengeStore: new ChallengeStore(),
     sessionStore: new SessionStore(),
     serverSecret: "consumer-session-secret",
-    audience: "https://wallet.agentpay.site/celo/mcp",
+    audience: "https://wallet.agentpay.site/arc/mcp",
     environment: "staging",
     clock: () => new Date("2026-07-12T00:00:00.000Z"),
     resolveTenant: async () => ({ tenantId: "tenant_a", authenticationEpoch: 0 }),
@@ -67,7 +67,7 @@ describe("consumer SIWE session API", () => {
       new Request("https://wallet.agentpay.site/auth/siwe/challenge", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ownerAddress: owner.address, accountAddress, chainId: 11142220 }),
+        body: JSON.stringify({ ownerAddress: owner.address, accountAddress, chainId: 5042002 }),
       }),
     );
     assert.equal(challengeResponse.status, 200);
@@ -96,7 +96,7 @@ describe("consumer SIWE session API", () => {
     const challengeResponse = await api.handle(
       new Request("https://wallet.agentpay.site/auth/siwe/challenge", {
         method: "POST",
-        body: JSON.stringify({ ownerAddress: owner.address, accountAddress, chainId: 11142220 }),
+        body: JSON.stringify({ ownerAddress: owner.address, accountAddress, chainId: 5042002 }),
       }),
     );
     const challengeBody = (await challengeResponse.json()) as { challengeId: string };
@@ -117,10 +117,10 @@ describe("consumer SIWE session API", () => {
       challengeId: "oauth_challenge_123",
       requestId: "authorization_123",
       domain: "wallet.agentpay.site",
-      uri: "https://wallet.agentpay.site/celo/mcp",
+      uri: "https://wallet.agentpay.site/arc/mcp",
       ownerAddress: owner.address,
       accountAddress,
-      chainId: 11142220,
+      chainId: 5042002,
       nonce: "nonce_oauth_123456",
       flow: "oauth_authorization",
       issuedAt: "2026-07-12T00:00:00.000Z",

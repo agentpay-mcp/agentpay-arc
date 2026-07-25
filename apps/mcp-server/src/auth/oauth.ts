@@ -10,13 +10,13 @@ import {
 import { DEFAULT_SESSION_SCOPES } from "./siwe.ts";
 import type { ServiceSessionRecord } from "./session.ts";
 
-export const AGENTPAY_OAUTH_ISSUER = "https://wallet.agentpay.site/celo";
-export const AGENTPAY_OAUTH_RESOURCE = "https://wallet.agentpay.site/celo/mcp";
-export const AGENTPAY_OAUTH_ROUTE_PREFIX = "/celo/oauth";
+export const AGENTPAY_OAUTH_ISSUER = "https://wallet.agentpay.site/arc";
+export const AGENTPAY_OAUTH_RESOURCE = "https://wallet.agentpay.site/arc/mcp";
+export const AGENTPAY_OAUTH_ROUTE_PREFIX = "/arc/oauth";
 export const AGENTPAY_OAUTH_PROTECTED_RESOURCE_METADATA_PATH =
-  "/.well-known/oauth-protected-resource/celo/mcp";
+  "/.well-known/oauth-protected-resource/arc/mcp";
 export const AGENTPAY_OAUTH_AUTHORIZATION_SERVER_METADATA_PATH =
-  "/.well-known/oauth-authorization-server/celo";
+  "/.well-known/oauth-authorization-server/arc";
 export const OAUTH_AUTHORIZATION_TTL_SECONDS = 5 * 60;
 export const OAUTH_AUTHORIZATION_CODE_TTL_SECONDS = 60;
 export const OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;

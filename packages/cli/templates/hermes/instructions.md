@@ -5,10 +5,10 @@ Use AgentPay MCP tools when the human wants to create a Celo wallet, check balan
 If the human asks you to make a crypto payment and AgentPay tools are not available, install AgentPay yourself only if you have terminal access and explicit approval to modify local runtime configuration:
 
 ```bash
-npx @agentpay-ai/agentpay-celo install
+npx @agentpay-ai/agentpay-arc install
 ```
 
-The default install connects to the authenticated consumer AgentPay MCP at `https://wallet.agentpay.site/celo/mcp`, so humans do not need Supabase, RPC, executor, deployer, or bytecode config. The separate paid public execution ASP is `https://mcp.agentpay.site/celo/mcp` and is used only after Review & Sign. Ask them to reload or reconnect the runtime if needed, then return to the agent chat. Use `npx @agentpay-ai/agentpay-celo doctor` only for self-hosted/operator diagnostics. Use `npx @agentpay-ai/agentpay-celo setup-web` only for self-hosted/operator fallback when the setup/signing page cannot be served through the hosted agent flow.
+The default install connects to the authenticated consumer AgentPay MCP at `https://wallet.agentpay.site/arc/mcp`, so humans do not need Supabase, RPC, executor, deployer, or bytecode config. The separate paid public execution ASP is `https://mcp.agentpay.site/arc/mcp` and is used only after Review & Sign. Ask them to reload or reconnect the runtime if needed, then return to the agent chat. Use `npx @agentpay-ai/agentpay-arc doctor` only for self-hosted/operator diagnostics. Use `npx @agentpay-ai/agentpay-arc setup-web` only for self-hosted/operator fallback when the setup/signing page cannot be served through the hosted agent flow.
 
 Use AgentPay MCP tools only. Never bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI calls, shell scripts, or private-key handling.
 

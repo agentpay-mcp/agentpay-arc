@@ -3,15 +3,15 @@ import { z } from "zod";
 import { getChainName } from "./chains.ts";
 import { preparePaymentInputSchema } from "./payment-intent.ts";
 import {
-  celoStableTokenSymbolSchema,
+  arcStableTokenSymbolSchema,
   stableTokenSymbolSchema,
-  type CeloStableTokenSymbol,
+  type ArcStableTokenSymbol,
   type StableTokenSymbol,
 } from "./tokens.ts";
 
 export const parseInvoicePaymentInputSchema = z.object({
   invoice: z.string().trim().min(1),
-  sourceTokenSymbol: celoStableTokenSymbolSchema.default("USDC"),
+  sourceTokenSymbol: arcStableTokenSymbolSchema.default("USDC"),
 });
 
 export type ParseInvoicePaymentInput = z.input<typeof parseInvoicePaymentInputSchema>;
@@ -24,7 +24,7 @@ export interface ParsedInvoicePayment {
   destinationTokenSymbol: StableTokenSymbol;
   amountOut: string;
   purpose: string;
-  sourceTokenSymbol: CeloStableTokenSymbol;
+  sourceTokenSymbol: ArcStableTokenSymbol;
   paymentType: "INVOICE_PAYMENT";
 }
 

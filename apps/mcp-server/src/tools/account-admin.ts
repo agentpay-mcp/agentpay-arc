@@ -1,8 +1,7 @@
 import {
   getChainName,
   prepareAccountAdminTransactionInputSchema,
-  resolveCeloHomeChainId,
-  type CeloHomeChainId,
+  resolveArcHomeChainId,
   type PrepareAccountAdminTransactionInput,
 } from "@agentpay-ai/shared-arc";
 import { Interface } from "ethers";
@@ -21,7 +20,7 @@ const accountAdminInterface = new Interface([
 
 export interface PrepareAccountAdminTransactionDependencies {
   wallets: AgentWalletRepository;
-  homeChainId?: CeloHomeChainId;
+  homeChainId?: number;
 }
 
 export interface AccountAdminTransaction {
@@ -55,7 +54,7 @@ export async function prepareAccountAdminTransaction(
   dependencies: PrepareAccountAdminTransactionDependencies,
 ): Promise<PrepareAccountAdminTransactionOutput> {
   const input = prepareAccountAdminTransactionInputSchema.parse(rawInput);
-  const homeChainId = resolveCeloHomeChainId(input, dependencies.homeChainId);
+  const homeChainId = resolveArcHomeChainId(input, dependencies.homeChainId);
   const wallet = await dependencies.wallets.getActiveWallet({ homeChainId });
 
   if (!wallet) {
@@ -141,8 +140,8 @@ export const prepareAccountAdminTransactionTool = {
       allowed: { type: "boolean" },
       toAddress: { type: "string" },
       amountAtomic: { type: "string" },
-      network: { type: "string", enum: ["mainnet", "testnet"] },
-      homeChainId: { type: "number", enum: [42220, 11142220] },
+      network: { type: "string", enum: ["testnet"] },
+      homeChainId: { type: "number", enum: [5042002] },
     },
   },
 } as const;

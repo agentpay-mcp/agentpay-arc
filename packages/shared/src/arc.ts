@@ -14,10 +14,14 @@ export const ARC_TESTNET = {
   chainId: arcTestnetNetwork.chainId,
   caip2: arcTestnetNetwork.caip2,
   circleChain: arcTestnetNetwork.circleChain,
-  cctpDomain: ARC_TESTNET_CCTP_DOMAIN,
+  name: arcTestnetNetwork.name,
+  nativeCurrency: arcTestnetNetwork.nativeCurrency,
   rpcUrl: arcTestnetNetwork.rpcUrl,
-  wsRpcUrl: arcTestnetNetwork.wsRpcUrl,
+  websocketUrl: arcTestnetNetwork.websocketUrl,
   explorerUrl: arcTestnetNetwork.explorerUrl,
+  usdcAddress: arcTestnetUsdc.address,
+  usdcDecimals: arcTestnetUsdc.decimals,
+  cctpDomain: ARC_TESTNET_CCTP_DOMAIN,
 } as const;
 
 export const ARC_TESTNET_USDC = {

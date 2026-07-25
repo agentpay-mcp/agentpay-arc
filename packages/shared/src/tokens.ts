@@ -2,13 +2,16 @@ import { z } from "zod";
 
 export const STABLE_TOKEN_SYMBOLS = ["USDT0", "USDC", "USDT", "USDm"] as const;
 export const CELO_STABLE_TOKEN_SYMBOLS = ["USDC", "USDT", "USDm"] as const;
-export const DEFAULT_STABLE_TOKEN_SYMBOLS = CELO_STABLE_TOKEN_SYMBOLS;
+export const ARC_STABLE_TOKEN_SYMBOLS = ["USDC"] as const;
+export const DEFAULT_STABLE_TOKEN_SYMBOLS = ARC_STABLE_TOKEN_SYMBOLS;
 
 export const stableTokenSymbolSchema = z.enum(STABLE_TOKEN_SYMBOLS);
 export const celoStableTokenSymbolSchema = z.enum(CELO_STABLE_TOKEN_SYMBOLS);
+export const arcStableTokenSymbolSchema = z.enum(ARC_STABLE_TOKEN_SYMBOLS);
 
 export type StableTokenSymbol = z.infer<typeof stableTokenSymbolSchema>;
 export type CeloStableTokenSymbol = z.infer<typeof celoStableTokenSymbolSchema>;
+export type ArcStableTokenSymbol = z.infer<typeof arcStableTokenSymbolSchema>;
 
 export const STABLE_TOKEN_DECIMALS: Record<StableTokenSymbol, number> = {
   USDT0: 6,

@@ -28,7 +28,7 @@ describe("preparePayment", () => {
             return {
               ownerAddress: "0x2222222222222222222222222222222222222222",
               accountAddress: "0x3333333333333333333333333333333333333333",
-              homeChainId: 42220,
+              homeChainId: 5042002,
               executorAddress: "0x4444444444444444444444444444444444444444",
               status: "ACTIVE",
             };
@@ -60,7 +60,7 @@ describe("preparePayment", () => {
           hasSufficientTokenBalance: async (request) => {
             assert.deepEqual(request, {
               accountAddress: "0x3333333333333333333333333333333333333333",
-              chainId: 42220,
+              chainId: 5042002,
               tokenAddress: "0x5555555555555555555555555555555555555555",
               tokenSymbol: "USDC",
               requiredAmount: "10.18",
@@ -71,13 +71,13 @@ describe("preparePayment", () => {
       },
     );
 
-    assert.deepEqual(walletReads, [{ homeChainId: 42220 }]);
+    assert.deepEqual(walletReads, [{ homeChainId: 5042002 }]);
     assert.equal(result.paymentIntentId, "pay_123");
     assert.equal(result.status, "AWAITING_APPROVAL");
     assert.equal(result.approvalPhrase, "APPROVE pay_123");
     assert.equal(result.summary.destinationChain, "Base");
     assert.equal(result.summary.maxNativeFee, "2500000000000000");
-    assert.equal(result.summary.maxNativeFeeDisplay, "0.0025 CELO");
+    assert.equal(result.summary.maxNativeFeeDisplay, "0.0025 USDC");
     assert.equal(result.summary.deadline, "2026-07-02T14:35:00.000Z");
     assert.equal(result.summary.minAmountOut, "9.95");
     assert.equal(result.summary.nativeValue, "2000000000000000");
@@ -92,7 +92,7 @@ describe("preparePayment", () => {
       ownerAddress: "0x2222222222222222222222222222222222222222",
       status: "AWAITING_APPROVAL",
       paymentType: "WALLET_PAYMENT",
-      sourceChainId: 42220,
+      sourceChainId: 5042002,
       destinationChainId: 8453,
       sourceTokenAddress: "0x5555555555555555555555555555555555555555",
       sourceTokenSymbol: "USDC",
@@ -124,7 +124,7 @@ describe("preparePayment", () => {
     const result = await preparePayment(
       {
         recipientAddress: "0x1111111111111111111111111111111111111111",
-        destinationChainId: 42220,
+        destinationChainId: 5042002,
         destinationTokenSymbol: "USDC",
         amountOut: "10",
         purpose: "same-chain payout",
@@ -139,7 +139,7 @@ describe("preparePayment", () => {
           getActiveWallet: async () => ({
             ownerAddress: "0x2222222222222222222222222222222222222222",
             accountAddress: "0x3333333333333333333333333333333333333333",
-            homeChainId: 42220,
+            homeChainId: 5042002,
             executorAddress: "0x4444444444444444444444444444444444444444",
             status: "ACTIVE",
           }),
@@ -158,8 +158,8 @@ describe("preparePayment", () => {
           hasSufficientTokenBalance: async (request) => {
             assert.deepEqual(request, {
               accountAddress: "0x3333333333333333333333333333333333333333",
-              chainId: 42220,
-              tokenAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+              chainId: 5042002,
+              tokenAddress: "0x3600000000000000000000000000000000000000",
               tokenSymbol: "USDC",
               requiredAmount: "10",
             });
@@ -171,22 +171,22 @@ describe("preparePayment", () => {
 
     assert.equal(result.summary.routeProvider, "DIRECT");
     assert.equal(result.summary.sourceSpend, "10 USDC");
-    assert.equal(result.summary.maxNativeFeeDisplay, "0 CELO");
+    assert.equal(result.summary.maxNativeFeeDisplay, "0 USDC");
     assert.equal(result.summary.routeTarget, "0x0000000000000000000000000000000000000000");
     assert.equal(result.summary.routeCalldataHash, "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
     assert.equal(result.summary.requiresRouteTargetAllowlist, false);
-    assert.equal(result.summary.routeSummary, "Direct 10 USDC transfer on Celo.");
+    assert.equal(result.summary.routeSummary, "Direct 10 USDC transfer on Arc Testnet.");
     assert.deepEqual(saved[0], {
       id: "pay_direct",
       accountAddress: "0x3333333333333333333333333333333333333333",
       ownerAddress: "0x2222222222222222222222222222222222222222",
       status: "AWAITING_APPROVAL",
       paymentType: "WALLET_PAYMENT",
-      sourceChainId: 42220,
-      destinationChainId: 42220,
-      sourceTokenAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+      sourceChainId: 5042002,
+      destinationChainId: 5042002,
+      sourceTokenAddress: "0x3600000000000000000000000000000000000000",
       sourceTokenSymbol: "USDC",
-      destinationTokenAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+      destinationTokenAddress: "0x3600000000000000000000000000000000000000",
       destinationTokenSymbol: "USDC",
       recipientAddress: "0x1111111111111111111111111111111111111111",
       amountOut: "10",
@@ -196,7 +196,7 @@ describe("preparePayment", () => {
       routeTarget: "0x0000000000000000000000000000000000000000",
       routeCalldata: "0x",
       routeCalldataHash: "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-      routeSummary: "Direct 10 USDC transfer on Celo.",
+      routeSummary: "Direct 10 USDC transfer on Arc Testnet.",
       estimatedFee: "0",
       estimatedEtaSeconds: 0,
       nonce: "43",
@@ -210,7 +210,7 @@ describe("preparePayment", () => {
     const result = await preparePayment(
       {
         recipientAddress: "0x1111111111111111111111111111111111111111",
-        destinationChainId: 42220,
+        destinationChainId: 5042002,
         destinationTokenSymbol: "USDC",
         amountOut: "1",
         purpose: "tenant review",
@@ -225,7 +225,7 @@ describe("preparePayment", () => {
             tenantId: "tenant_123",
             ownerAddress: "0x2222222222222222222222222222222222222222",
             accountAddress: "0x3333333333333333333333333333333333333333",
-            homeChainId: 42220,
+            homeChainId: 5042002,
             executorAddress: "0x4444444444444444444444444444444444444444",
             status: "ACTIVE",
           }),
@@ -257,7 +257,7 @@ describe("preparePayment", () => {
     const result = await preparePayment(
       {
         recipientAddress: "0x1111111111111111111111111111111111111111",
-        destinationChainId: 42220,
+        destinationChainId: 5042002,
         destinationTokenSymbol: "USDC",
         amountOut: "1",
         purpose: "review handoff",
@@ -275,7 +275,7 @@ describe("preparePayment", () => {
             tenantId: "tenant_123",
             ownerAddress: "0x2222222222222222222222222222222222222222",
             accountAddress: "0x3333333333333333333333333333333333333333",
-            homeChainId: 42220,
+            homeChainId: 5042002,
             executorAddress: "0x4444444444444444444444444444444444444444",
             status: "ACTIVE",
           }),
@@ -304,7 +304,7 @@ describe("preparePayment", () => {
     await preparePayment(
       {
         recipientAddress: "0x1111111111111111111111111111111111111111",
-        destinationChainId: 42220,
+        destinationChainId: 5042002,
         destinationTokenSymbol: "USDC",
         amountOut: "10",
         purpose: "Invoice inv_123",
@@ -319,7 +319,7 @@ describe("preparePayment", () => {
           getActiveWallet: async () => ({
             ownerAddress: "0x2222222222222222222222222222222222222222",
             accountAddress: "0x3333333333333333333333333333333333333333",
-            homeChainId: 42220,
+            homeChainId: 5042002,
             executorAddress: "0x4444444444444444444444444444444444444444",
             status: "ACTIVE",
           }),
@@ -343,7 +343,7 @@ describe("preparePayment", () => {
     await preparePayment(
       {
         recipientAddress: "0x1111111111111111111111111111111111111111",
-        destinationChainId: 42220,
+        destinationChainId: 5042002,
         destinationTokenSymbol: "USDC",
         amountOut: "0.01",
         purpose: "x402 payment for Market API",
@@ -358,7 +358,7 @@ describe("preparePayment", () => {
           getActiveWallet: async () => ({
             ownerAddress: "0x2222222222222222222222222222222222222222",
             accountAddress: "0x3333333333333333333333333333333333333333",
-            homeChainId: 42220,
+            homeChainId: 5042002,
             executorAddress: "0x4444444444444444444444444444444444444444",
             status: "ACTIVE",
           }),
@@ -451,7 +451,7 @@ describe("preparePayment", () => {
               getActiveWallet: async () => ({
                 ownerAddress: "0x2222222222222222222222222222222222222222",
                 accountAddress: "0x3333333333333333333333333333333333333333",
-                homeChainId: 42220,
+                homeChainId: 5042002,
                 executorAddress: "0x4444444444444444444444444444444444444444",
                 status: "ACTIVE",
               }),

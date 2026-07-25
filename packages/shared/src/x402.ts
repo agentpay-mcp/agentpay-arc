@@ -4,8 +4,8 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 import { getChainName } from "./chains.ts";
 import { evmAddressSchema, preparePaymentInputSchema, type PaymentIntentRecord } from "./payment-intent.ts";
-import { celoStableTokenSymbolSchema, getStableTokenMetadata, STABLE_TOKEN_SYMBOLS } from "./tokens.ts";
-import type { CeloStableTokenSymbol, StableTokenSymbol } from "./tokens.ts";
+import { arcStableTokenSymbolSchema, getStableTokenMetadata, STABLE_TOKEN_SYMBOLS } from "./tokens.ts";
+import type { ArcStableTokenSymbol, StableTokenSymbol } from "./tokens.ts";
 
 const positiveIntegerStringSchema = z.string().regex(/^[1-9]\d*$/, "Expected a positive integer string");
 const PAYMENT_IDENTIFIER = "payment-identifier";
@@ -52,7 +52,7 @@ const x402RetryRequestSchema = z.object({
 
 export const parseX402PaymentRequiredInputSchema = z.object({
   paymentRequired: z.union([z.string().trim().min(1), z.record(z.string(), z.unknown())]),
-  sourceTokenSymbol: celoStableTokenSymbolSchema.default("USDC"),
+  sourceTokenSymbol: arcStableTokenSymbolSchema.default("USDC"),
   request: x402RetryRequestSchema.default({ method: "GET", headers: {} }),
 });
 
@@ -125,7 +125,7 @@ export interface ParsedX402PaymentRequired {
     destinationTokenSymbol: StableTokenSymbol;
     amountOut: string;
     purpose: string;
-    sourceTokenSymbol: CeloStableTokenSymbol;
+    sourceTokenSymbol: ArcStableTokenSymbol;
     paymentType: "X402_PAYMENT";
   };
   extensions?: {

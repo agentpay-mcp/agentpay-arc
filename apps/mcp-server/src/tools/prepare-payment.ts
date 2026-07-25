@@ -5,8 +5,7 @@ import {
   formatNativeAmount,
   getChainName,
   isDirectPaymentRoute,
-  resolveCeloHomeChainId,
-  type CeloHomeChainId,
+  resolveArcHomeChainId,
   type PaymentIntentRecord,
   type PreparePaymentInput,
   preparePaymentInputSchema,
@@ -69,7 +68,7 @@ export interface PreparePaymentDependencies {
   clock: () => Date;
   createId: () => string;
   createNonce: () => string;
-  homeChainId?: CeloHomeChainId;
+  homeChainId?: number;
   approvalTtlSeconds?: number;
   tenantId?: string;
   setupWebUrl?: string;
@@ -112,7 +111,7 @@ export async function preparePayment(
   dependencies: PreparePaymentDependencies,
 ): Promise<PreparePaymentOutput> {
   const input = preparePaymentInputSchema.parse(rawInput);
-  const homeChainId = resolveCeloHomeChainId(input, dependencies.homeChainId);
+  const homeChainId = resolveArcHomeChainId(input, dependencies.homeChainId);
   const wallet = await dependencies.wallets.getActiveWallet({ homeChainId });
 
   if (!wallet || wallet.status !== "ACTIVE") {
@@ -286,10 +285,10 @@ export const preparePaymentTool = {
       destinationTokenSymbol: { type: "string", enum: ["USDT0", "USDC", "USDT", "USDm"] },
       amountOut: { type: "string" },
       purpose: { type: "string" },
-      sourceTokenSymbol: { type: "string", enum: ["USDC", "USDT", "USDm"] },
+      sourceTokenSymbol: { type: "string", enum: ["USDC"] },
       paymentType: { type: "string", enum: ["WALLET_PAYMENT", "INVOICE_PAYMENT", "X402_PAYMENT"] },
-      network: { type: "string", enum: ["mainnet", "testnet"] },
-      homeChainId: { type: "number", enum: [42220, 11142220] },
+      network: { type: "string", enum: ["testnet"] },
+      homeChainId: { type: "number", enum: [5042002] },
     },
   },
 } as const;

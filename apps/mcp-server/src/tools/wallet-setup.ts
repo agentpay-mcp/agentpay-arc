@@ -1,11 +1,10 @@
 import {
   checkWalletCreationInputSchema,
+  AGENTPAY_ARC_PUBLIC_URLS,
   getAgentWalletInputSchema,
   getChainName,
-  MAINNET_ONBOARDING_URL,
   prepareWalletCreationInputSchema,
-  resolveCeloHomeChainId,
-  type CeloHomeChainId,
+  resolveArcHomeChainId,
   type CheckWalletCreationInput,
   type GetAgentWalletInput,
   type PrepareWalletCreationInput,
@@ -26,7 +25,7 @@ export interface PrepareWalletCreationDependencies {
   productionOnboardingUrl?: string;
   clock: () => Date;
   createSetupIntentId: () => string;
-  homeChainId?: CeloHomeChainId;
+  homeChainId?: number;
   setupTtlSeconds?: number;
 }
 
@@ -37,7 +36,7 @@ export interface CheckWalletCreationDependencies {
 
 export interface GetAgentWalletDependencies {
   wallets: AgentWalletRepository;
-  homeChainId?: CeloHomeChainId;
+  homeChainId?: number;
 }
 
 export interface LegacyPrepareWalletCreationOutput {
@@ -52,9 +51,9 @@ export interface LegacyPrepareWalletCreationOutput {
 
 export interface ProductionPrepareWalletCreationOutput {
   status: "SETUP_REQUIRED";
-  setupUrl: typeof MAINNET_ONBOARDING_URL;
-  homeChainId: 42220;
-  homeChain: "Celo";
+  setupUrl: typeof AGENTPAY_ARC_PUBLIC_URLS.setup;
+  homeChainId: 5042002;
+  homeChain: "Arc Testnet";
   instructionToAgent: string;
 }
 
@@ -90,18 +89,15 @@ export async function prepareWalletCreation(
 ): Promise<PrepareWalletCreationOutput> {
   const input = prepareWalletCreationInputSchema.parse(rawInput);
   if (dependencies.productionOnboardingUrl !== undefined) {
-    const homeChainId = resolveCeloHomeChainId(input, 42220);
-    if (homeChainId !== 42220) {
-      throw new Error("Production wallet onboarding is available only on Celo mainnet.");
-    }
-    if (dependencies.productionOnboardingUrl !== MAINNET_ONBOARDING_URL) {
-      throw new Error("Production onboarding URL must match the canonical AgentPay Celo setup URL.");
+    const homeChainId = resolveArcHomeChainId(input, dependencies.homeChainId);
+    if (dependencies.productionOnboardingUrl !== AGENTPAY_ARC_PUBLIC_URLS.setup) {
+      throw new Error("Production onboarding URL must match the canonical AgentPay Arc setup URL.");
     }
     return {
       status: "SETUP_REQUIRED",
-      setupUrl: MAINNET_ONBOARDING_URL,
+      setupUrl: AGENTPAY_ARC_PUBLIC_URLS.setup,
       homeChainId,
-      homeChain: "Celo",
+      homeChain: "Arc Testnet",
       instructionToAgent:
         "Open the secure AgentPay setup link, connect the owner wallet, and approve the setup signature. Never share a seed phrase or private key.",
     };
@@ -109,7 +105,7 @@ export async function prepareWalletCreation(
   const setupIntentId = dependencies.createSetupIntentId();
   const setupTtlSeconds = dependencies.setupTtlSeconds ?? 900;
   const expiresAt = new Date(dependencies.clock().getTime() + setupTtlSeconds * 1000).toISOString();
-  const homeChainId = resolveCeloHomeChainId(input, dependencies.homeChainId);
+  const homeChainId = resolveArcHomeChainId(input, dependencies.homeChainId);
   const messageToSign = createSetupMessage({
     setupIntentId,
     ownerAddress: input.ownerAddress,
@@ -167,7 +163,7 @@ export async function getAgentWallet(
   dependencies: GetAgentWalletDependencies,
 ): Promise<GetAgentWalletOutput> {
   const input = getAgentWalletInputSchema.parse(rawInput);
-  const homeChainId = resolveCeloHomeChainId(input, dependencies.homeChainId);
+  const homeChainId = resolveArcHomeChainId(input, dependencies.homeChainId);
   const wallet = await dependencies.wallets.getActiveWallet({ homeChainId });
 
   if (!wallet) {
@@ -197,8 +193,8 @@ export const prepareWalletCreationTool = {
     additionalProperties: false,
     properties: {
       ownerAddress: { type: "string" },
-      network: { type: "string", enum: ["mainnet", "testnet"] },
-      homeChainId: { type: "number", enum: [42220, 11142220] },
+      network: { type: "string", enum: ["testnet"] },
+      homeChainId: { type: "number", enum: [5042002] },
     },
   },
 } as const;
@@ -223,8 +219,8 @@ export const getAgentWalletTool = {
     type: "object",
     additionalProperties: false,
     properties: {
-      network: { type: "string", enum: ["mainnet", "testnet"] },
-      homeChainId: { type: "number", enum: [42220, 11142220] },
+      network: { type: "string", enum: ["testnet"] },
+      homeChainId: { type: "number", enum: [5042002] },
     },
   },
 } as const;

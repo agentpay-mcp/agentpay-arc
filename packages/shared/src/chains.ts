@@ -87,7 +87,7 @@ export const ARC_NETWORKS = {
     name: "Arc Testnet",
     nativeCurrency: { symbol: "USDC", decimals: 18 },
     rpcUrl: "https://rpc.testnet.arc.network",
-    wsRpcUrl: "wss://rpc.testnet.arc.network",
+    websocketUrl: "wss://rpc.testnet.arc.network",
     explorerUrl: "https://testnet.arcscan.app",
   },
 } as const;
@@ -104,24 +104,48 @@ export const AGENTPAY_ARC_PUBLIC_URLS = {
   paidMcp: "https://mcp.agentpay.site/arc/mcp",
   setup: "https://wallet.agentpay.site/arc/setup",
   review: "https://wallet.agentpay.site/arc/review",
+  marketplace: "https://wallet.agentpay.site/arc/marketplace",
+  activity: "https://wallet.agentpay.site/arc/activity",
 } as const;
 
 export const celoNetworkSchema = z.enum(["mainnet", "testnet"]);
 export const celoHomeChainIdSchema = z.union([z.literal(42220), z.literal(11142220)]);
+export const arcNetworkSchema = z.literal("testnet");
+export const arcHomeChainIdSchema = z.literal(5042002);
 export const networkSelectionShape = {
-  network: celoNetworkSchema.optional(),
-  homeChainId: celoHomeChainIdSchema.optional(),
+  network: arcNetworkSchema.optional(),
+  homeChainId: arcHomeChainIdSchema.optional(),
 } as const;
 
 export type CeloNetwork = z.infer<typeof celoNetworkSchema>;
 export type CeloHomeChainId = z.infer<typeof celoHomeChainIdSchema>;
+export type ArcNetwork = z.infer<typeof arcNetworkSchema>;
+export type ArcHomeChainId = z.infer<typeof arcHomeChainIdSchema>;
 export type NetworkSelectionInput = {
+  network?: ArcNetwork;
+  homeChainId?: ArcHomeChainId;
+};
+
+export function resolveArcHomeChainId(input: NetworkSelectionInput, fallbackHomeChainId?: number): ArcHomeChainId {
+  if (input.network !== undefined && input.network !== "testnet") {
+    throw new Error(`Unsupported Arc network ${input.network}.`);
+  }
+  if (input.homeChainId !== undefined && input.homeChainId !== 5042002) {
+    throw new Error(`Unsupported Arc homeChainId ${input.homeChainId}.`);
+  }
+  if (fallbackHomeChainId !== undefined && fallbackHomeChainId !== 5042002) {
+    throw new Error(`Unsupported configured Arc homeChainId ${fallbackHomeChainId}.`);
+  }
+  return 5042002;
+}
+
+type CeloNetworkSelectionInput = {
   network?: CeloNetwork;
   homeChainId?: CeloHomeChainId;
 };
 
 export function resolveCeloHomeChainId(
-  input: NetworkSelectionInput,
+  input: CeloNetworkSelectionInput,
   fallbackHomeChainId: CeloHomeChainId = 42220,
 ): CeloHomeChainId {
   const networkHomeChainId = input.network ? CELO_NETWORK_CHAIN_IDS[input.network] : undefined;

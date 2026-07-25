@@ -11,8 +11,8 @@ import { checkRouteTargetAllowanceTool, prepareRouteTargetAllowanceTool } from "
 import { getAgentWalletTool, prepareWalletCreationTool } from "./wallet-setup.ts";
 import { parseX402PaymentRequiredTool } from "./x402.ts";
 
-describe("Celo MCP tool schemas", () => {
-  it("advertises only Celo mainnet and Sepolia as home chains", () => {
+describe("Arc MCP tool schemas", () => {
+  it("advertises only Arc Testnet as the home chain", () => {
     const tools = [
       prepareAccountAdminTransactionTool,
       getBalanceTool,
@@ -26,16 +26,16 @@ describe("Celo MCP tool schemas", () => {
     ];
 
     for (const tool of tools) {
-      assert.deepEqual(tool.inputSchema.properties.homeChainId.enum, [42220, 11142220], tool.name);
+      assert.deepEqual(tool.inputSchema.properties.homeChainId.enum, [5042002], tool.name);
     }
   });
 
-  it("advertises only Celo stablecoins for source balances and spending", () => {
-    assert.deepEqual(getBalanceTool.inputSchema.properties.tokenSymbols.items.enum, ["USDC", "USDT", "USDm"]);
-    assert.deepEqual(prepareContractCallTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC", "USDT", "USDm"]);
-    assert.deepEqual(preparePaymentTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC", "USDT", "USDm"]);
-    assert.deepEqual(quotePaymentRouteTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC", "USDT", "USDm"]);
-    assert.deepEqual(parseInvoicePaymentTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC", "USDT", "USDm"]);
-    assert.deepEqual(parseX402PaymentRequiredTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC", "USDT", "USDm"]);
+  it("advertises only Arc USDC for source balances and spending", () => {
+    assert.deepEqual(getBalanceTool.inputSchema.properties.tokenSymbols.items.enum, ["USDC"]);
+    assert.deepEqual(prepareContractCallTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC"]);
+    assert.deepEqual(preparePaymentTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC"]);
+    assert.deepEqual(quotePaymentRouteTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC"]);
+    assert.deepEqual(parseInvoicePaymentTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC"]);
+    assert.deepEqual(parseX402PaymentRequiredTool.inputSchema.properties.sourceTokenSymbol.enum, ["USDC"]);
   });
 });

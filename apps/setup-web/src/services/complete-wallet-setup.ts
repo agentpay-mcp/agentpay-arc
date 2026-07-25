@@ -3,7 +3,7 @@ import { verifyMessage } from "ethers";
 import {
   completeWalletSetupInputSchema,
   getStableTokenAddress,
-  DEFAULT_STABLE_TOKEN_SYMBOLS,
+  CELO_STABLE_TOKEN_SYMBOLS,
   type CompleteWalletSetupInput,
   type SetupIntentRecord,
 } from "@agentpay-ai/shared-arc";
@@ -190,7 +190,7 @@ function defaultAllowedTokenAddresses(homeChainId: number): string[] {
   if (homeChainId === 42220) {
     return [MAINNET_USDC_ADDRESS];
   }
-  return DEFAULT_STABLE_TOKEN_SYMBOLS.map((symbol) => getStableTokenAddress(homeChainId, symbol));
+  return CELO_STABLE_TOKEN_SYMBOLS.map((symbol) => getStableTokenAddress(homeChainId, symbol));
 }
 
 function assertDeploymentAllowlist(homeChainId: number, tokenAddresses: string[], routeTargets: string[]): void {

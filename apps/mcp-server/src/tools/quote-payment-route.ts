@@ -4,8 +4,7 @@ import {
   getChainName,
   isDirectPaymentRoute,
   quotePaymentRouteInputSchema,
-  resolveCeloHomeChainId,
-  type CeloHomeChainId,
+  resolveArcHomeChainId,
   type QuotePaymentRouteInput,
   type RouteProvider,
 } from "@agentpay-ai/shared-arc";
@@ -18,7 +17,7 @@ export interface QuotePaymentRouteDependencies {
   wallets: AgentWalletRepository;
   routes: RouteQuoteProvider;
   balances: TokenBalanceChecker;
-  homeChainId?: CeloHomeChainId;
+  homeChainId?: number;
 }
 
 export interface QuotePaymentRouteOutput {
@@ -49,7 +48,7 @@ export async function quotePaymentRoute(
   dependencies: QuotePaymentRouteDependencies,
 ): Promise<QuotePaymentRouteOutput> {
   const input = quotePaymentRouteInputSchema.parse(rawInput);
-  const homeChainId = resolveCeloHomeChainId(input, dependencies.homeChainId);
+  const homeChainId = resolveArcHomeChainId(input, dependencies.homeChainId);
   const wallet = await dependencies.wallets.getActiveWallet({ homeChainId });
 
   if (!wallet || wallet.status !== "ACTIVE") {
@@ -124,9 +123,9 @@ export const quotePaymentRouteTool = {
       destinationChainId: { type: "number" },
       destinationTokenSymbol: { type: "string", enum: ["USDT0", "USDC", "USDT", "USDm"] },
       amountOut: { type: "string" },
-      sourceTokenSymbol: { type: "string", enum: ["USDC", "USDT", "USDm"] },
-      network: { type: "string", enum: ["mainnet", "testnet"] },
-      homeChainId: { type: "number", enum: [42220, 11142220] },
+      sourceTokenSymbol: { type: "string", enum: ["USDC"] },
+      network: { type: "string", enum: ["testnet"] },
+      homeChainId: { type: "number", enum: [5042002] },
     },
   },
 } as const;

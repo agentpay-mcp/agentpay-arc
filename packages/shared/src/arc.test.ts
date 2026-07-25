@@ -9,10 +9,17 @@ describe("Arc network foundation", () => {
       chainId: 5042002,
       caip2: "eip155:5042002",
       circleChain: "ARC-TESTNET",
-      cctpDomain: 26,
+      name: "Arc Testnet",
+      nativeCurrency: {
+        symbol: "USDC",
+        decimals: 18,
+      },
       rpcUrl: "https://rpc.testnet.arc.network",
-      wsRpcUrl: "wss://rpc.testnet.arc.network",
+      websocketUrl: "wss://rpc.testnet.arc.network",
       explorerUrl: "https://testnet.arcscan.app",
+      usdcAddress: "0x3600000000000000000000000000000000000000",
+      usdcDecimals: 6,
+      cctpDomain: 26,
     });
     assert.equal(ARC_TESTNET_CCTP_DOMAIN, 26);
   });

@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
-  isAssignedCeloAttributionTag,
   type PaymentIntentRecord,
   type SessionEnvironment,
 } from "@agentpay-ai/shared-arc";
@@ -13,13 +12,22 @@ import type { MainnetAccountVerificationResult } from "../services/mainnet-accou
 export type ExecutionMode = "OFF" | "CANARY" | "PUBLIC" | "DRAIN";
 export type RuntimeIdentityStatus = "SHADOW_ONLY" | "DEPLOYED" | "READY" | "DRAINING";
 
+export const ARC_CHAIN_ID = 5042002;
+export const ARC_CAIP2 = "eip155:5042002";
+export const ARC_USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+export const ARC_USDC_CODE_HASH =
+  "0xc9987bd3af6b26a030951faa7eacc017b68343aeedf3ce5fe68f821c4b93939d";
+export const ARC_CONSUMER_MCP_URL = "https://wallet.agentpay.site/arc/mcp";
+export const ARC_PAID_MCP_URL = "https://mcp.agentpay.site/arc/mcp";
+export const ARC_SETUP_URL = "https://wallet.agentpay.site/arc/setup";
+export const ARC_REVIEW_URL = "https://wallet.agentpay.site/arc/review";
+/** Legacy Celo production constants retained for frozen evidence and Celo-only modules. */
 export const MAINNET_CHAIN_ID = 42220;
 export const MAINNET_CAIP2 = "eip155:42220";
 export const MAINNET_USDC_ADDRESS = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C";
 export const MAINNET_USDC_CODE_HASH =
   "0x14254a76b7b2554180021c6390e814e73dee647ae91b7198da08de5145214493";
 export const MAINNET_MIGRATION_HEAD = "20260721160000_celo_x402_settlement_audit";
-export const MAINNET_RPC_FALLBACK_URL = "https://forno.celo.org";
 export const MAINNET_CONSUMER_MCP_URL = "https://wallet.agentpay.site/celo/mcp";
 export const MAINNET_PAID_MCP_URL = "https://mcp.agentpay.site/celo/mcp";
 export const MAINNET_SETUP_URL = "https://wallet.agentpay.site/celo/setup";
@@ -103,8 +111,6 @@ export interface ProductionPaymentConfigSnapshot {
   resourceUrl: string;
 }
 
-export const MAINNET_X402_FACILITATOR_URL = "https://api.x402.celo.org";
-
 export interface ProductionReadinessResult {
   ready: boolean;
   executionAllowed: boolean;
@@ -142,15 +148,13 @@ export function validateProductionEnvironment(env: Record<string, string | undef
   const has = (name: string) => typeof env[name] === "string" && env[name]!.trim() !== "";
 
   if (env.AGENTPAY_ENVIRONMENT !== "production") add("AGENTPAY_ENVIRONMENT", "must be production");
-  if (String(env.AGENTPAY_HOME_CHAIN_ID ?? "") !== String(MAINNET_CHAIN_ID)) add("AGENTPAY_HOME_CHAIN_ID", "must be 42220");
+  if (String(env.AGENTPAY_HOME_CHAIN_ID ?? "") !== String(ARC_CHAIN_ID)) add("AGENTPAY_HOME_CHAIN_ID", "must be 5042002");
   if (env.AGENTPAY_ACCOUNT_VERSION !== "v2") add("AGENTPAY_ACCOUNT_VERSION", "must be v2");
 
   for (const name of [
     "SUPABASE_PRODUCTION_URL",
     "SUPABASE_PRODUCTION_SERVICE_ROLE_KEY",
-    "CELO_MAINNET_RPC_URL",
-    "CELO_MAINNET_RPC_FALLBACK_URL",
-    "CELO_ATTRIBUTION_TAG",
+    "ARC_TESTNET_RPC_URL",
     "AGENTPAY_SESSION_HASH_KEY",
     "AGENTPAY_REVIEW_TOKEN_SECRET",
     "AGENTPAY_CONSUMER_MCP_URL",
@@ -168,34 +172,25 @@ export function validateProductionEnvironment(env: Record<string, string | undef
     if (!has(name)) add(name, "is required for production");
   }
 
-  if (has("CELO_MAINNET_RPC_URL")) {
+  if (has("ARC_TESTNET_RPC_URL")) {
     try {
-      const rpcUrl = new URL(env.CELO_MAINNET_RPC_URL!);
+      const rpcUrl = new URL(env.ARC_TESTNET_RPC_URL!);
       if (
         rpcUrl.protocol !== "https:" ||
-        ["localhost", "127.0.0.1", "::1"].includes(rpcUrl.hostname) ||
-        /test|dev|staging/i.test(rpcUrl.hostname)
+        ["localhost", "127.0.0.1", "::1"].includes(rpcUrl.hostname)
       ) {
-        add("CELO_MAINNET_RPC_URL", "must be a production HTTPS RPC URL");
+        add("ARC_TESTNET_RPC_URL", "must be an HTTPS Arc Testnet RPC URL");
       }
     } catch {
-      add("CELO_MAINNET_RPC_URL", "must be a valid HTTPS URL");
+      add("ARC_TESTNET_RPC_URL", "must be a valid HTTPS URL");
     }
   }
 
-  if (has("CELO_MAINNET_RPC_FALLBACK_URL") && env.CELO_MAINNET_RPC_FALLBACK_URL !== MAINNET_RPC_FALLBACK_URL) {
-    add("CELO_MAINNET_RPC_FALLBACK_URL", `must be ${MAINNET_RPC_FALLBACK_URL}`);
-  }
-
-  if (has("CELO_ATTRIBUTION_TAG") && !isAssignedCeloAttributionTag(env.CELO_ATTRIBUTION_TAG)) {
-    add("CELO_ATTRIBUTION_TAG", "must be the assigned lowercase celo_ attribution code");
-  }
-
   const publicRoutes = {
-    AGENTPAY_CONSUMER_MCP_URL: MAINNET_CONSUMER_MCP_URL,
-    AGENTPAY_PAID_MCP_URL: MAINNET_PAID_MCP_URL,
-    AGENTPAY_PUBLIC_SETUP_URL: MAINNET_SETUP_URL,
-    AGENTPAY_PUBLIC_REVIEW_URL: MAINNET_REVIEW_URL,
+    AGENTPAY_CONSUMER_MCP_URL: ARC_CONSUMER_MCP_URL,
+    AGENTPAY_PAID_MCP_URL: ARC_PAID_MCP_URL,
+    AGENTPAY_PUBLIC_SETUP_URL: ARC_SETUP_URL,
+    AGENTPAY_PUBLIC_REVIEW_URL: ARC_REVIEW_URL,
   } as const;
   for (const [name, expected] of Object.entries(publicRoutes)) {
     if (has(name) && env[name] !== expected) add(name, `must be ${expected}`);
@@ -270,32 +265,26 @@ export function validateProductionManifest(manifest: unknown): { valid: boolean;
   if (!EXECUTION_MODES.has(record.executionMode)) add("executionMode", "must be OFF, CANARY, PUBLIC, or DRAIN");
   if (record.environment !== "production") add("environment", "must be production");
   if (record.schemaVersion !== 1) add("schemaVersion", "must be 1");
-  if (record.chain?.chainId !== MAINNET_CHAIN_ID) add("chain.chainId", "must be 42220");
-  if (record.chain?.caip2 !== MAINNET_CAIP2) add("chain.caip2", "must be eip155:42220");
-  if (record.chain?.rpcEnvRef !== "CELO_MAINNET_RPC_URL") add("chain.rpcEnvRef", "must be CELO_MAINNET_RPC_URL");
-  if (record.chain?.fallbackRpcEnvRef !== "CELO_MAINNET_RPC_FALLBACK_URL") {
-    add("chain.fallbackRpcEnvRef", "must be CELO_MAINNET_RPC_FALLBACK_URL");
-  }
-  if (record.chain?.fallbackRpcUrl !== MAINNET_RPC_FALLBACK_URL) {
-    add("chain.fallbackRpcUrl", `must be ${MAINNET_RPC_FALLBACK_URL}`);
-  }
+  if (record.chain?.chainId !== ARC_CHAIN_ID) add("chain.chainId", "must be 5042002");
+  if (record.chain?.caip2 !== ARC_CAIP2) add("chain.caip2", "must be eip155:5042002");
+  if (record.chain?.rpcEnvRef !== "ARC_TESTNET_RPC_URL") add("chain.rpcEnvRef", "must be ARC_TESTNET_RPC_URL");
   if (record.database?.environment !== "production") add("database.environment", "must be production");
   if (record.database?.migrationHead !== MAINNET_MIGRATION_HEAD) add("database.migrationHead", "does not match the identity migration head");
   if (record.release?.migrationHead !== MAINNET_MIGRATION_HEAD) add("release.migrationHead", "does not match the identity migration head");
   if (record.contract?.version !== "v2") add("contract.version", "must be v2");
-  if (record.contract?.domain?.name !== "AgentPay" || record.contract?.domain?.version !== "1" || record.contract?.domain?.chainId !== MAINNET_CHAIN_ID) {
-    add("contract.domain", "must be AgentPay/1 on chain 42220");
+  if (record.contract?.domain?.name !== "AgentPay" || record.contract?.domain?.version !== "1" || record.contract?.domain?.chainId !== ARC_CHAIN_ID) {
+    add("contract.domain", "must be AgentPay/1 on chain 5042002");
   }
-  if (record.token?.symbol !== "USDC" || record.token?.address?.toLowerCase() !== MAINNET_USDC_ADDRESS.toLowerCase()) add("token", "must be Celo mainnet USDC");
-  if (record.token?.decimals !== 6 || record.token?.codeHash?.toLowerCase() !== MAINNET_USDC_CODE_HASH.toLowerCase()) add("token", "code hash and decimals must match Celo mainnet USDC");
-  if (JSON.stringify(record.contract?.allowedTokens ?? []) !== JSON.stringify([MAINNET_USDC_ADDRESS])) add("contract.allowedTokens", "must contain only Celo mainnet USDC");
+  if (record.token?.symbol !== "USDC" || record.token?.address?.toLowerCase() !== ARC_USDC_ADDRESS.toLowerCase()) add("token", "must be Arc Testnet USDC");
+  if (record.token?.decimals !== 6 || record.token?.codeHash?.toLowerCase() !== ARC_USDC_CODE_HASH.toLowerCase()) add("token", "code hash and decimals must match Arc Testnet USDC");
+  if (JSON.stringify(record.contract?.allowedTokens ?? []) !== JSON.stringify([ARC_USDC_ADDRESS])) add("contract.allowedTokens", "must contain only Arc Testnet USDC");
   if (!Array.isArray(record.contract?.allowedRouteTargets) || record.contract.allowedRouteTargets.length !== 0) add("contract.allowedRouteTargets", "must be empty");
-  if (record.x402?.network !== MAINNET_CAIP2 || record.x402?.asset !== "USDC" || record.x402?.tokenAddress?.toLowerCase() !== MAINNET_USDC_ADDRESS.toLowerCase()) add("x402", "must target Celo mainnet USDC on eip155:42220");
+  if (record.x402?.network !== ARC_CAIP2 || record.x402?.asset !== "USDC" || record.x402?.tokenAddress?.toLowerCase() !== ARC_USDC_ADDRESS.toLowerCase()) add("x402", "must target Arc Testnet USDC on eip155:5042002");
   if (record.x402?.decimals !== 6 || record.x402?.price !== "$0.01" || record.x402?.priceAtomic !== "10000" || record.x402?.syncSettle !== true) add("x402", "must use 6 decimals, $0.01/10000, and synchronous settlement");
   if (JSON.stringify(record.x402?.toolAllowlist ?? []) !== JSON.stringify(["execute_payment"])) add("x402.toolAllowlist", "must contain only execute_payment");
-  if (record.onboarding?.setupUrl !== MAINNET_SETUP_URL) add("onboarding.setupUrl", `must be ${MAINNET_SETUP_URL}`);
-  if (record.onboarding?.readinessUrl !== `${MAINNET_SETUP_URL}/readyz`) {
-    add("onboarding.readinessUrl", `must be ${MAINNET_SETUP_URL}/readyz`);
+  if (record.onboarding?.setupUrl !== ARC_SETUP_URL) add("onboarding.setupUrl", `must be ${ARC_SETUP_URL}`);
+  if (record.onboarding?.readinessUrl !== `${ARC_SETUP_URL}/readyz`) {
+    add("onboarding.readinessUrl", `must be ${ARC_SETUP_URL}/readyz`);
   }
   if (record.onboarding?.manifestPathEnvRef !== "AGENTPAY_ONBOARDING_MANIFEST_PATH") {
     add("onboarding.manifestPathEnvRef", "must be AGENTPAY_ONBOARDING_MANIFEST_PATH");
@@ -308,14 +297,6 @@ export function validateProductionManifest(manifest: unknown): { valid: boolean;
   }
   if (record.onboarding?.sponsorAddressEnvRef !== "AGENTPAY_SETUP_SPONSOR_ADDRESS") {
     add("onboarding.sponsorAddressEnvRef", "must be AGENTPAY_SETUP_SPONSOR_ADDRESS");
-  }
-  if (
-    record.attribution?.standard !== "ERC-8021" ||
-    record.attribution?.tagEnvRef !== "CELO_ATTRIBUTION_TAG" ||
-    JSON.stringify(record.attribution?.appliesTo) !== JSON.stringify(["agentpay-direct-transactions"]) ||
-    JSON.stringify(record.attribution?.excludes) !== JSON.stringify(["x402-facilitator-settlements"])
-  ) {
-    add("attribution", "must attribute direct AgentPay transactions and exclude x402 facilitator settlements");
   }
   if (mode === "OFF" && status !== "SHADOW_ONLY" && status !== "DEPLOYED") add("executionMode", "OFF is only valid before activation");
   if (status === "SHADOW_ONLY" && mode !== "OFF") add("executionMode", "SHADOW_ONLY manifests must remain OFF");
@@ -434,18 +415,18 @@ export function assertProductionExecutionAllowed(
   }
   if (!policy.directMainnetOnly) return;
   const direct =
-    intent.sourceChainId === MAINNET_CHAIN_ID &&
-    intent.destinationChainId === MAINNET_CHAIN_ID &&
+    intent.sourceChainId === ARC_CHAIN_ID &&
+    intent.destinationChainId === ARC_CHAIN_ID &&
     intent.sourceTokenSymbol === "USDC" &&
     intent.destinationTokenSymbol === "USDC" &&
-    intent.sourceTokenAddress.toLowerCase() === MAINNET_USDC_ADDRESS.toLowerCase() &&
-    intent.destinationTokenAddress.toLowerCase() === MAINNET_USDC_ADDRESS.toLowerCase() &&
+    intent.sourceTokenAddress.toLowerCase() === ARC_USDC_ADDRESS.toLowerCase() &&
+    intent.destinationTokenAddress.toLowerCase() === ARC_USDC_ADDRESS.toLowerCase() &&
     intent.routeProvider === "DIRECT" &&
     intent.routeTarget.toLowerCase() === ZERO_ADDRESS &&
     intent.routeCalldata === "0x" &&
     intent.maxNativeFee === "0";
   if (!direct) {
-    throw new Error("PRODUCTION_EXECUTION_RESTRICTED: only direct Celo mainnet USDC payments are enabled.");
+    throw new Error("PRODUCTION_EXECUTION_RESTRICTED: only direct Arc Testnet USDC payments are enabled.");
   }
 }
 
@@ -463,8 +444,8 @@ function validateIdentityAgainstManifest(
   };
   compare("id", identity.id, 1);
   compare("environment", identity.environment, "production");
-  compare("chainId", identity.chainId, MAINNET_CHAIN_ID);
-  compare("caip2", identity.caip2, MAINNET_CAIP2);
+  compare("chainId", identity.chainId, ARC_CHAIN_ID);
+  compare("caip2", identity.caip2, ARC_CAIP2);
   compare("Supabase project", identity.supabaseProjectRef, projectRef);
   compare("migration head", identity.migrationHead, record.database?.migrationHead);
   compare("manifest digest", identity.manifestSha256, manifestDigest);
@@ -508,22 +489,22 @@ function validatePaymentConfig(config: ProductionPaymentConfigSnapshot | undefin
     errors.push("payment config: public mode requires enabled x402 payment");
     return errors;
   }
-  if (config.network !== MAINNET_CAIP2) errors.push("payment config: network must be eip155:42220");
-  if (config.asset?.toLowerCase() !== MAINNET_USDC_ADDRESS.toLowerCase()) {
-    errors.push("payment config: asset must be the canonical Celo mainnet USDC contract");
+  if (config.network !== ARC_CAIP2) errors.push("payment config: network must be eip155:5042002");
+  if (config.asset?.toLowerCase() !== ARC_USDC_ADDRESS.toLowerCase()) {
+    errors.push("payment config: asset must be the canonical Arc Testnet USDC contract");
   }
   if (config.price !== "$0.01") errors.push("payment config: price must be $0.01");
   if (config.assetDecimals !== 6) errors.push("payment config: asset decimals must be 6 for USDC");
   if (config.syncSettle !== true) errors.push("payment config: synchronous settlement must be explicitly true");
   if (!ADDRESS_PATTERN.test(config.payTo) || config.payTo.toLowerCase() === ZERO_ADDRESS) errors.push("payment config: payTo must be a non-zero EVM address");
-  if (config.facilitatorUrl !== MAINNET_X402_FACILITATOR_URL) {
-    errors.push(`payment config: facilitator URL must be ${MAINNET_X402_FACILITATOR_URL}`);
+  if (!config.facilitatorUrl || !isHttpsUrl(config.facilitatorUrl)) {
+    errors.push("payment config: facilitator URL must be an HTTPS URL");
   }
-  if (config.resourceUrl !== MAINNET_PAID_MCP_URL) {
-    errors.push(`payment config: resource URL must be ${MAINNET_PAID_MCP_URL}`);
+  if (config.resourceUrl !== ARC_PAID_MCP_URL) {
+    errors.push(`payment config: resource URL must be ${ARC_PAID_MCP_URL}`);
   }
   if (!config.facilitatorApiKey) {
-    errors.push("payment config: AGENTPAY_CELO_X402_API_KEY is required for the hosted Celo facilitator");
+    errors.push("payment config: facilitator API key is required");
   }
   return errors;
 }
@@ -536,6 +517,14 @@ function extractSupabaseProjectRef(value: string | undefined): string | null {
     return match?.[1] ?? null;
   } catch {
     return null;
+  }
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 

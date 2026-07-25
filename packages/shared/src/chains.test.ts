@@ -39,22 +39,20 @@ describe("getNativeCurrency", () => {
     assert.throws(() => getNativeCurrency(1), /Unsupported chain 1/);
   });
 
-  it("accepts only Celo network selectors for AgentPay Celo inputs", () => {
+  it("accepts only Arc Testnet selectors for AgentPay Arc inputs", () => {
     const schema = z.object(networkSelectionShape);
 
-    assert.deepEqual(schema.parse({ network: "mainnet", homeChainId: 42220 }), {
-      network: "mainnet",
-      homeChainId: 42220,
-    });
-    assert.deepEqual(schema.parse({ network: "testnet", homeChainId: 11142220 }), {
+    assert.deepEqual(schema.parse({ network: "testnet", homeChainId: 5042002 }), {
       network: "testnet",
-      homeChainId: 11142220,
+      homeChainId: 5042002,
     });
+    assert.throws(() => schema.parse({ network: "mainnet" }));
+    assert.throws(() => schema.parse({ homeChainId: 42220 }));
+    assert.throws(() => schema.parse({ homeChainId: 11142220 }));
     assert.throws(() => schema.parse({ homeChainId: 196 }));
-    assert.throws(() => schema.parse({ homeChainId: 1952 }));
   });
 
-  it("pins the isolated Celo production network and public paths", () => {
+  it("preserves frozen legacy Celo metadata separately from Arc input schemas", () => {
     assert.deepEqual(CELO_NETWORKS.mainnet, {
       chainId: 42220,
       caip2: "eip155:42220",
@@ -80,7 +78,7 @@ describe("getNativeCurrency", () => {
       name: "Arc Testnet",
       nativeCurrency: { symbol: "USDC", decimals: 18 },
       rpcUrl: "https://rpc.testnet.arc.network",
-      wsRpcUrl: "wss://rpc.testnet.arc.network",
+      websocketUrl: "wss://rpc.testnet.arc.network",
       explorerUrl: "https://testnet.arcscan.app",
     });
     assert.deepEqual(AGENTPAY_ARC_PUBLIC_URLS, {
@@ -88,6 +86,8 @@ describe("getNativeCurrency", () => {
       paidMcp: "https://mcp.agentpay.site/arc/mcp",
       setup: "https://wallet.agentpay.site/arc/setup",
       review: "https://wallet.agentpay.site/arc/review",
+      marketplace: "https://wallet.agentpay.site/arc/marketplace",
+      activity: "https://wallet.agentpay.site/arc/activity",
     });
   });
 });

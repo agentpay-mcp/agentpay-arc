@@ -180,8 +180,26 @@ describe("publishable AgentPay package manifests", () => {
       const template = JSON.parse(await readFile(templatePath, "utf8"));
 
       assert.deepEqual(template.mcpServers.agentpay, {
-        url: "https://wallet.agentpay.site/celo/mcp",
+        url: "https://wallet.agentpay.site/arc/mcp",
       });
+    }
+  });
+
+  it("keeps bundled runtime instructions on the Arc package and public routes", async () => {
+    const instructionPaths = [
+      "packages/cli/templates/codex/AGENTS.md",
+      "packages/cli/templates/cursor/rules.md",
+      "packages/cli/templates/generic/instructions.md",
+      "packages/cli/templates/hermes/instructions.md",
+      "packages/cli/templates/claude/CLAUDE.md",
+    ];
+
+    for (const instructionPath of instructionPaths) {
+      const instructions = await readFile(instructionPath, "utf8");
+
+      assert.match(instructions, /@agentpay-ai\/agentpay-arc/);
+      assert.match(instructions, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
+      assert.doesNotMatch(instructions, /@agentpay-ai\/agentpay-celo|agentpay\.site\/celo\/mcp/);
     }
   });
 

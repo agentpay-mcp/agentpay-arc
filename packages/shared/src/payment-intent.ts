@@ -3,7 +3,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
 
 import { getChainName, networkSelectionShape } from "./chains.ts";
-import { celoStableTokenSymbolSchema, getStableTokenMetadata, stableTokenSymbolSchema } from "./tokens.ts";
+import { arcStableTokenSymbolSchema, getStableTokenMetadata, stableTokenSymbolSchema } from "./tokens.ts";
 
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const hexPattern = /^0x(?:[a-fA-F0-9]{2})*$/;
@@ -44,7 +44,7 @@ export const preparePaymentInputSchema = z.object({
   destinationTokenSymbol: stableTokenSymbolSchema,
   amountOut: positiveDecimalStringSchema,
   purpose: z.string().trim().min(1).max(280),
-  sourceTokenSymbol: celoStableTokenSymbolSchema.default("USDC"),
+  sourceTokenSymbol: arcStableTokenSymbolSchema.default("USDC"),
   paymentType: stablecoinPaymentTypeSchema.default("WALLET_PAYMENT"),
   ...networkSelectionShape,
 });
@@ -77,7 +77,7 @@ export type ExecuteAuthorizedPaymentInput = z.infer<typeof executeAuthorizedPaym
 export const prepareContractCallInputSchema = z.object({
   targetAddress: evmAddressSchema,
   callData: hexDataSchema.refine((value) => value !== "0x", "Expected non-empty calldata"),
-  sourceTokenSymbol: celoStableTokenSymbolSchema.default("USDC"),
+  sourceTokenSymbol: arcStableTokenSymbolSchema.default("USDC"),
   maxTokenSpend: positiveDecimalStringSchema,
   maxNativeFee: z.string().regex(/^(?:0|[1-9]\d*)$/, "Expected a non-negative integer string").default("0"),
   purpose: z.string().trim().min(1).max(280),

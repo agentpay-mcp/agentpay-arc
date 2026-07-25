@@ -13,7 +13,7 @@ import {
 } from "./index.ts";
 
 describe("quotePaymentRouteInputSchema", () => {
-  it("defaults sourceTokenSymbol to Celo USDC without requiring a purpose", () => {
+  it("defaults sourceTokenSymbol to Arc USDC without requiring a purpose", () => {
     const parsed = quotePaymentRouteInputSchema.parse({
       recipientAddress: "0x1111111111111111111111111111111111111111",
       destinationChainId: 8453,
@@ -96,18 +96,20 @@ describe("preparePaymentInputSchema", () => {
     );
   });
 
-  it("accepts Celo mainnet and Sepolia selectors and rejects legacy X Layer selectors", () => {
+  it("accepts only the Arc Testnet selector for AgentPay Arc payments", () => {
     const baseInput = {
       recipientAddress: "0x1111111111111111111111111111111111111111",
-      destinationChainId: 42220,
+      destinationChainId: 5042002,
       destinationTokenSymbol: "USDC",
       amountOut: "10.50",
       purpose: "supplier payout",
     } as const;
 
-    assert.equal(preparePaymentInputSchema.parse({ ...baseInput, homeChainId: 42220 }).homeChainId, 42220);
-    assert.equal(preparePaymentInputSchema.parse({ ...baseInput, homeChainId: 11142220 }).homeChainId, 11142220);
+    assert.equal(preparePaymentInputSchema.parse({ ...baseInput, homeChainId: 5042002 }).homeChainId, 5042002);
+    assert.throws(() => preparePaymentInputSchema.parse({ ...baseInput, homeChainId: 42220 }));
+    assert.throws(() => preparePaymentInputSchema.parse({ ...baseInput, homeChainId: 11142220 }));
     assert.throws(() => preparePaymentInputSchema.parse({ ...baseInput, homeChainId: 196 }));
+    assert.throws(() => preparePaymentInputSchema.parse({ ...baseInput, sourceTokenSymbol: "USDT" }));
     assert.throws(() => preparePaymentInputSchema.parse({ ...baseInput, sourceTokenSymbol: "USDT0" }));
   });
 });

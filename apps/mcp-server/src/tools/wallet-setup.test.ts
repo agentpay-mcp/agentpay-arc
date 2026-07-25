@@ -33,7 +33,7 @@ describe("prepareWalletCreation", () => {
     assert.equal(created[0].status, "PENDING");
     assert.equal(created[0].executorAddress, "0x4444444444444444444444444444444444444444");
     assert.equal(created[0].expiresAt, "2026-07-03T04:15:00.000Z");
-    assert.equal(created[0].homeChainId, 42220);
+    assert.equal(created[0].homeChainId, 5042002);
     assert.equal(
       created[0].messageToSign,
       [
@@ -41,7 +41,7 @@ describe("prepareWalletCreation", () => {
         "Setup ID: setup_123",
         "Owner: connected signing wallet",
         "Executor: 0x4444444444444444444444444444444444444444",
-        "Chain: Celo",
+        "Chain: Arc Testnet",
         "Expires: 2026-07-03T04:15:00.000Z",
         "This signature proves wallet ownership only. It does not approve a payment or token transfer.",
       ].join("\n"),
@@ -52,8 +52,8 @@ describe("prepareWalletCreation", () => {
       setupUrl: "https://setup.agentpay.dev/setup?setup_intent_id=setup_123",
       messageToSign: created[0].messageToSign,
       expiresAt: "2026-07-03T04:15:00.000Z",
-      homeChainId: 42220,
-      homeChain: "Celo",
+      homeChainId: 5042002,
+      homeChain: "Arc Testnet",
     });
   });
 
@@ -61,7 +61,7 @@ describe("prepareWalletCreation", () => {
     let createCalls = 0;
 
     const output = await prepareWalletCreation(
-      { network: "mainnet" },
+      { network: "testnet" },
       {
         setupIntents: {
           async createSetupIntent() {
@@ -72,8 +72,8 @@ describe("prepareWalletCreation", () => {
           },
         },
         executorAddress: "0x4444444444444444444444444444444444444444",
-        setupWebUrl: "https://wallet.agentpay.site/celo/review",
-        productionOnboardingUrl: "https://wallet.agentpay.site/celo/setup",
+        setupWebUrl: "https://wallet.agentpay.site/arc/review",
+        productionOnboardingUrl: "https://wallet.agentpay.site/arc/setup",
         clock: () => new Date("2026-07-21T04:00:00.000Z"),
         createSetupIntentId: () => "must_not_be_created",
       },
@@ -82,30 +82,26 @@ describe("prepareWalletCreation", () => {
     assert.equal(createCalls, 0);
     assert.deepEqual(output, {
       status: "SETUP_REQUIRED",
-      setupUrl: "https://wallet.agentpay.site/celo/setup",
-      homeChainId: 42220,
-      homeChain: "Celo",
+      setupUrl: "https://wallet.agentpay.site/arc/setup",
+      homeChainId: 5042002,
+      homeChain: "Arc Testnet",
       instructionToAgent: "Open the secure AgentPay setup link, connect the owner wallet, and approve the setup signature. Never share a seed phrase or private key.",
     });
   });
 
-  it("rejects testnet selection and non-canonical links on the production onboarding path", async () => {
+  it("rejects non-canonical links on the Arc onboarding path", async () => {
     const dependencies = {
       setupIntents: {
         async createSetupIntent() {},
         async getSetupIntent() { return null; },
       },
       executorAddress: "0x4444444444444444444444444444444444444444",
-      setupWebUrl: "https://wallet.agentpay.site/celo/review",
-      productionOnboardingUrl: "https://wallet.agentpay.site/celo/setup",
+      setupWebUrl: "https://wallet.agentpay.site/arc/review",
+      productionOnboardingUrl: "https://wallet.agentpay.site/arc/setup",
       clock: () => new Date("2026-07-21T04:00:00.000Z"),
       createSetupIntentId: () => "must_not_be_created",
     };
 
-    await assert.rejects(
-      prepareWalletCreation({ network: "testnet" }, dependencies),
-      /Celo mainnet/i,
-    );
     await assert.rejects(
       prepareWalletCreation({}, { ...dependencies, productionOnboardingUrl: "https://evil.example/setup" }),
       /onboarding URL/i,
@@ -136,10 +132,10 @@ describe("prepareWalletCreation", () => {
 
     assert.equal(created[0].ownerAddress, "0x2222222222222222222222222222222222222222");
     assert.match(created[0].messageToSign, /Owner: 0x2222222222222222222222222222222222222222/);
-    assert.match(created[0].messageToSign, /Chain: Celo/);
+    assert.match(created[0].messageToSign, /Chain: Arc Testnet/);
   });
 
-  it("uses the requested Celo Sepolia network in the setup signing message", async () => {
+  it("uses the requested Arc Testnet network in the setup signing message", async () => {
     const created: SetupIntentRecord[] = [];
 
     await prepareWalletCreation(
@@ -161,8 +157,8 @@ describe("prepareWalletCreation", () => {
       },
     );
 
-    assert.match(created[0].messageToSign, /Chain: Celo Sepolia/);
-    assert.equal(created[0].homeChainId, 11142220);
+    assert.match(created[0].messageToSign, /Chain: Arc Testnet/);
+    assert.equal(created[0].homeChainId, 5042002);
   });
 });
 
@@ -182,7 +178,7 @@ describe("checkWalletCreation", () => {
               expiresAt: "2026-07-03T04:15:00.000Z",
               accountAddress: "0x3333333333333333333333333333333333333333",
               completedAt: "2026-07-03T04:02:00.000Z",
-              homeChainId: 11142220,
+              homeChainId: 5042002,
             };
           },
         },
@@ -197,8 +193,8 @@ describe("checkWalletCreation", () => {
       accountAddress: "0x3333333333333333333333333333333333333333",
       completedAt: "2026-07-03T04:02:00.000Z",
       expiresAt: "2026-07-03T04:15:00.000Z",
-      homeChainId: 11142220,
-      homeChain: "Celo Sepolia",
+      homeChainId: 5042002,
+      homeChain: "Arc Testnet",
     });
   });
 
@@ -237,7 +233,7 @@ describe("getAgentWallet", () => {
             return {
               ownerAddress: "0x2222222222222222222222222222222222222222",
               accountAddress: "0x3333333333333333333333333333333333333333",
-              homeChainId: 11142220,
+              homeChainId: 5042002,
               executorAddress: "0x4444444444444444444444444444444444444444",
               status: "ACTIVE",
             };
@@ -246,14 +242,14 @@ describe("getAgentWallet", () => {
       },
     );
 
-    assert.deepEqual(requests, [{ homeChainId: 11142220 }]);
+    assert.deepEqual(requests, [{ homeChainId: 5042002 }]);
     assert.deepEqual(output, {
       status: "ACTIVE",
       wallet: {
         ownerAddress: "0x2222222222222222222222222222222222222222",
         accountAddress: "0x3333333333333333333333333333333333333333",
-        homeChainId: 11142220,
-        homeChain: "Celo Sepolia",
+        homeChainId: 5042002,
+        homeChain: "Arc Testnet",
         executorAddress: "0x4444444444444444444444444444444444444444",
       },
     });

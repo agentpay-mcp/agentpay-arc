@@ -123,7 +123,7 @@ export const parseX402PaymentRequiredTool = {
       paymentRequired: {
         anyOf: [{ type: "string" }, { type: "object" }],
       },
-      sourceTokenSymbol: { type: "string", enum: ["USDC", "USDT", "USDm"] },
+      sourceTokenSymbol: { type: "string", enum: ["USDC"] },
       request: {
         type: "object",
         additionalProperties: false,

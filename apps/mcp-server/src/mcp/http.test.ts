@@ -1205,7 +1205,7 @@ describe("startAgentPayHttpServer", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
       });
-      const undiscoverable = await fetch(new URL("/.well-known/oauth-protected-resource/celo/mcp", server.url));
+      const undiscoverable = await fetch(new URL("/.well-known/oauth-protected-resource/arc/mcp", server.url));
 
       assert.equal(health.status, 200);
       assert.equal(response.status, 401);
@@ -1352,19 +1352,19 @@ describe("startAgentPayHttpServer", () => {
       oauthApi: {
         async handle(request) {
           const pathname = new URL(request.url).pathname;
-          if (pathname === "/.well-known/oauth-protected-resource/celo/mcp") {
+          if (pathname === "/.well-known/oauth-protected-resource/arc/mcp") {
             return new Response(JSON.stringify({
-              resource: "https://wallet.agentpay.site/celo/mcp",
-              authorization_servers: ["https://wallet.agentpay.site/celo"],
+              resource: "https://wallet.agentpay.site/arc/mcp",
+              authorization_servers: ["https://wallet.agentpay.site/arc"],
               scopes_supported: ["wallet:read", "payment:prepare", "payment:read", "payment:review", "session:manage"],
               bearer_methods_supported: ["header"],
             }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
           }
           return new Response(JSON.stringify({
-            issuer: "https://wallet.agentpay.site/celo",
-            authorization_endpoint: "https://wallet.agentpay.site/celo/oauth/authorize",
-            token_endpoint: "https://wallet.agentpay.site/celo/oauth/token",
-            registration_endpoint: "https://wallet.agentpay.site/celo/oauth/register",
+            issuer: "https://wallet.agentpay.site/arc",
+            authorization_endpoint: "https://wallet.agentpay.site/arc/oauth/authorize",
+            token_endpoint: "https://wallet.agentpay.site/arc/oauth/token",
+            registration_endpoint: "https://wallet.agentpay.site/arc/oauth/register",
             response_types_supported: ["code"],
             grant_types_supported: ["authorization_code"],
             token_endpoint_auth_methods_supported: ["none"],
@@ -1386,25 +1386,25 @@ describe("startAgentPayHttpServer", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ redirect_uris: ["http://127.0.0.1:4567/callback"] }),
       });
-      const resourceMetadata = await fetch(new URL("/.well-known/oauth-protected-resource/celo/mcp", server.url));
+      const resourceMetadata = await fetch(new URL("/.well-known/oauth-protected-resource/arc/mcp", server.url));
       assert.equal(rootResourceMetadata.status, 404);
       assert.equal(rootAuthorizationMetadata.status, 404);
       assert.equal(rootRegistration.status, 404);
       assert.equal(resourceMetadata.status, 200);
       assert.deepEqual(await resourceMetadata.json(), {
-        resource: "https://wallet.agentpay.site/celo/mcp",
-        authorization_servers: ["https://wallet.agentpay.site/celo"],
+        resource: "https://wallet.agentpay.site/arc/mcp",
+        authorization_servers: ["https://wallet.agentpay.site/arc"],
         scopes_supported: ["wallet:read", "payment:prepare", "payment:read", "payment:review", "session:manage"],
         bearer_methods_supported: ["header"],
       });
 
-      const authorizationMetadata = await fetch(new URL("/.well-known/oauth-authorization-server/celo", server.url));
+      const authorizationMetadata = await fetch(new URL("/.well-known/oauth-authorization-server/arc", server.url));
       assert.equal(authorizationMetadata.status, 200);
       assert.deepEqual(await authorizationMetadata.json(), {
-        issuer: "https://wallet.agentpay.site/celo",
-        authorization_endpoint: "https://wallet.agentpay.site/celo/oauth/authorize",
-        token_endpoint: "https://wallet.agentpay.site/celo/oauth/token",
-        registration_endpoint: "https://wallet.agentpay.site/celo/oauth/register",
+        issuer: "https://wallet.agentpay.site/arc",
+        authorization_endpoint: "https://wallet.agentpay.site/arc/oauth/authorize",
+        token_endpoint: "https://wallet.agentpay.site/arc/oauth/token",
+        registration_endpoint: "https://wallet.agentpay.site/arc/oauth/register",
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code"],
         token_endpoint_auth_methods_supported: ["none"],
@@ -1793,7 +1793,7 @@ describe("startAgentPayHttpServer", () => {
     });
 
     try {
-      const response = await fetch(new URL("/celo/oauth/register", server.url), {
+      const response = await fetch(new URL("/arc/oauth/register", server.url), {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1804,7 +1804,7 @@ describe("startAgentPayHttpServer", () => {
       });
       assert.equal(response.status, 201);
       assert.deepEqual(await response.json(), { client_id: "client_test" });
-      assert.deepEqual(paths, ["preflight:/celo/oauth/register", "/celo/oauth/register"]);
+      assert.deepEqual(paths, ["preflight:/arc/oauth/register", "/arc/oauth/register"]);
     } finally {
       await server.close();
     }
@@ -1819,7 +1819,7 @@ describe("startAgentPayHttpServer", () => {
       authorizationStore: stores.authorizationStore,
       challengeStore: stores.challengeStore,
       serverSecret,
-      audience: "https://wallet.agentpay.site/celo/mcp",
+      audience: "https://wallet.agentpay.site/arc/mcp",
       environment: "staging",
       clock: () => new Date("2026-07-12T00:00:00.000Z"),
       resolveOwner: async (ownerAddress, chainId) => ({
@@ -1844,7 +1844,7 @@ describe("startAgentPayHttpServer", () => {
             credential,
             sessionStore: stores.sessionStore,
             serverSecret,
-            audience: "https://wallet.agentpay.site/celo/mcp",
+            audience: "https://wallet.agentpay.site/arc/mcp",
             environment: "staging",
             clock: () => new Date("2026-07-12T00:00:00.000Z"),
             currentAuthenticationEpoch: async () => 0,
@@ -1863,15 +1863,15 @@ describe("startAgentPayHttpServer", () => {
     };
 
     try {
-      const sdkDiscovery = await discoverOAuthServerInfo("https://wallet.agentpay.site/celo/mcp", {
+      const sdkDiscovery = await discoverOAuthServerInfo("https://wallet.agentpay.site/arc/mcp", {
         fetchFn: async (input, init) => {
           const target = input instanceof Request ? input.url : input.toString();
           return fetch(localize(target), init as RequestInit);
         },
       });
-      assert.equal(sdkDiscovery.authorizationServerUrl, "https://wallet.agentpay.site/celo");
-      assert.equal(sdkDiscovery.resourceMetadata?.resource, "https://wallet.agentpay.site/celo/mcp");
-      assert.equal(sdkDiscovery.authorizationServerMetadata?.issuer, "https://wallet.agentpay.site/celo");
+      assert.equal(sdkDiscovery.authorizationServerUrl, "https://wallet.agentpay.site/arc");
+      assert.equal(sdkDiscovery.resourceMetadata?.resource, "https://wallet.agentpay.site/arc/mcp");
+      assert.equal(sdkDiscovery.authorizationServerMetadata?.issuer, "https://wallet.agentpay.site/arc");
 
       const unauthenticated = await fetch(server.mcpUrl, {
         method: "POST",
@@ -1888,11 +1888,11 @@ describe("startAgentPayHttpServer", () => {
         resource: string;
         authorization_servers: string[];
       };
-      assert.equal(protectedResourceMetadata.resource, "https://wallet.agentpay.site/celo/mcp");
+      assert.equal(protectedResourceMetadata.resource, "https://wallet.agentpay.site/arc/mcp");
 
       const authorizationServer = protectedResourceMetadata.authorization_servers[0]!;
       const authorizationMetadataResponse = await fetch(
-        localize(new URL("/.well-known/oauth-authorization-server/celo", authorizationServer)),
+        localize(new URL("/.well-known/oauth-authorization-server/arc", authorizationServer)),
       );
       assert.equal(authorizationMetadataResponse.status, 200);
       const authorizationMetadata = await authorizationMetadataResponse.json() as Record<string, unknown>;
@@ -1929,14 +1929,14 @@ describe("startAgentPayHttpServer", () => {
       const authorizationId = /authorizationId":"([^"]+)"/.exec(await authorizationPage.text())?.[1];
       assert.ok(authorizationId);
 
-      const challengeResponse = await fetch(localize("https://wallet.agentpay.site/celo/oauth/siwe/challenge"), {
+      const challengeResponse = await fetch(localize("https://wallet.agentpay.site/arc/oauth/siwe/challenge"), {
         method: "POST",
         headers: { "content-type": "application/json", cookie: browserCookie },
-        body: JSON.stringify({ authorizationId, ownerAddress: owner.address, chainId: 11142220 }),
+        body: JSON.stringify({ authorizationId, ownerAddress: owner.address, chainId: 5042002 }),
       });
       assert.equal(challengeResponse.status, 200);
       const challenge = await challengeResponse.json() as { challengeId: string; message: string };
-      const verifiedResponse = await fetch(localize("https://wallet.agentpay.site/celo/oauth/siwe/verify"), {
+      const verifiedResponse = await fetch(localize("https://wallet.agentpay.site/arc/oauth/siwe/verify"), {
         method: "POST",
         headers: { "content-type": "application/json", cookie: browserCookie },
         body: JSON.stringify({
@@ -1985,8 +1985,8 @@ describe("startAgentPayHttpServer", () => {
       tenantId: "tenant_a",
       ownerAddress: "0x1111111111111111111111111111111111111111",
       accountAddress: "0x2222222222222222222222222222222222222222",
-      homeChainId: 11142220,
-      audience: "https://wallet.agentpay.site/celo/mcp",
+      homeChainId: 5042002,
+      audience: "https://wallet.agentpay.site/arc/mcp",
       environment: "staging",
       scopes: ["wallet:read"],
       authEpoch: 0,
@@ -2037,8 +2037,8 @@ describe("startAgentPayHttpServer", () => {
       tenantId: "tenant_a",
       ownerAddress: "0x1111111111111111111111111111111111111111",
       accountAddress: "0x2222222222222222222222222222222222222222",
-      homeChainId: 11142220,
-      audience: "https://wallet.agentpay.site/celo/mcp",
+      homeChainId: 5042002,
+      audience: "https://wallet.agentpay.site/arc/mcp",
       environment: "staging",
       scopes: ["payment:read"],
       authEpoch: 0,

@@ -236,7 +236,7 @@ interface AuthChallengeRow {
   uri: string;
   owner_address: string;
   account_address: string;
-  chain_id: 42220 | 11142220;
+  chain_id: 5042002;
   nonce: string;
   flow?: "legacy_session" | "oauth_authorization";
   scopes: string[];

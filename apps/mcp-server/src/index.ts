@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+export { AGENTPAY_ARC_PUBLIC_URLS } from "@agentpay-ai/shared-arc";
 export * from "./mcp/agentpay-mcp.ts";
 export * from "./mcp/consumer-auth.ts";
 export {

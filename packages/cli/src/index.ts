@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGENTPAY_ARC_PUBLIC_URLS,
   startAgentPayHttpServer,
   startAgentPayMcpServer,
   type AgentPayHttpServer,
@@ -19,9 +20,8 @@ import {
   startSetupWebServer,
   type SetupWebDependencies,
 } from "@agentpay-ai/setup-web-arc";
-
 const runtimeNames = ["codex", "claude", "cursor", "generic", "hermes"] as const;
-const DEFAULT_HOSTED_MCP_URL = "https://wallet.agentpay.site/celo/mcp";
+const DEFAULT_HOSTED_MCP_URL = AGENTPAY_ARC_PUBLIC_URLS.consumerMcp;
 const requiredConfigKeys = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CELO_RPC_URL", "EXECUTOR_PRIVATE_KEY"] as const;
 const setupRequiredConfigKeys = [
   "SUPABASE_URL",

@@ -116,10 +116,6 @@ export interface AuthenticateServiceSessionOptions {
 
 export async function issueServiceSession(options: IssueServiceSessionOptions): Promise<IssuedServiceSession> {
   const now = options.clock();
-  const expectedEnvironment = options.challenge.chainId === 42220 ? "production" : "staging";
-  if (options.environment !== expectedEnvironment) {
-    throw new AgentPayAuthError("AUTH_ENVIRONMENT_MISMATCH", "SIWE chain does not match the session environment.");
-  }
   const verify = options.verifySignature ?? verifySiweChallengeSignature;
   const recoveredOwner = await verify(options.challenge, options.signature, now);
   if (recoveredOwner.toLowerCase() !== options.challenge.ownerAddress.toLowerCase()) {
@@ -179,10 +175,8 @@ export function prepareServiceSessionFromVerifiedBinding(
   options: PrepareServiceSessionFromBindingOptions,
 ): IssuedServiceSession {
   const now = options.clock();
-  const expectedEnvironment = options.binding.homeChainId === 42220 ? "production" : "staging";
   if (
-    options.binding.environment !== options.environment ||
-    options.environment !== expectedEnvironment
+    options.binding.environment !== options.environment
   ) {
     throw new AgentPayAuthError("AUTH_ENVIRONMENT_MISMATCH", "Verified owner binding does not match the session environment.");
   }
@@ -255,11 +249,6 @@ export async function authenticateServiceSession(
   if (record.environment !== options.environment) {
     throw new AgentPayAuthError("AUTH_ENVIRONMENT_MISMATCH", "Consumer session environment does not match this endpoint.");
   }
-  const expectedEnvironment = record.homeChainId === 42220 ? "production" : "staging";
-  if (record.environment !== expectedEnvironment) {
-    throw new AgentPayAuthError("AUTH_ENVIRONMENT_MISMATCH", "Consumer session chain does not match its environment.");
-  }
-
   const tenantState = options.currentTenantState
     ? await options.currentTenantState(record.tenantId)
     : undefined;

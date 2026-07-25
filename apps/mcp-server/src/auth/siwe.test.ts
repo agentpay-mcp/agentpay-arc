@@ -17,10 +17,10 @@ function challenge(overrides: Partial<Parameters<typeof createSiweChallenge>[0]>
     challengeId: "challenge_123",
     requestId: "request_123",
     domain: "wallet.agentpay.site",
-    uri: "https://wallet.agentpay.site/celo/mcp",
+    uri: "https://wallet.agentpay.site/arc/mcp",
     ownerAddress: wallet.address,
     accountAddress: "0x3333333333333333333333333333333333333333",
-    chainId: 11142220,
+    chainId: 5042002,
     nonce: "nonce_1234567890",
     issuedAt: clock().toISOString(),
     expiresAt: new Date(clock().getTime() + 5 * 60_000).toISOString(),
@@ -35,8 +35,8 @@ describe("SIWE consumer challenge", () => {
 
     assert.match(record.message, /^wallet\.agentpay\.site wants you to sign in with your Ethereum account:/);
     assert.match(record.message, new RegExp(wallet.address));
-    assert.match(record.message, /URI: https:\/\/wallet\.agentpay\.site\/celo\/mcp/);
-    assert.match(record.message, /Chain ID: 11142220/);
+    assert.match(record.message, /URI: https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
+    assert.match(record.message, /Chain ID: 5042002/);
     assert.match(record.message, /Nonce: nonce_1234567890/);
     assert.match(record.message, /Request ID: request_123/);
     assert.match(record.message, /Session Lifetime: 604800 seconds/);

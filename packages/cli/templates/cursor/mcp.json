@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "agentpay": {
-      "url": "https://wallet.agentpay.site/celo/mcp"
+      "url": "https://wallet.agentpay.site/arc/mcp"
     }
   }
 }

@@ -26,7 +26,7 @@ import { authenticateServiceSession } from "./session.ts";
 const owner = new Wallet(`0x${"2".repeat(64)}`);
 const accountAddress = "0x2222222222222222222222222222222222222222";
 const redirectUri = "http://127.0.0.1:4567/callback";
-const resource = "https://wallet.agentpay.site/celo/mcp";
+const resource = "https://wallet.agentpay.site/arc/mcp";
 const verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc";
 const codeChallenge = "dYSqskoTcWrpu8GYY0XpWlzOc0c5rd9YO3uAgh_zmV4";
 
@@ -238,7 +238,7 @@ function formRequest(path: string, fields: Record<string, string>): Request {
 }
 
 describe("consumer OAuth authorization API", () => {
-  it("keeps Celo OAuth discovery and authorization routes namespaced away from the existing root service", async () => {
+  it("keeps Arc OAuth discovery and authorization routes namespaced away from the existing root service", async () => {
     const api = createConsumerOAuthApi(dependencies());
 
     const rootMetadata = await api.handle(
@@ -252,13 +252,13 @@ describe("consumer OAuth authorization API", () => {
       }),
     );
     const protectedResource = await api.handle(
-      new Request("https://wallet.agentpay.site/.well-known/oauth-protected-resource/celo/mcp"),
+      new Request("https://wallet.agentpay.site/.well-known/oauth-protected-resource/arc/mcp"),
     );
     const authorizationServer = await api.handle(
-      new Request("https://wallet.agentpay.site/.well-known/oauth-authorization-server/celo"),
+      new Request("https://wallet.agentpay.site/.well-known/oauth-authorization-server/arc"),
     );
     const registered = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/register", {
+      new Request("https://wallet.agentpay.site/arc/oauth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ redirect_uris: [redirectUri] }),
@@ -270,16 +270,16 @@ describe("consumer OAuth authorization API", () => {
     assert.equal(protectedResource.status, 200);
     assert.deepEqual(await protectedResource.json(), {
       resource,
-      authorization_servers: ["https://wallet.agentpay.site/celo"],
+      authorization_servers: ["https://wallet.agentpay.site/arc"],
       scopes_supported: ["wallet:read", "payment:prepare", "payment:read", "payment:review", "session:manage"],
       bearer_methods_supported: ["header"],
     });
     assert.equal(authorizationServer.status, 200);
     assert.deepEqual(await authorizationServer.json(), {
-      issuer: "https://wallet.agentpay.site/celo",
-      authorization_endpoint: "https://wallet.agentpay.site/celo/oauth/authorize",
-      token_endpoint: "https://wallet.agentpay.site/celo/oauth/token",
-      registration_endpoint: "https://wallet.agentpay.site/celo/oauth/register",
+      issuer: "https://wallet.agentpay.site/arc",
+      authorization_endpoint: "https://wallet.agentpay.site/arc/oauth/authorize",
+      token_endpoint: "https://wallet.agentpay.site/arc/oauth/token",
+      registration_endpoint: "https://wallet.agentpay.site/arc/oauth/register",
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code"],
       token_endpoint_auth_methods_supported: ["none"],
@@ -293,7 +293,7 @@ describe("consumer OAuth authorization API", () => {
     const api = createConsumerOAuthApi(dependencies());
 
     const rejected = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/register", {
+      new Request("https://wallet.agentpay.site/arc/oauth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ redirect_uris: ["http://evil.example/callback"] }),
@@ -303,7 +303,7 @@ describe("consumer OAuth authorization API", () => {
     assert.deepEqual(await rejected.json(), { error: "invalid_client_metadata" });
 
     const registered = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/register", {
+      new Request("https://wallet.agentpay.site/arc/oauth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -342,7 +342,7 @@ describe("consumer OAuth authorization API", () => {
     });
     const api = createConsumerOAuthApi(deps);
     const response = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/register", {
+      new Request("https://wallet.agentpay.site/arc/oauth/register", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -370,7 +370,7 @@ describe("consumer OAuth authorization API", () => {
     });
     const response = await api.handle(
       new Request(
-        `https://wallet.agentpay.site/celo/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=state&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}`,
+        `https://wallet.agentpay.site/arc/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=state&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}`,
       ),
     );
     assert.equal(response.status, 200);
@@ -391,17 +391,18 @@ describe("consumer OAuth authorization API", () => {
 
     const authorize = await api.handle(
       new Request(
-        `https://wallet.agentpay.site/celo/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=client-state-123&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}&scope=wallet%3Aread%20payment%3Aprepare`,
+        `https://wallet.agentpay.site/arc/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=client-state-123&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}&scope=wallet%3Aread%20payment%3Aprepare`,
       ),
     );
     assert.equal(authorize.status, 200);
     const authorizePage = await authorize.text();
     assert.match(authorizePage, /Authorize AgentPay test client/);
-    assert.match(authorizePage, /fetch\("\/celo\/oauth\/siwe\/challenge"/);
-    assert.match(authorizePage, /fetch\("\/celo\/oauth\/siwe\/verify"/);
+    assert.match(authorizePage, /required Arc Testnet/);
+    assert.match(authorizePage, /fetch\("\/arc\/oauth\/siwe\/challenge"/);
+    assert.match(authorizePage, /fetch\("\/arc\/oauth\/siwe\/verify"/);
     const cookie = authorize.headers.get("set-cookie");
     assert.ok(cookie);
-    assert.match(cookie, /^agentpay_celo_oauth_transaction=.*; Path=\/celo\/oauth; HttpOnly; Secure; SameSite=Lax;/);
+    assert.match(cookie, /^agentpay_arc_oauth_transaction=.*; Path=\/arc\/oauth; HttpOnly; Secure; SameSite=Lax;/);
 
     const authorization = await (deps.authorizationStore as AuthorizationStore).get("authorization_123");
     assert.ok(authorization);
@@ -410,10 +411,10 @@ describe("consumer OAuth authorization API", () => {
     assert.deepEqual(authorization.scopes, ["payment:prepare", "wallet:read"]);
 
     const challengeResponse = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/siwe/challenge", {
+      new Request("https://wallet.agentpay.site/arc/oauth/siwe/challenge", {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({ authorizationId: "authorization_123", ownerAddress: owner.address, chainId: 11142220 }),
+        body: JSON.stringify({ authorizationId: "authorization_123", ownerAddress: owner.address, chainId: 5042002 }),
       }),
     );
     assert.equal(challengeResponse.status, 200);
@@ -423,7 +424,7 @@ describe("consumer OAuth authorization API", () => {
     assert.ok(challenge);
 
     const verified = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/siwe/verify", {
+      new Request("https://wallet.agentpay.site/arc/oauth/siwe/verify", {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
         body: JSON.stringify({
@@ -436,7 +437,7 @@ describe("consumer OAuth authorization API", () => {
     assert.equal(verified.status, 200);
     assert.match(
       verified.headers.get("set-cookie") ?? "",
-      /^agentpay_celo_oauth_transaction=; Path=\/celo\/oauth; HttpOnly; Secure; SameSite=Lax; Max-Age=0$/,
+      /^agentpay_arc_oauth_transaction=; Path=\/arc\/oauth; HttpOnly; Secure; SameSite=Lax; Max-Age=0$/,
     );
     const verifiedBody = (await verified.json()) as { redirectUri: string };
     const callback = new URL(verifiedBody.redirectUri);
@@ -451,7 +452,7 @@ describe("consumer OAuth authorization API", () => {
     assert.equal((deps.sessionStore as SessionStore).records.size, 0);
 
     const invalidVerifier = await api.handle(
-      formRequest("/celo/oauth/token", {
+      formRequest("/arc/oauth/token", {
         grant_type: "authorization_code",
         code,
         client_id: "client_123",
@@ -464,7 +465,7 @@ describe("consumer OAuth authorization API", () => {
     assert.deepEqual(await invalidVerifier.json(), { error: "invalid_grant" });
 
     const token = await api.handle(
-      formRequest("/celo/oauth/token", {
+      formRequest("/arc/oauth/token", {
         grant_type: "authorization_code",
         code,
         client_id: "client_123",
@@ -494,7 +495,7 @@ describe("consumer OAuth authorization API", () => {
     assert.deepEqual(context.scopes, ["payment:prepare", "wallet:read"]);
 
     const replay = await api.handle(
-      formRequest("/celo/oauth/token", {
+      formRequest("/arc/oauth/token", {
         grant_type: "authorization_code",
         code,
         client_id: "client_123",
@@ -517,9 +518,9 @@ describe("consumer OAuth authorization API", () => {
       createdAt: "2026-07-12T00:00:00.000Z",
     });
 
-    const { authorizationUrl } = await startAuthorization("https://wallet.agentpay.site/celo", {
+    const { authorizationUrl } = await startAuthorization("https://wallet.agentpay.site/arc", {
       metadata: {
-        authorization_endpoint: "https://wallet.agentpay.site/celo/oauth/authorize",
+        authorization_endpoint: "https://wallet.agentpay.site/arc/oauth/authorize",
         response_types_supported: ["code"],
         code_challenge_methods_supported: ["S256"],
       } as never,
@@ -537,15 +538,15 @@ describe("consumer OAuth authorization API", () => {
     assert.ok(cookie);
 
     const challengeResponse = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/siwe/challenge", {
+      new Request("https://wallet.agentpay.site/arc/oauth/siwe/challenge", {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({ authorizationId: "authorization_123", ownerAddress: owner.address, chainId: 11142220 }),
+        body: JSON.stringify({ authorizationId: "authorization_123", ownerAddress: owner.address, chainId: 5042002 }),
       }),
     );
     const challengeBody = (await challengeResponse.json()) as { challengeId: string; message: string };
     const verified = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/siwe/verify", {
+      new Request("https://wallet.agentpay.site/arc/oauth/siwe/verify", {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
         body: JSON.stringify({
@@ -574,21 +575,21 @@ describe("consumer OAuth authorization API", () => {
 
     const authorize = await api.handle(
       new Request(
-        `https://wallet.agentpay.site/celo/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=client-state-123&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}&scope=wallet%3Aread`,
+        `https://wallet.agentpay.site/arc/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=client-state-123&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}&scope=wallet%3Aread`,
       ),
     );
     const cookie = authorize.headers.get("set-cookie");
     assert.ok(cookie);
     const challengeResponse = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/siwe/challenge", {
+      new Request("https://wallet.agentpay.site/arc/oauth/siwe/challenge", {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
-        body: JSON.stringify({ authorizationId: "authorization_123", ownerAddress: owner.address, chainId: 11142220 }),
+        body: JSON.stringify({ authorizationId: "authorization_123", ownerAddress: owner.address, chainId: 5042002 }),
       }),
     );
     const challenge = (await challengeResponse.json()) as { challengeId: string; message: string };
     const verified = await api.handle(
-      new Request("https://wallet.agentpay.site/celo/oauth/siwe/verify", {
+      new Request("https://wallet.agentpay.site/arc/oauth/siwe/verify", {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
         body: JSON.stringify({
@@ -604,7 +605,7 @@ describe("consumer OAuth authorization API", () => {
 
     sessions.failNextCreate = true;
     const unavailable = await api.handle(
-      formRequest("/celo/oauth/token", {
+      formRequest("/arc/oauth/token", {
         grant_type: "authorization_code",
         code,
         client_id: "client_123",
@@ -617,7 +618,7 @@ describe("consumer OAuth authorization API", () => {
     assert.deepEqual(await unavailable.json(), { error: "temporarily_unavailable" });
 
     const retry = await api.handle(
-      formRequest("/celo/oauth/token", {
+      formRequest("/arc/oauth/token", {
         grant_type: "authorization_code",
         code,
         client_id: "client_123",
@@ -641,7 +642,7 @@ describe("consumer OAuth authorization API", () => {
 
     const redirectMismatch = await api.handle(
       new Request(
-        `https://wallet.agentpay.site/celo/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent("https://evil.example/callback")}&state=state&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}`,
+        `https://wallet.agentpay.site/arc/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent("https://evil.example/callback")}&state=state&code_challenge=${codeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}`,
       ),
     );
     assert.equal(redirectMismatch.status, 400);
@@ -649,7 +650,7 @@ describe("consumer OAuth authorization API", () => {
 
     const plainPkce = await api.handle(
       new Request(
-        `https://wallet.agentpay.site/celo/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=state&code_challenge=${codeChallenge}&code_challenge_method=plain&resource=${encodeURIComponent(resource)}`,
+        `https://wallet.agentpay.site/arc/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=state&code_challenge=${codeChallenge}&code_challenge_method=plain&resource=${encodeURIComponent(resource)}`,
       ),
     );
     assert.equal(plainPkce.status, 400);
@@ -657,7 +658,7 @@ describe("consumer OAuth authorization API", () => {
 
     const oversizedS256 = await api.handle(
       new Request(
-        `https://wallet.agentpay.site/celo/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=state&code_challenge=${"a".repeat(44)}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}`,
+        `https://wallet.agentpay.site/arc/oauth/authorize?response_type=code&client_id=client_123&redirect_uri=${encodeURIComponent(redirectUri)}&state=state&code_challenge=${"a".repeat(44)}&code_challenge_method=S256&resource=${encodeURIComponent(resource)}`,
       ),
     );
     assert.equal(oversizedS256.status, 400);

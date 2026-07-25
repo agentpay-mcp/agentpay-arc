@@ -5,7 +5,13 @@ import { describe, it } from "node:test";
 import type { PaymentIntentRecord } from "@agentpay-ai/shared-arc";
 
 import {
-  MAINNET_USDC_ADDRESS,
+  ARC_CAIP2,
+  ARC_CHAIN_ID,
+  ARC_CONSUMER_MCP_URL,
+  ARC_PAID_MCP_URL,
+  ARC_SETUP_URL,
+  ARC_USDC_ADDRESS,
+  ARC_USDC_CODE_HASH,
   MAINNET_MIGRATION_HEAD,
   assertProductionExecutionAllowed,
   computeManifestSha256,
@@ -14,35 +20,54 @@ import {
   type RuntimeEnvironmentIdentity,
 } from "./production-readiness.ts";
 
-const baseManifest = JSON.parse(
+const frozenCeloManifest = JSON.parse(
   await readFile(new URL("../../../../test/fixtures/celo-mainnet.shadow.json", import.meta.url), "utf8"),
 ) as Record<string, any>;
+const baseManifest = toArcManifest(frozenCeloManifest);
+
+function toArcManifest(source: Record<string, any>): Record<string, any> {
+  const manifest = structuredClone(source);
+  manifest.chain = {
+    chainId: ARC_CHAIN_ID,
+    caip2: ARC_CAIP2,
+    rpcEnvRef: "ARC_TESTNET_RPC_URL",
+  };
+  manifest.contract.domain.chainId = ARC_CHAIN_ID;
+  manifest.contract.allowedTokens = [ARC_USDC_ADDRESS];
+  manifest.token.address = ARC_USDC_ADDRESS;
+  manifest.token.codeHash = ARC_USDC_CODE_HASH;
+  manifest.x402.network = ARC_CAIP2;
+  manifest.x402.tokenAddress = ARC_USDC_ADDRESS;
+  manifest.x402.facilitatorUrl = "https://facilitator.example.com";
+  manifest.onboarding.setupUrl = ARC_SETUP_URL;
+  manifest.onboarding.readinessUrl = `${ARC_SETUP_URL}/readyz`;
+  delete manifest.attribution;
+  return manifest;
+}
 
 function productionEnv(): Record<string, string> {
   return {
     AGENTPAY_ENVIRONMENT: "production",
-    AGENTPAY_HOME_CHAIN_ID: "42220",
+    AGENTPAY_HOME_CHAIN_ID: "5042002",
     AGENTPAY_ACCOUNT_VERSION: "v2",
-    CELO_MAINNET_RPC_URL: "https://rpc.provider.example/celo",
-    CELO_MAINNET_RPC_FALLBACK_URL: "https://forno.celo.org",
+    ARC_TESTNET_RPC_URL: "https://rpc.testnet.arc.network",
     SUPABASE_PRODUCTION_URL: "https://abcdefghijklmnopqrst.supabase.co",
     SUPABASE_PRODUCTION_SERVICE_ROLE_KEY: "service-role-key",
     DIRECT_URL_PRODUCTION: "postgresql://production.example.invalid/postgres",
     AGENTPAY_RAW_TX_ENCRYPTION_KEY: "a".repeat(64),
     AGENTPAY_SESSION_HASH_KEY: "s".repeat(64),
     AGENTPAY_REVIEW_TOKEN_SECRET: "r".repeat(64),
-    AGENTPAY_CONSUMER_MCP_URL: "https://wallet.agentpay.site/celo/mcp",
-    AGENTPAY_PAID_MCP_URL: "https://mcp.agentpay.site/celo/mcp",
-    AGENTPAY_PUBLIC_SETUP_URL: "https://wallet.agentpay.site/celo/setup",
-    AGENTPAY_PUBLIC_REVIEW_URL: "https://wallet.agentpay.site/celo/review",
-    AGENTPAY_ONBOARDING_MANIFEST_PATH: "/run/agentpay-celo/onboarding.json",
+    AGENTPAY_CONSUMER_MCP_URL: ARC_CONSUMER_MCP_URL,
+    AGENTPAY_PAID_MCP_URL: ARC_PAID_MCP_URL,
+    AGENTPAY_PUBLIC_SETUP_URL: ARC_SETUP_URL,
+    AGENTPAY_PUBLIC_REVIEW_URL: "https://wallet.agentpay.site/arc/review",
+    AGENTPAY_ONBOARDING_MANIFEST_PATH: "/run/agentpay-arc/onboarding.json",
     AGENTPAY_ONBOARDING_MANIFEST_SHA256: "a".repeat(64),
     AGENTPAY_FACTORY_ADDRESS: "0x1111111111111111111111111111111111111111",
     AGENTPAY_FACTORY_RUNTIME_CODE_HASH: `0x${"2".repeat(64)}`,
     AGENTPAY_SETUP_SPONSOR_ADDRESS: "0x3333333333333333333333333333333333333333",
     AGENTPAY_SETUP_SUPABASE_PROJECT_REF: "abcdefghijklmnopqrst",
     AGENTPAY_SETUP_MODE: "PUBLIC",
-    CELO_ATTRIBUTION_TAG: "celo_agentpay",
   };
 }
 
@@ -77,8 +102,8 @@ function identityFor(manifest: Record<string, any>): RuntimeEnvironmentIdentity 
   return {
     id: 1,
     environment: "production",
-    chainId: 42220,
-    caip2: "eip155:42220",
+    chainId: ARC_CHAIN_ID,
+    caip2: ARC_CAIP2,
     supabaseProjectRef: "abcdefghijklmnopqrst",
     migrationHead: manifest.database.migrationHead,
     releaseCommit: manifest.release.commit,
@@ -103,7 +128,7 @@ function identityFor(manifest: Record<string, any>): RuntimeEnvironmentIdentity 
     x402SyncSettle: manifest.x402.syncSettle,
     x402Enabled: manifest.x402.enabled,
     payToAddress: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    facilitatorRef: "https://api.x402.celo.org",
+    facilitatorRef: "https://facilitator.example.com",
     executionMode: "PUBLIC",
     status: "READY",
   };
@@ -113,16 +138,25 @@ const exactPaymentConfig = {
   enabled: true,
   payTo: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   price: "$0.01",
-  network: "eip155:42220" as const,
-  asset: MAINNET_USDC_ADDRESS,
+  network: ARC_CAIP2,
+  asset: ARC_USDC_ADDRESS,
   assetDecimals: 6,
   syncSettle: true,
-  facilitatorUrl: "https://api.x402.celo.org",
-  facilitatorApiKey: "test-celo-x402-api-key",
-  resourceUrl: "https://mcp.agentpay.site/celo/mcp",
+  facilitatorUrl: "https://facilitator.example.com",
+  facilitatorApiKey: "test-arc-x402-api-key",
+  resourceUrl: ARC_PAID_MCP_URL,
 };
 
 describe("production readiness gate", () => {
+  it("pins the public runtime identity to Arc Testnet and canonical USDC", () => {
+    assert.equal(ARC_CHAIN_ID, 5042002);
+    assert.equal(ARC_CAIP2, "eip155:5042002");
+    assert.equal(ARC_USDC_ADDRESS, "0x3600000000000000000000000000000000000000");
+    assert.equal(ARC_USDC_CODE_HASH, "0xc9987bd3af6b26a030951faa7eacc017b68343aeedf3ce5fe68f821c4b93939d");
+    assert.equal(ARC_CONSUMER_MCP_URL, "https://wallet.agentpay.site/arc/mcp");
+    assert.equal(ARC_PAID_MCP_URL, "https://mcp.agentpay.site/arc/mcp");
+    assert.equal(ARC_SETUP_URL, "https://wallet.agentpay.site/arc/setup");
+  });
   it("pins production readiness to the atomic payment audit migration", () => {
     assert.equal(MAINNET_MIGRATION_HEAD, "20260721160000_celo_x402_settlement_audit");
     assert.equal(baseManifest.database.migrationHead, MAINNET_MIGRATION_HEAD);
@@ -132,7 +166,7 @@ describe("production readiness gate", () => {
   it("requires explicit production aliases and rejects generic or staging boundaries", () => {
     const valid = validateProductionEnvironment(productionEnv());
     assert.equal(valid.valid, true, valid.errors.join("; "));
-    assert.deepEqual(baseManifest.attribution, {
+    assert.deepEqual(frozenCeloManifest.attribution, {
       standard: "ERC-8021",
       tagEnvRef: "CELO_ATTRIBUTION_TAG",
       appliesTo: ["agentpay-direct-transactions"],
@@ -149,7 +183,7 @@ describe("production readiness gate", () => {
 
   });
 
-  it("requires the isolated Celo onboarding identity and canonical public routes", () => {
+  it("requires the isolated Arc onboarding identity and canonical public routes", () => {
     const valid = validateProductionEnvironment(productionEnv());
     assert.equal(valid.valid, true, valid.errors.join("; "));
 
@@ -158,25 +192,22 @@ describe("production readiness gate", () => {
     delete missing.AGENTPAY_SETUP_SPONSOR_ADDRESS;
     delete missing.AGENTPAY_ONBOARDING_MANIFEST_SHA256;
     delete missing.AGENTPAY_SETUP_SUPABASE_PROJECT_REF;
-    delete missing.CELO_MAINNET_RPC_FALLBACK_URL;
-    delete missing.CELO_ATTRIBUTION_TAG;
+    delete missing.ARC_TESTNET_RPC_URL;
     const missingResult = validateProductionEnvironment(missing);
     assert.equal(missingResult.valid, false);
     assert.match(
       missingResult.errors.join("; "),
-      /AGENTPAY_FACTORY_ADDRESS|AGENTPAY_SETUP_SPONSOR_ADDRESS|AGENTPAY_ONBOARDING_MANIFEST_SHA256|AGENTPAY_SETUP_SUPABASE_PROJECT_REF|CELO_MAINNET_RPC_FALLBACK_URL|CELO_ATTRIBUTION_TAG/,
+      /AGENTPAY_FACTORY_ADDRESS|AGENTPAY_SETUP_SPONSOR_ADDRESS|AGENTPAY_ONBOARDING_MANIFEST_SHA256|AGENTPAY_SETUP_SUPABASE_PROJECT_REF|ARC_TESTNET_RPC_URL/,
     );
 
     const drift = productionEnv();
-    drift.AGENTPAY_PUBLIC_SETUP_URL = "https://celo.agentpay.site/setup";
+    drift.AGENTPAY_PUBLIC_SETUP_URL = "https://arc.invalid/setup";
     drift.AGENTPAY_CONSUMER_MCP_URL = "https://wallet.agentpay.site/mcp";
-    drift.CELO_MAINNET_RPC_URL = "http://127.0.0.1:8545";
-    drift.CELO_MAINNET_RPC_FALLBACK_URL = "https://rpc.example.com";
+    drift.ARC_TESTNET_RPC_URL = "http://127.0.0.1:8545";
     drift.AGENTPAY_SETUP_SUPABASE_PROJECT_REF = "differentprojectrefx";
-    drift.CELO_ATTRIBUTION_TAG = "agentpay";
     const driftResult = validateProductionEnvironment(drift);
     assert.equal(driftResult.valid, false);
-    assert.match(driftResult.errors.join("; "), /PUBLIC_SETUP_URL|CONSUMER_MCP_URL|RPC|project|attribution/i);
+    assert.match(driftResult.errors.join("; "), /PUBLIC_SETUP_URL|CONSUMER_MCP_URL|RPC|project/i);
   });
 
   it("keeps a shadow/OFF manifest unavailable for production execution", async () => {
@@ -308,7 +339,7 @@ describe("production readiness gate", () => {
 
     const routeIntent = {
       id: "pay_route",
-      sourceChainId: 42220,
+      sourceChainId: ARC_CHAIN_ID,
       destinationChainId: 8453,
       sourceTokenSymbol: "USDC",
       destinationTokenSymbol: "USDC",
@@ -342,7 +373,7 @@ describe("production readiness gate", () => {
     assert.equal(available.checks.onboarding, true);
   });
 
-  it("rejects the hosted Celo facilitator when its API key is missing", async () => {
+  it("rejects the facilitator when its API key is missing", async () => {
     const result = await evaluateProductionReadiness({
       env: productionEnv(),
       manifest: readyManifest(),
@@ -356,10 +387,10 @@ describe("production readiness gate", () => {
     });
 
     assert.equal(result.ready, false);
-    assert.match(result.errors.join("; "), /CELO_X402_API_KEY/i);
+    assert.match(result.errors.join("; "), /facilitator API key/i);
   });
 
-  it("rejects facilitator URL drift from the hosted Celo mainnet service", async () => {
+  it("rejects a non-HTTPS facilitator URL", async () => {
     const result = await evaluateProductionReadiness({
       env: productionEnv(),
       manifest: readyManifest(),
@@ -367,16 +398,16 @@ describe("production readiness gate", () => {
       accountVerification: { valid: true, errors: [], checks: {} },
       paymentConfig: {
         ...exactPaymentConfig,
-        facilitatorUrl: "https://facilitator.example.com",
+        facilitatorUrl: "http://facilitator.example.com",
       },
       onboardingReady: true,
     });
 
     assert.equal(result.ready, false);
-    assert.match(result.errors.join("; "), /facilitator URL must be https:\/\/api\.x402\.celo\.org/i);
+    assert.match(result.errors.join("; "), /facilitator URL must be an HTTPS URL/i);
   });
 
-  it("rejects paid MCP resource URL drift from the external Celo route", async () => {
+  it("rejects paid MCP resource URL drift from the Arc route", async () => {
     const result = await evaluateProductionReadiness({
       env: productionEnv(),
       manifest: readyManifest(),
@@ -390,6 +421,6 @@ describe("production readiness gate", () => {
     });
 
     assert.equal(result.ready, false);
-    assert.match(result.errors.join("; "), /resource URL must be https:\/\/mcp\.agentpay\.site\/celo\/mcp/i);
+    assert.match(result.errors.join("; "), /resource URL must be https:\/\/mcp\.agentpay\.site\/arc\/mcp/i);
   });
 });

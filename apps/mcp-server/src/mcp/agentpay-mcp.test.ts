@@ -1146,24 +1146,24 @@ describe("registerAgentPayMcpTools", () => {
         receivedOwner = input.ownerAddress;
         return {
           status: "SETUP_REQUIRED",
-          setupUrl: "https://wallet.agentpay.site/celo/setup",
+          setupUrl: "https://wallet.agentpay.site/arc/setup",
           instructionToAgent: "Open the secure AgentPay setup link.",
-          homeChainId: 42220,
-          homeChain: "Celo",
+          homeChainId: 5042002,
+          homeChain: "Arc Testnet",
         };
       },
     });
 
     registerAgentPayMcpTools(server, runtime, { sessionContext });
-    const result = await server.tools.get("prepare_wallet_creation")?.handler({ network: "mainnet" });
+    const result = await server.tools.get("prepare_wallet_creation")?.handler({ network: "testnet" });
 
     assert.equal(receivedOwner, sessionContext.ownerAddress);
     assert.deepEqual((result as { structuredContent?: unknown }).structuredContent, {
       status: "SETUP_REQUIRED",
-      setupUrl: "https://wallet.agentpay.site/celo/setup",
+      setupUrl: "https://wallet.agentpay.site/arc/setup",
       instructionToAgent: "Open the secure AgentPay setup link.",
-      homeChainId: 42220,
-      homeChain: "Celo",
+      homeChainId: 5042002,
+      homeChain: "Arc Testnet",
     });
   });
 });

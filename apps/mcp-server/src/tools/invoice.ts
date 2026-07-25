@@ -53,7 +53,7 @@ export const parseInvoicePaymentTool = {
     required: ["invoice"],
     properties: {
       invoice: { type: "string" },
-      sourceTokenSymbol: { type: "string", enum: ["USDC", "USDT", "USDm"] },
+      sourceTokenSymbol: { type: "string", enum: ["USDC"] },
     },
   },
 } as const;

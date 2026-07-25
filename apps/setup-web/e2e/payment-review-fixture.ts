@@ -137,7 +137,7 @@ export async function createPaymentReviewE2eFixture() {
         createId: () => "pay_review_e2e",
         createNonce: () => "25",
         createReviewToken: () => rawReviewToken,
-        homeChainId: 11142220,
+        homeChainId: 5042002,
         tenantId,
         setupWebUrl: server.url,
         reviewTokenSecret: reviewSecret,

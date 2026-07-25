@@ -3,16 +3,16 @@ import { getAddress, isAddress, verifyMessage } from "ethers";
 import {
   AgentPayAuthError,
   sessionScopeSchema,
-  type CeloHomeChainId,
+  type ArcHomeChainId,
   type SessionScope,
 } from "@agentpay-ai/shared-arc";
 
 export const AGENTPAY_SIWE_DOMAIN = "wallet.agentpay.site";
-export const AGENTPAY_CONSUMER_URI = "https://wallet.agentpay.site/celo/mcp";
+export const AGENTPAY_CONSUMER_URI = "https://wallet.agentpay.site/arc/mcp";
 export const SIWE_CHALLENGE_TTL_SECONDS = 5 * 60;
 export const SERVICE_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const OAUTH_SERVICE_SESSION_TTL_SECONDS = 60 * 60;
-export const SUPPORTED_CELO_CHAIN_IDS = new Set<CeloHomeChainId>([42220, 11142220]);
+export const SUPPORTED_ARC_CHAIN_IDS = new Set<ArcHomeChainId>([5042002]);
 export const SIWE_CHALLENGE_FLOWS = ["legacy_session", "oauth_authorization"] as const;
 export type SiweChallengeFlow = (typeof SIWE_CHALLENGE_FLOWS)[number];
 const supportedSessionLifetimes = new Set([SERVICE_SESSION_TTL_SECONDS, OAUTH_SERVICE_SESSION_TTL_SECONDS]);
@@ -40,7 +40,7 @@ export interface SiweChallenge {
   readonly uri: typeof AGENTPAY_CONSUMER_URI;
   readonly ownerAddress: string;
   readonly accountAddress: string;
-  readonly chainId: CeloHomeChainId;
+  readonly chainId: ArcHomeChainId;
   readonly nonce: string;
   readonly flow: SiweChallengeFlow;
   readonly issuedAt: string;
@@ -74,8 +74,8 @@ export function createSiweChallenge(input: CreateSiweChallengeInput): SiweChalle
   if (input.uri !== AGENTPAY_CONSUMER_URI) {
     throw new AgentPayAuthError("SIWE_URI_INVALID", `SIWE URI must be ${AGENTPAY_CONSUMER_URI}.`);
   }
-  if (!SUPPORTED_CELO_CHAIN_IDS.has(input.chainId as CeloHomeChainId)) {
-    throw new AgentPayAuthError("SIWE_CHAIN_INVALID", "SIWE challenge must target Celo mainnet or Celo Sepolia.");
+  if (!SUPPORTED_ARC_CHAIN_IDS.has(input.chainId as ArcHomeChainId)) {
+    throw new AgentPayAuthError("SIWE_CHAIN_INVALID", "SIWE challenge must target Arc Testnet.");
   }
   if (!isAddress(input.ownerAddress) || !isAddress(input.accountAddress)) {
     throw new AgentPayAuthError("SIWE_ADDRESS_INVALID", "SIWE challenge addresses must be valid EVM addresses.");
@@ -120,7 +120,7 @@ export function createSiweChallenge(input: CreateSiweChallengeInput): SiweChalle
     uri: AGENTPAY_CONSUMER_URI,
     ownerAddress: getAddress(input.ownerAddress),
     accountAddress: getAddress(input.accountAddress).toLowerCase(),
-    chainId: input.chainId as CeloHomeChainId,
+    chainId: input.chainId as ArcHomeChainId,
     nonce: input.nonce,
     flow,
     issuedAt: issuedAt.toISOString(),
