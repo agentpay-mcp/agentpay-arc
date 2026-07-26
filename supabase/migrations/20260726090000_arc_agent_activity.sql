@@ -95,7 +95,7 @@ create table if not exists public.arc_payment_batch_items (
     on delete restrict,
   check (id = batch_id::text || ':' || item_index::text),
   check (transaction_hash is null or transaction_hash ~ '^0x[0-9a-fA-F]{64}$'),
-  check (status <> 'PENDING' or transaction_id is null),
+  check (status <> 'PENDING' or (transaction_id is null and transaction_hash is null)),
   check (status <> 'COMPLETED' or (transaction_id is not null and transaction_hash is not null))
 );
 
@@ -131,6 +131,303 @@ create index if not exists arc_agent_activity_tenant_created_idx
 create index if not exists arc_agent_activity_reference_idx
   on public.arc_agent_activity (tenant_id, reference_id, created_at desc);
 
+create or replace function public.create_arc_payment_batch(
+  p_tenant_id uuid,
+  p_batch_id uuid,
+  p_idempotency_key uuid,
+  p_wallet_address text,
+  p_token text,
+  p_chain text,
+  p_created_at timestamptz,
+  p_updated_at timestamptz,
+  p_items jsonb
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_by_batch public.arc_payment_batches%rowtype;
+  v_by_key public.arc_payment_batches%rowtype;
+  v_inserted integer;
+  v_disposition text;
+  v_item_count integer;
+begin
+  if current_user <> 'service_role' then
+    raise exception 'Arc payment batch creation requires service_role'
+      using errcode = '42501';
+  end if;
+
+  if p_tenant_id is null
+    or p_batch_id is null
+    or p_batch_id::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_idempotency_key is null
+    or p_idempotency_key::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_wallet_address is null
+    or p_wallet_address !~ '^0x[0-9a-fA-F]{40}$'
+    or p_token is distinct from 'USDC'
+    or p_chain is distinct from 'ARC-TESTNET'
+    or p_created_at is null
+    or p_updated_at is distinct from p_created_at
+  then
+    raise exception 'Invalid Arc payment batch header';
+  end if;
+
+  if jsonb_typeof(p_items) is distinct from 'array'
+    or jsonb_array_length(p_items) not between 1 and 100
+  then
+    raise exception 'Arc payment batch must contain between 1 and 100 items';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_items) as incoming(item)
+    where jsonb_typeof(incoming.item) <> 'object'
+      or jsonb_typeof(incoming.item -> 'recipient') is distinct from 'string'
+      or jsonb_typeof(incoming.item -> 'amount') is distinct from 'string'
+      or (
+        incoming.item ? 'purpose'
+        and jsonb_typeof(incoming.item -> 'purpose') not in ('string', 'null')
+      )
+      or exists (
+        select 1
+        from jsonb_object_keys(incoming.item) as item_key(key)
+        where not (item_key.key = any (array['recipient', 'amount', 'purpose']))
+      )
+      or incoming.item ->> 'recipient' !~ '^0x[0-9a-fA-F]{40}$'
+      or not (
+        case
+          when incoming.item ->> 'amount'
+            ~ '^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$'
+          then (incoming.item ->> 'amount')::numeric > 0
+          else false
+        end
+      )
+      or (
+        incoming.item ->> 'purpose' is not null
+        and char_length(incoming.item ->> 'purpose') not between 1 and 512
+      )
+  ) then
+    raise exception 'Invalid Arc payment batch item';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_items) as incoming(item)
+    group by lower(incoming.item ->> 'recipient')
+    having count(*) > 1
+  ) then
+    raise exception 'Arc payment batch recipients must be unique';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('arc-payment-batch:' || p_tenant_id::text, 0)
+  );
+
+  insert into public.arc_payment_batches (
+    tenant_id,
+    batch_id,
+    idempotency_key,
+    wallet_address,
+    token,
+    chain,
+    status,
+    created_at,
+    updated_at
+  )
+  values (
+    p_tenant_id,
+    p_batch_id,
+    p_idempotency_key,
+    p_wallet_address,
+    p_token,
+    p_chain,
+    'PENDING',
+    p_created_at,
+    p_updated_at
+  )
+  on conflict do nothing;
+  get diagnostics v_inserted = row_count;
+
+  if v_inserted = 1 then
+    insert into public.arc_payment_batch_items (
+      tenant_id,
+      id,
+      batch_id,
+      item_index,
+      recipient,
+      amount,
+      purpose,
+      status,
+      transaction_id,
+      transaction_hash,
+      error_message,
+      created_at,
+      updated_at
+    )
+    select
+      p_tenant_id,
+      p_batch_id::text || ':' || (incoming.ordinality - 1)::text,
+      p_batch_id,
+      (incoming.ordinality - 1)::integer,
+      incoming.item ->> 'recipient',
+      incoming.item ->> 'amount',
+      incoming.item ->> 'purpose',
+      'PENDING',
+      null,
+      null,
+      null,
+      p_created_at,
+      p_updated_at
+    from jsonb_array_elements(p_items) with ordinality as incoming(item, ordinality);
+    v_disposition := 'CREATED';
+  else
+    select *
+    into v_by_batch
+    from public.arc_payment_batches
+    where tenant_id = p_tenant_id
+      and batch_id = p_batch_id;
+
+    select *
+    into v_by_key
+    from public.arc_payment_batches
+    where tenant_id = p_tenant_id
+      and idempotency_key = p_idempotency_key;
+
+    if v_by_batch.batch_id is null
+      or v_by_key.batch_id is null
+      or v_by_batch.batch_id <> v_by_key.batch_id
+      or lower(v_by_batch.wallet_address) <> lower(p_wallet_address)
+      or v_by_batch.token <> p_token
+      or v_by_batch.chain <> p_chain
+    then
+      raise exception 'Arc payment batch replay conflicts with persisted input';
+    end if;
+
+    select count(*)
+    into v_item_count
+    from public.arc_payment_batch_items
+    where tenant_id = p_tenant_id
+      and batch_id = p_batch_id;
+
+    if v_item_count <> jsonb_array_length(p_items)
+      or exists (
+        select 1
+        from jsonb_array_elements(p_items) with ordinality as incoming(item, ordinality)
+        left join public.arc_payment_batch_items as persisted
+          on persisted.tenant_id = p_tenant_id
+          and persisted.batch_id = p_batch_id
+          and persisted.item_index = (incoming.ordinality - 1)::integer
+        where persisted.id is null
+          or persisted.id <> p_batch_id::text || ':' || (incoming.ordinality - 1)::text
+          or lower(persisted.recipient) <> lower(incoming.item ->> 'recipient')
+          or persisted.amount <> incoming.item ->> 'amount'
+          or persisted.purpose is distinct from incoming.item ->> 'purpose'
+      )
+    then
+      raise exception 'Arc payment batch replay conflicts with persisted input';
+    end if;
+    v_disposition := 'REPLAY';
+  end if;
+
+  return jsonb_build_object(
+    'disposition',
+    v_disposition,
+    'batch',
+    (
+      select to_jsonb(batch_row)
+      from public.arc_payment_batches as batch_row
+      where batch_row.tenant_id = p_tenant_id
+        and batch_row.batch_id = p_batch_id
+    ),
+    'items',
+    (
+      select coalesce(
+        jsonb_agg(to_jsonb(item_row) order by item_row.item_index),
+        '[]'::jsonb
+      )
+      from public.arc_payment_batch_items as item_row
+      where item_row.tenant_id = p_tenant_id
+        and item_row.batch_id = p_batch_id
+    )
+  );
+end;
+$$;
+
+create or replace function public.claim_arc_payment_batch_item(
+  p_tenant_id uuid,
+  p_batch_id uuid,
+  p_item_id text,
+  p_updated_at timestamptz
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_claimed jsonb;
+begin
+  if current_user <> 'service_role' then
+    raise exception 'Arc payment batch item claim requires service_role'
+      using errcode = '42501';
+  end if;
+
+  if p_tenant_id is null
+    or p_batch_id is null
+    or p_batch_id::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_item_id is null
+    or p_item_id !~ ('^' || p_batch_id::text || ':[0-9]+$')
+    or p_updated_at is null
+  then
+    raise exception 'Invalid Arc payment batch item claim';
+  end if;
+
+  update public.arc_payment_batch_items
+  set
+    status = 'SUBMITTED',
+    updated_at = p_updated_at
+  where tenant_id = p_tenant_id
+    and batch_id = p_batch_id
+    and id = p_item_id
+    and status = 'PENDING'
+    and transaction_id is null
+    and transaction_hash is null
+  returning to_jsonb(arc_payment_batch_items.*)
+  into v_claimed;
+
+  if v_claimed is null then
+    return null;
+  end if;
+
+  insert into public.arc_agent_activity (
+    tenant_id,
+    id,
+    activity_type,
+    status,
+    reference_id,
+    metadata,
+    created_at
+  )
+  values (
+    p_tenant_id,
+    'batch_item_claimed:' || p_item_id,
+    'BATCH_PAYOUT',
+    'SUBMITTED',
+    p_item_id,
+    jsonb_build_object(
+      'event', 'BATCH_ITEM_CLAIMED',
+      'batchId', p_batch_id,
+      'itemId', p_item_id
+    ),
+    p_updated_at
+  );
+
+  return v_claimed;
+end;
+$$;
+
 create or replace function public.reject_arc_activity_mutation()
 returns trigger
 language plpgsql
@@ -158,6 +455,8 @@ revoke all on table public.arc_payment_receipts from public, anon, authenticated
 revoke all on table public.arc_payment_batches from public, anon, authenticated;
 revoke all on table public.arc_payment_batch_items from public, anon, authenticated;
 revoke all on table public.arc_agent_activity from public, anon, authenticated;
+revoke all on function public.create_arc_payment_batch(uuid, uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb) from public, anon, authenticated;
+revoke all on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.reject_arc_activity_mutation() from public, anon, authenticated;
 
 grant select, insert, update, delete on table public.arc_payment_requests to service_role;
@@ -165,6 +464,8 @@ grant select, insert, update, delete on table public.arc_payment_receipts to ser
 grant select, insert, update, delete on table public.arc_payment_batches to service_role;
 grant select, insert, update, delete on table public.arc_payment_batch_items to service_role;
 grant select, insert, update, delete on table public.arc_agent_activity to service_role;
+grant execute on function public.create_arc_payment_batch(uuid, uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb) to service_role;
+grant execute on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) to service_role;
 grant execute on function public.reject_arc_activity_mutation() to service_role;
 
 notify pgrst, 'reload schema';

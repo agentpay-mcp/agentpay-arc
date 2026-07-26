@@ -45,6 +45,9 @@ export interface ArcPaymentRepository {
   getBatch(batchId: string): Promise<ArcPaymentBatchRecord | null>;
   getBatchByIdempotencyKey(idempotencyKey: string): Promise<ArcPaymentBatchRecord | null>;
   createBatch(batch: ArcPaymentBatchRecord): Promise<ArcPaymentBatchRecord>;
+  claimBatchItem(
+    item: ArcPaymentBatchItemRecord,
+  ): Promise<ArcPaymentBatchItemRecord | null>;
   saveBatchItem(item: ArcPaymentBatchItemRecord): Promise<ArcPaymentBatchItemRecord>;
   saveBatch(batch: ArcPaymentBatchRecord): Promise<ArcPaymentBatchRecord>;
 }
@@ -327,11 +330,14 @@ async function executeBatchItem(
   walletAddress: string,
   dependencies: ArcPaymentDependencies,
 ): Promise<void> {
-  const claimed = await dependencies.payments.saveBatchItem({
+  const claimed = await dependencies.payments.claimBatchItem({
     ...item,
     status: "SUBMITTED",
     updatedAt: dependencies.clock().toISOString(),
   });
+  if (!claimed) {
+    return;
+  }
   let transaction: CircleTransactionResult;
   try {
     transaction = await dependencies.circleCli.transfer({

@@ -348,6 +348,119 @@ describe("Arc payment tools", () => {
     assert.equal(output.batch.items[1]?.status, "COMPLETED");
   });
 
+  it("atomically claims each pending item so concurrent payouts transfer it once", async () => {
+    const base = memoryRepository();
+    await base.createBatch({
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      walletAddress: WALLET,
+      chain: "ARC-TESTNET",
+      token: "USDC",
+      status: "PENDING",
+      items: [{
+        id: `${BATCH_ID}:0`,
+        batchId: BATCH_ID,
+        index: 0,
+        recipient: RECIPIENT_A,
+        amount: "1",
+        status: "PENDING",
+        createdAt: fixedClock().toISOString(),
+        updatedAt: fixedClock().toISOString(),
+      }],
+      createdAt: fixedClock().toISOString(),
+      updatedAt: fixedClock().toISOString(),
+    });
+    let releaseInitialReads: (() => void) | undefined;
+    const initialReadsReady = new Promise<void>((resolve) => {
+      releaseInitialReads = resolve;
+    });
+    let initialReads = 0;
+    const repository: ArcPaymentRepository = {
+      ...base,
+      async getBatch(batchId) {
+        const snapshot = await base.getBatch(batchId);
+        if (initialReads < 2) {
+          initialReads += 1;
+          if (initialReads === 2) {
+            releaseInitialReads?.();
+          }
+          await initialReadsReady;
+        }
+        return snapshot;
+      },
+    };
+    let transfers = 0;
+    const handler = createBatchPayoutHandler({
+      circleCli: fakeCircleCli({
+        transfer: async () => {
+          transfers += 1;
+          return completeTransaction("circle_tx_once", TX_HASH_A);
+        },
+      }),
+      payments: repository,
+      clock: fixedClock,
+    });
+    const input = {
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      payouts: [{ recipient: RECIPIENT_A, amount: "1" }],
+    };
+
+    await Promise.all([handler(input), handler(input)]);
+
+    const stored = await base.getBatch(BATCH_ID);
+    assert.equal(transfers, 1);
+    assert.equal(stored?.items[0]?.status, "COMPLETED");
+    assert.equal(stored?.items[0]?.transactionId, "circle_tx_once");
+  });
+
+  it("never claims or transfers a hash-only ambiguous pending item", async () => {
+    const repository = memoryRepository();
+    await repository.createBatch({
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      walletAddress: WALLET,
+      chain: "ARC-TESTNET",
+      token: "USDC",
+      status: "PENDING",
+      items: [{
+        id: `${BATCH_ID}:0`,
+        batchId: BATCH_ID,
+        index: 0,
+        recipient: RECIPIENT_A,
+        amount: "1",
+        status: "PENDING",
+        transactionHash: TX_HASH_A,
+        explorerUrl: `https://testnet.arcscan.app/tx/${TX_HASH_A}`,
+        createdAt: fixedClock().toISOString(),
+        updatedAt: fixedClock().toISOString(),
+      }],
+      createdAt: fixedClock().toISOString(),
+      updatedAt: fixedClock().toISOString(),
+    });
+    let transfers = 0;
+    const handler = createBatchPayoutHandler({
+      circleCli: fakeCircleCli({
+        transfer: async () => {
+          transfers += 1;
+          return completeTransaction("unexpected", TX_HASH_B);
+        },
+      }),
+      payments: repository,
+      clock: fixedClock,
+    });
+
+    const output = await handler({
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      payouts: [{ recipient: RECIPIENT_A, amount: "1" }],
+    });
+
+    assert.equal(transfers, 0);
+    assert.equal(output.batch.items[0]?.transactionHash, TX_HASH_A);
+    assert.equal(output.batch.items[0]?.status, "PENDING");
+  });
+
   it("resumes by a matching batch idempotency key and rejects key reuse across batch IDs", async () => {
     const repository = memoryRepository();
     await repository.createBatch({
@@ -448,10 +561,7 @@ describe("Arc payment tools", () => {
     assert.equal(resumed.batch.status, "SUBMITTED");
     assert.equal(resumed.batch.items[0]?.status, "SUBMITTED");
     assert.equal(resumed.batch.items[0]?.transactionId, undefined);
-    assert.deepEqual(storedStatuses, [
-      "SUBMITTED:CLAIMED",
-      "SUBMITTED:circle_tx_unsafe_to_retry",
-    ]);
+    assert.deepEqual(storedStatuses, ["SUBMITTED:circle_tx_unsafe_to_retry"]);
   });
 });
 
@@ -532,7 +642,7 @@ function memoryRepository(events: string[] = []): ArcPaymentRepository {
   const receipts = new Map<string, ArcPaymentReceiptRecord>();
   const batches = new Map<string, ArcPaymentBatchRecord>();
 
-  return {
+  const repository: ArcPaymentRepository = {
     async getReceiptByIdempotencyKey(idempotencyKey) {
       return clone(receipts.get(idempotencyKey) ?? null);
     },
@@ -560,6 +670,32 @@ function memoryRepository(events: string[] = []): ArcPaymentRepository {
       events.push(`batch:${batch.status}`);
       return clone(batch);
     },
+    async claimBatchItem(item: ArcPaymentBatchRecord["items"][number]) {
+      const batch = batches.get(item.batchId);
+      assert.ok(batch);
+      const stored = batch.items.find((candidate) => candidate.id === item.id);
+      if (
+        !stored
+        || stored.status !== "PENDING"
+        || stored.transactionId !== undefined
+        || stored.transactionHash !== undefined
+      ) {
+        return null;
+      }
+      const claimed = {
+        ...stored,
+        status: "SUBMITTED" as const,
+        updatedAt: item.updatedAt,
+      };
+      batches.set(item.batchId, {
+        ...batch,
+        items: batch.items.map((candidate) =>
+          candidate.id === item.id ? clone(claimed) : candidate
+        ),
+      });
+      events.push(`item:${item.index}:SUBMITTED:CLAIMED`);
+      return clone(claimed);
+    },
     async saveBatchItem(item) {
       const batch = batches.get(item.batchId);
       assert.ok(batch);
@@ -576,6 +712,7 @@ function memoryRepository(events: string[] = []): ArcPaymentRepository {
       return clone(next);
     },
   };
+  return repository;
 }
 
 function clone<T>(value: T): T {

@@ -327,6 +327,70 @@ describe("AgentPay Supabase migration", () => {
     assert.doesNotMatch(sql, /create policy .* for insert .* to (?:public|anon|authenticated)/);
   });
 
+  it("creates Arc batches and items through one fail-closed atomic RPC", async () => {
+    const sql = normalizeSql(await readFile(arcAgentActivityMigrationPath, "utf8"));
+
+    assert.ok(sql.includes("create or replace function public.create_arc_payment_batch("));
+    assert.ok(sql.includes("returns jsonb"));
+    assert.ok(sql.includes("language plpgsql"));
+    assert.ok(sql.includes("security invoker"));
+    assert.ok(sql.includes("if current_user <> 'service_role' then"));
+    assert.ok(sql.includes("jsonb_typeof(p_items) is distinct from 'array'"));
+    assert.ok(sql.includes("insert into public.arc_payment_batches"));
+    assert.ok(sql.includes("on conflict do nothing"));
+    assert.ok(sql.includes("get diagnostics v_inserted = row_count"));
+    assert.ok(sql.includes("insert into public.arc_payment_batch_items"));
+    assert.ok(sql.includes("pg_advisory_xact_lock("));
+    assert.ok(sql.includes("jsonb_array_length(p_items) not between 1 and 100"));
+    assert.ok(sql.includes("arc payment batch recipients must be unique"));
+    assert.ok(sql.includes("raise exception 'arc payment batch replay conflicts with persisted input'"));
+    assert.ok(
+      sql.includes(
+        "revoke all on function public.create_arc_payment_batch(uuid, uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb) from public, anon, authenticated",
+      ),
+    );
+    assert.ok(
+      sql.includes(
+        "grant execute on function public.create_arc_payment_batch(uuid, uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb) to service_role",
+      ),
+    );
+    assert.doesNotMatch(
+      sql,
+      /create or replace function public\.create_arc_payment_batch[\s\S]*exception\s+when[\s\S]*commit/,
+    );
+  });
+
+  it("claims one Arc batch item atomically and audits the non-retriable state", async () => {
+    const sql = normalizeSql(await readFile(arcAgentActivityMigrationPath, "utf8"));
+
+    assert.ok(sql.includes("create or replace function public.claim_arc_payment_batch_item("));
+    assert.ok(sql.includes("security invoker"));
+    assert.ok(sql.includes("if current_user <> 'service_role' then"));
+    assert.ok(sql.includes("update public.arc_payment_batch_items"));
+    assert.ok(sql.includes("status = 'submitted'"));
+    assert.ok(sql.includes("and status = 'pending'"));
+    assert.ok(sql.includes("and transaction_id is null"));
+    assert.ok(sql.includes("and transaction_hash is null"));
+    assert.ok(
+      sql.includes(
+        "check (status <> 'pending' or (transaction_id is null and transaction_hash is null))",
+      ),
+    );
+    assert.ok(sql.includes("returning to_jsonb(arc_payment_batch_items.*)"));
+    assert.ok(sql.includes("insert into public.arc_agent_activity"));
+    assert.ok(sql.includes("'batch_item_claimed'"));
+    assert.ok(
+      sql.includes(
+        "revoke all on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) from public, anon, authenticated",
+      ),
+    );
+    assert.ok(
+      sql.includes(
+        "grant execute on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) to service_role",
+      ),
+    );
+  });
+
   it("adds opaque OAuth clients and one-time PKCE authorization records", async () => {
     const sql = normalizeSql(await readFile(oauthConsumerAuthorizationMigrationPath, "utf8"));
 

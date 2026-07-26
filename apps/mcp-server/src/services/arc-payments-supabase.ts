@@ -62,6 +62,10 @@ export interface ArcPaymentSupabaseQuery
 
 export interface ArcPaymentSupabaseClient {
   from(table: string): ArcPaymentSupabaseQuery;
+  rpc(
+    functionName: string,
+    args: Record<string, unknown>,
+  ): PromiseLike<SupabaseSingleResult>;
 }
 
 export interface TenantArcPaymentRepositories {
@@ -162,6 +166,14 @@ const activityRowSchema = z
   })
   .strict();
 
+const atomicBatchResultSchema = z
+  .object({
+    disposition: z.enum(["CREATED", "REPLAY"]),
+    batch: batchRowSchema,
+    items: z.array(batchItemRowSchema).min(1).max(100),
+  })
+  .strict();
+
 export function createTenantArcPaymentRepositories(
   client: ArcPaymentSupabaseClient,
   trustedTenantId: string,
@@ -201,19 +213,56 @@ export function createTenantArcPaymentRepositories(
     getBatchByIdempotencyKey: (idempotencyKey) =>
       getBatch("idempotency_key", idempotencyKey),
     async createBatch(batch) {
-      await insertRow(
-        client,
-        "arc_payment_batches",
-        toBatchRow(batch, tenantId),
-      );
-      for (const item of batch.items) {
-        await insertRow(
-          client,
-          "arc_payment_batch_items",
-          toBatchItemRow(item, tenantId),
-        );
+      const result = await client.rpc("create_arc_payment_batch", {
+        p_tenant_id: tenantId,
+        p_batch_id: batch.batchId,
+        p_idempotency_key: batch.idempotencyKey,
+        p_wallet_address: batch.walletAddress,
+        p_token: batch.token,
+        p_chain: batch.chain,
+        p_created_at: batch.createdAt,
+        p_updated_at: batch.updatedAt,
+        p_items: batch.items.map((item) => ({
+          recipient: item.recipient,
+          amount: item.amount,
+          purpose: item.purpose ?? null,
+        })),
+      });
+      if (result.error) {
+        throw new Error("Arc payment atomic batch creation failed.");
       }
-      return cloneBatch(batch);
+      return mapAtomicBatchResult(result.data, batch, tenantId);
+    },
+    async claimBatchItem(item) {
+      const result = await client.rpc("claim_arc_payment_batch_item", {
+        p_tenant_id: tenantId,
+        p_batch_id: item.batchId,
+        p_item_id: item.id,
+        p_updated_at: item.updatedAt,
+      });
+      if (result.error) {
+        throw new Error("Arc payment atomic batch item claim failed.");
+      }
+      if (result.data === null) {
+        return null;
+      }
+      let claimed: ArcPaymentBatchItemRecord;
+      try {
+        claimed = mapBatchItem(result.data, tenantId);
+      } catch {
+        throw new Error("Arc payment atomic batch item claim returned invalid data.");
+      }
+      if (
+        claimed.id !== item.id
+        || claimed.batchId !== item.batchId
+        || claimed.index !== item.index
+        || claimed.status !== "SUBMITTED"
+        || claimed.transactionId !== undefined
+        || claimed.transactionHash !== undefined
+      ) {
+        throw new Error("Arc payment atomic batch item claim returned conflicting data.");
+      }
+      return claimed;
     },
     async saveBatchItem(item) {
       await upsertRow(
@@ -294,6 +343,51 @@ export function createTenantArcPaymentRepositories(
         return row ? mapReceipt(row, tenantId) : null;
       },
     },
+  };
+}
+
+function mapAtomicBatchResult(
+  value: unknown,
+  requested: ArcPaymentBatchRecord,
+  tenantId: string,
+): ArcPaymentBatchRecord {
+  const result = atomicBatchResultSchema.safeParse(value);
+  if (!result.success) {
+    throw new Error("Arc payment atomic batch creation returned invalid data.");
+  }
+  const batch = assertTenant(result.data.batch, tenantId);
+  const items = result.data.items.map((item) => mapBatchItem(item, tenantId));
+  const immutableHeaderMatches =
+    batch.batch_id === requested.batchId
+    && batch.idempotency_key === requested.idempotencyKey
+    && batch.wallet_address.toLowerCase() === requested.walletAddress.toLowerCase()
+    && batch.token === requested.token
+    && batch.chain === requested.chain;
+  const immutableItemsMatch =
+    items.length === requested.items.length
+    && items.every((item, index) => {
+      const expected = requested.items[index];
+      return expected !== undefined
+        && item.id === `${requested.batchId}:${index}`
+        && item.batchId === requested.batchId
+        && item.index === index
+        && item.recipient.toLowerCase() === expected.recipient.toLowerCase()
+        && item.amount === expected.amount
+        && item.purpose === expected.purpose;
+    });
+  if (!immutableHeaderMatches || !immutableItemsMatch) {
+    throw new Error("Arc payment atomic batch creation returned conflicting data.");
+  }
+  return {
+    batchId: batch.batch_id,
+    idempotencyKey: batch.idempotency_key,
+    walletAddress: batch.wallet_address,
+    chain: batch.chain,
+    token: batch.token,
+    status: batch.status,
+    items,
+    createdAt: batch.created_at,
+    updatedAt: batch.updated_at,
   };
 }
 

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import type {
   ArcAgentActivityRecord,
+  ArcPaymentBatchItemRecord,
   ArcPaymentBatchRecord,
   ArcPaymentReceiptRecord,
 } from "@agentpay-ai/shared-arc";
@@ -57,11 +58,131 @@ describe("tenant-bound Arc payment Supabase repositories", () => {
         false,
       );
     }
-    assert.ok(client.writes.length >= 7);
+    assert.ok(client.writes.length >= 5);
     for (const write of client.writes) {
       assert.equal(write.row.tenant_id, TENANT_ID, `${write.table} write tenant`);
       assert.equal("tenantId" in write.row, false);
     }
+  });
+
+  it("creates a batch atomically with one tenant-scoped RPC and no table writes", async () => {
+    const client = new SupabaseSpy({}, {
+      data: batchRpcResult(),
+      error: null,
+    });
+    const repositories = createTenantArcPaymentRepositories(client, TENANT_ID);
+
+    const created = await repositories.payments.createBatch(batchRecord());
+
+    assert.deepEqual(created, batchRecord());
+    assert.equal(client.rpcCalls.length, 1);
+    assert.equal(client.rpcCalls[0]?.functionName, "create_arc_payment_batch");
+    assert.equal(client.rpcCalls[0]?.args.p_tenant_id, TENANT_ID);
+    assert.deepEqual(client.rpcCalls[0]?.args.p_items, [
+      {
+        recipient: RECIPIENT,
+        amount: "1",
+        purpose: null,
+      },
+    ]);
+    assert.equal(client.writes.length, 0);
+  });
+
+  it("fails closed without partial table writes when atomic batch creation fails", async () => {
+    const client = new SupabaseSpy({}, {
+      data: null,
+      error: { message: "item validation failed" },
+    });
+    const repositories = createTenantArcPaymentRepositories(client, TENANT_ID);
+
+    await assert.rejects(
+      repositories.payments.createBatch(batchRecord()),
+      /atomic batch creation failed/i,
+    );
+    assert.equal(client.rpcCalls.length, 1);
+    assert.equal(client.writes.length, 0);
+    assert.equal(client.queries.length, 0);
+  });
+
+  it("claims a pending batch item with one RPC and returns null to a concurrent loser", async () => {
+    const batch = batchRecord();
+    const item = batch.items[0]!;
+    const winningClient = new SupabaseSpy({}, {
+      data: batchRpcItemRow(),
+      error: null,
+    });
+    const winningRepositories = createTenantArcPaymentRepositories(
+      winningClient,
+      TENANT_ID,
+    );
+    const winningPayments = winningRepositories.payments as ArcPaymentRepositoryWithClaim;
+
+    const claimed = await winningPayments.claimBatchItem(item);
+
+    assert.equal(claimed?.status, "SUBMITTED");
+    assert.equal(claimed?.transactionId, undefined);
+    assert.deepEqual(winningClient.rpcCalls, [{
+      functionName: "claim_arc_payment_batch_item",
+      args: {
+        p_tenant_id: TENANT_ID,
+        p_batch_id: BATCH_ID,
+        p_item_id: `${BATCH_ID}:0`,
+        p_updated_at: item.updatedAt,
+      },
+    }]);
+    assert.equal(winningClient.writes.length, 0);
+    assert.equal(winningClient.queries.length, 0);
+
+    const losingClient = new SupabaseSpy({}, { data: null, error: null });
+    const losingPayments = createTenantArcPaymentRepositories(
+      losingClient,
+      TENANT_ID,
+    ).payments as ArcPaymentRepositoryWithClaim;
+    assert.equal(await losingPayments.claimBatchItem(item), null);
+    assert.equal(losingClient.rpcCalls.length, 1);
+    assert.equal(losingClient.writes.length, 0);
+  });
+
+  it("does not expose or retry an atomic item claim failure", async () => {
+    const client = new SupabaseSpy({}, {
+      data: null,
+      error: { message: "sensitive database detail" },
+    });
+    const payments = createTenantArcPaymentRepositories(
+      client,
+      TENANT_ID,
+    ).payments as ArcPaymentRepositoryWithClaim;
+
+    await assert.rejects(
+      payments.claimBatchItem(batchRecord().items[0]!),
+      (error: unknown) =>
+        error instanceof Error
+        && /atomic batch item claim failed/i.test(error.message)
+        && !/sensitive database detail/i.test(error.message),
+    );
+    assert.equal(client.rpcCalls.length, 1);
+    assert.equal(client.writes.length, 0);
+  });
+
+  it("rejects a hash-only ambiguous claim response", async () => {
+    const client = new SupabaseSpy({}, {
+      data: {
+        ...batchRpcItemRow(),
+        transaction_hash: `0x${"a".repeat(64)}`,
+      },
+      error: null,
+    });
+    const payments = createTenantArcPaymentRepositories(
+      client,
+      TENANT_ID,
+    ).payments as ArcPaymentRepositoryWithClaim;
+
+    await assert.rejects(
+      payments.claimBatchItem(batchRecord().items[0]!),
+      /conflicting data/i,
+    );
+    assert.equal(client.rpcCalls.length, 1);
+    assert.equal(client.writes.length, 0);
   });
 
   it("rejects an invalid trusted tenant before touching Supabase", () => {
@@ -161,18 +282,49 @@ describe("tenant-bound Arc payment Supabase repositories", () => {
   });
 });
 
+interface ArcPaymentRepositoryWithClaim {
+  claimBatchItem(
+    item: ArcPaymentBatchItemRecord,
+  ): Promise<ArcPaymentBatchItemRecord | null>;
+}
+
 class SupabaseSpy implements ArcPaymentSupabaseClient {
   readonly queries: QuerySpy[] = [];
   readonly writes: Array<{ table: string; row: Record<string, unknown> }> = [];
+  readonly rpcCalls: Array<{
+    functionName: string;
+    args: Record<string, unknown>;
+  }> = [];
 
   constructor(
     private readonly fixtures: Record<string, Record<string, unknown>[]> = {},
+    private readonly rpcResult: {
+      readonly data: unknown;
+      readonly error: { readonly message: string } | null;
+    } = {
+      data: batchRpcResult(),
+      error: null,
+    },
   ) {}
 
   from(table: string): QuerySpy {
     const query = new QuerySpy(table, this.writes, this.fixtures[table] ?? []);
     this.queries.push(query);
     return query;
+  }
+
+  rpc(
+    functionName: string,
+    args: Record<string, unknown>,
+  ): Promise<{
+    readonly data: unknown;
+    readonly error: { readonly message: string } | null;
+  }> {
+    this.rpcCalls.push({
+      functionName,
+      args: structuredClone(args),
+    });
+    return Promise.resolve(structuredClone(this.rpcResult));
   }
 }
 
@@ -300,6 +452,56 @@ function batchRecord(): ArcPaymentBatchRecord {
     }],
     createdAt: "2026-07-26T09:00:00.000Z",
     updatedAt: "2026-07-26T09:00:00.000Z",
+  };
+}
+
+function batchRpcResult(): Record<string, unknown> {
+  return {
+    disposition: "CREATED",
+    batch: {
+      tenant_id: TENANT_ID,
+      batch_id: BATCH_ID,
+      idempotency_key: BATCH_KEY,
+      wallet_address: WALLET,
+      token: "USDC",
+      chain: "ARC-TESTNET",
+      status: "PENDING",
+      created_at: "2026-07-26T09:00:00.000Z",
+      updated_at: "2026-07-26T09:00:00.000Z",
+    },
+    items: [{
+      tenant_id: TENANT_ID,
+      id: `${BATCH_ID}:0`,
+      batch_id: BATCH_ID,
+      item_index: 0,
+      recipient: RECIPIENT,
+      amount: "1",
+      purpose: null,
+      status: "PENDING",
+      transaction_id: null,
+      transaction_hash: null,
+      error_message: null,
+      created_at: "2026-07-26T09:00:00.000Z",
+      updated_at: "2026-07-26T09:00:00.000Z",
+    }],
+  };
+}
+
+function batchRpcItemRow(): Record<string, unknown> {
+  return {
+    tenant_id: TENANT_ID,
+    id: `${BATCH_ID}:0`,
+    batch_id: BATCH_ID,
+    item_index: 0,
+    recipient: RECIPIENT,
+    amount: "1",
+    purpose: null,
+    status: "SUBMITTED",
+    transaction_id: null,
+    transaction_hash: null,
+    error_message: null,
+    created_at: "2026-07-26T09:00:00.000Z",
+    updated_at: "2026-07-26T09:00:00.000Z",
   };
 }
 
