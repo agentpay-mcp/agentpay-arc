@@ -1,4 +1,6 @@
 import {
+  type ArcAgentActivityRecord,
+  type ArcPaymentReceiptRecord,
   listPaymentEventsInputSchema,
   type ListPaymentEventsInput,
   listTransactionsInputSchema,
@@ -9,7 +11,9 @@ import {
   type PaymentType,
   type TrackPaymentInput,
   trackPaymentInputSchema,
+  uuidV4Schema,
 } from "@agentpay-ai/shared-arc";
+import { z } from "zod";
 
 export interface RouteStatusRequest {
   txHash: string;
@@ -305,6 +309,110 @@ export function createListTransactionsHandler(dependencies: ListTransactionsDepe
 export function createListPaymentEventsHandler(dependencies: ListPaymentEventsDependencies) {
   return (input: ListPaymentEventsInput) => listPaymentEvents(input, dependencies);
 }
+
+const listAgentActivityInputSchema = z
+  .object({
+    limit: z.number().int().min(1).max(100).default(20),
+  })
+  .strict();
+
+const getPaymentReceiptInputSchema = z
+  .object({
+    receiptId: uuidV4Schema,
+  })
+  .strict();
+
+export interface ArcAgentActivityRepository {
+  listAgentActivity(request: { limit: number }): Promise<readonly ArcAgentActivityRecord[]>;
+}
+
+export interface ArcPaymentReceiptRepository {
+  getPaymentReceipt(receiptId: string): Promise<ArcPaymentReceiptRecord | null>;
+}
+
+export interface ListAgentActivityDependencies {
+  readonly activity: ArcAgentActivityRepository;
+}
+
+export interface GetPaymentReceiptDependencies {
+  readonly receipts: ArcPaymentReceiptRepository;
+}
+
+export async function listAgentActivity(
+  rawInput: z.input<typeof listAgentActivityInputSchema>,
+  dependencies: ListAgentActivityDependencies,
+) {
+  const input = listAgentActivityInputSchema.parse(rawInput);
+  const records = await dependencies.activity.listAgentActivity({ limit: input.limit });
+  return {
+    activities: records.map((record) =>
+      Object.freeze({
+        ...record,
+        metadata: Object.freeze({ ...record.metadata }),
+      }),
+    ),
+  };
+}
+
+export async function getPaymentReceipt(
+  rawInput: z.input<typeof getPaymentReceiptInputSchema>,
+  dependencies: GetPaymentReceiptDependencies,
+) {
+  const input = getPaymentReceiptInputSchema.parse(rawInput);
+  const receipt = await dependencies.receipts.getPaymentReceipt(input.receiptId);
+  if (!receipt) {
+    throw new Error(`Arc payment receipt ${input.receiptId} was not found.`);
+  }
+  return {
+    receipt: {
+      ...receipt,
+      ...(receipt.transactionHash
+        ? {
+            explorerUrl: `https://testnet.arcscan.app/tx/${receipt.transactionHash}`,
+          }
+        : {}),
+    },
+  };
+}
+
+export function createListAgentActivityHandler(
+  dependencies: ListAgentActivityDependencies,
+) {
+  return (input: z.input<typeof listAgentActivityInputSchema>) =>
+    listAgentActivity(input, dependencies);
+}
+
+export function createGetPaymentReceiptHandler(
+  dependencies: GetPaymentReceiptDependencies,
+) {
+  return (input: z.input<typeof getPaymentReceiptInputSchema>) =>
+    getPaymentReceipt(input, dependencies);
+}
+
+export const listAgentActivityTool = {
+  name: "list_agent_activity",
+  description: "List recent immutable tenant-scoped Arc Agent Wallet activity.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      limit: { type: "number", minimum: 1, maximum: 100, default: 20 },
+    },
+  },
+} as const;
+
+export const getPaymentReceiptTool = {
+  name: "get_payment_receipt",
+  description: "Get a tenant-scoped Arc USDC payment receipt and Arcscan transaction link.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["receiptId"],
+    properties: {
+      receiptId: { type: "string", format: "uuid" },
+    },
+  },
+} as const;
 
 function toStoredStatusOutput(intent: PaymentIntentRecord): TrackPaymentOutput {
   return omitUndefined({

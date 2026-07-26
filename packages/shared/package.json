@@ -12,6 +12,7 @@
     "src/arc.ts",
     "src/auth.ts",
     "src/balance.ts",
+    "src/batch-payout.ts",
     "src/celo-attribution.ts",
     "src/chains.ts",
     "src/circle.ts",

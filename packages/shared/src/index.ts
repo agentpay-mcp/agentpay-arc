@@ -3,6 +3,7 @@ export * from "./arc.ts";
 export * from "./account-admin.ts";
 export * from "./auth.ts";
 export * from "./balance.ts";
+export * from "./batch-payout.ts";
 export * from "./chains.ts";
 export * from "./circle.ts";
 export * from "./celo-attribution.ts";

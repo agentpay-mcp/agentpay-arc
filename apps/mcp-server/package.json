@@ -38,6 +38,7 @@
     "src/services/supabase.ts",
     "src/services/x402-bazaar.ts",
     "src/tools/account-admin.ts",
+    "src/tools/arc-payments.ts",
     "src/tools/circle-agent-wallet.ts",
     "src/tools/execute-payment.ts",
     "src/tools/get-balance.ts",

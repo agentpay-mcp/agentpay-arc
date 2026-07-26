@@ -17,6 +17,7 @@ const celoBoundaryMigrationPath = "supabase/migrations/20260717120000_celo_home_
 const celoConsumerResourceMigrationPath = "supabase/migrations/20260721120000_celo_consumer_resource.sql";
 const productionSetupMigrationPath = "supabase/migrations/20260721130000_celo_production_mainnet_onboarding.sql";
 const celoX402SettlementAuditMigrationPath = "supabase/migrations/20260721160000_celo_x402_settlement_audit.sql";
+const arcAgentActivityMigrationPath = "supabase/migrations/20260726090000_arc_agent_activity.sql";
 const migrationsDir = "supabase/migrations";
 const requiredTables = ["setup_intents", "agent_wallets", "payment_intents", "payment_events"];
 const requiredSecurityStatements = [
@@ -280,6 +281,50 @@ describe("AgentPay Supabase migration", () => {
       sql.includes("metadata ?| array['ownersetupsignature', 'owner_setup_signature', 'rawtransaction', 'raw_tx']"),
       "events reject setup signatures and raw transaction material",
     );
+  });
+
+  it("defines tenant-scoped Arc requests, receipts, batches, and append-only activity", async () => {
+    const sql = normalizeSql(await readFile(arcAgentActivityMigrationPath, "utf8"));
+
+    for (const tableName of [
+      "arc_payment_requests",
+      "arc_payment_receipts",
+      "arc_payment_batches",
+      "arc_payment_batch_items",
+      "arc_agent_activity",
+    ]) {
+      assert.ok(sql.includes(`create table if not exists public.${tableName}`), `${tableName} table`);
+      assert.ok(sql.includes(`alter table public.${tableName} enable row level security`), `${tableName} RLS`);
+      assert.ok(
+        sql.includes(`revoke all on table public.${tableName} from public, anon, authenticated`),
+        `${tableName} anonymous write denial`,
+      );
+      assert.ok(
+        sql.includes(`grant select, insert, update, delete on table public.${tableName} to service_role`),
+        `${tableName} service-role access`,
+      );
+    }
+
+    for (const constraint of [
+      "chain text not null default 'ARC-TESTNET' check (chain = 'ARC-TESTNET')",
+      "token text not null default 'USDC' check (token = 'USDC')",
+      "check (recipient ~ '^0x[0-9a-fa-f]{40}$')",
+      "check (amount ~ '^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$' and amount::numeric > 0)",
+      "status text not null default 'PENDING' check (status in ('PENDING', 'SUBMITTED', 'COMPLETED', 'FAILED'))",
+      "check (transaction_hash is null or transaction_hash ~ '^0x[0-9a-fa-f]{64}$')",
+      "unique (tenant_id, idempotency_key)",
+      "unique (tenant_id, batch_id, item_index)",
+    ]) {
+      assert.ok(sql.includes(constraint.toLowerCase()), constraint);
+    }
+
+    assert.ok(sql.includes("create unique index if not exists arc_payment_batch_items_recipient_idx"));
+    assert.ok(sql.includes("lower(recipient)"));
+    assert.ok(sql.includes("create or replace function public.reject_arc_activity_mutation"));
+    assert.ok(sql.includes("raise exception 'arc agent activity is append-only'"));
+    assert.ok(sql.includes("before update or delete on public.arc_agent_activity"));
+    assert.ok(sql.includes("notify pgrst, 'reload schema'"));
+    assert.doesNotMatch(sql, /create policy .* for insert .* to (?:public|anon|authenticated)/);
   });
 
   it("adds opaque OAuth clients and one-time PKCE authorization records", async () => {

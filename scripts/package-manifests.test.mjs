@@ -216,12 +216,18 @@ describe("publishable AgentPay package manifests", () => {
     assert.ok(manifest.files.includes("src/services/production-setup.ts"));
     assert.ok(manifest.files.includes("src/services/production-setup-supabase.ts"));
     assert.ok(manifest.files.includes("src/tools/circle-agent-wallet.ts"));
+    assert.ok(manifest.files.includes("src/tools/arc-payments.ts"));
     await access("apps/mcp-server/src/mcp/http.ts");
     await access("apps/mcp-server/src/mcp/celo-agent-payment.ts");
     await access("apps/mcp-server/src/runtime/paid-execution-canary-ledger.ts");
     await access("apps/mcp-server/src/services/production-setup.ts");
     await access("apps/mcp-server/src/services/production-setup-supabase.ts");
     await access("apps/mcp-server/src/tools/circle-agent-wallet.ts");
+    await access("apps/mcp-server/src/tools/arc-payments.ts");
+
+    const sharedManifest = await readPackageJson("packages/shared");
+    assert.ok(sharedManifest.files.includes("src/batch-payout.ts"));
+    await access("packages/shared/src/batch-payout.ts");
   });
 
   it("publishes the isolated Celo onboarding web and deployment worker entrypoints", async () => {

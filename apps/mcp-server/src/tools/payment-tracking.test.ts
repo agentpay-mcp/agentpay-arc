@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { PaymentIntentRecord } from "@agentpay-ai/shared-arc";
+import type {
+  ArcAgentActivityRecord,
+  ArcPaymentReceiptRecord,
+  PaymentIntentRecord,
+} from "@agentpay-ai/shared-arc";
 
-import { listPaymentEvents, listTransactions, trackPayment } from "./payment-tracking.ts";
+import {
+  getPaymentReceipt,
+  getPaymentReceiptTool,
+  listAgentActivity,
+  listAgentActivityTool,
+  listPaymentEvents,
+  listTransactions,
+  trackPayment,
+} from "./payment-tracking.ts";
 
 const executingIntent: PaymentIntentRecord = {
   id: "pay_123",
@@ -501,5 +513,99 @@ describe("listPaymentEvents", () => {
         },
       ],
     });
+  });
+});
+
+describe("Arc payment tracking tools", () => {
+  it("publishes strict list_agent_activity and get_payment_receipt tools", () => {
+    assert.equal(listAgentActivityTool.name, "list_agent_activity");
+    assert.equal(getPaymentReceiptTool.name, "get_payment_receipt");
+    assert.equal(listAgentActivityTool.inputSchema.additionalProperties, false);
+    assert.equal(getPaymentReceiptTool.inputSchema.additionalProperties, false);
+  });
+
+  it("returns immutable tenant-scoped activity snapshots", async () => {
+    const record: ArcAgentActivityRecord = {
+      id: "activity_1",
+      type: "PAYMENT",
+      status: "COMPLETED",
+      referenceId: "436dd5c3-d784-4980-b708-3f1ddc84010e",
+      metadata: { amount: "1" },
+      createdAt: "2026-07-26T09:00:00.000Z",
+    };
+    const requests: unknown[] = [];
+    const output = await listAgentActivity(
+      { limit: 5 },
+      {
+        activity: {
+          async listAgentActivity(request) {
+            requests.push(request);
+            return [record];
+          },
+        },
+      },
+    );
+
+    assert.deepEqual(requests, [{ limit: 5 }]);
+    assert.deepEqual(output.activities, [record]);
+    assert.ok(Object.isFrozen(output.activities[0]));
+    assert.ok(Object.isFrozen(output.activities[0]?.metadata));
+    assert.notEqual(output.activities[0], record);
+  });
+
+  it("returns receipts with the exact Arc Testnet explorer link", async () => {
+    const txHash = `0x${"c".repeat(64)}`;
+    const receipt: ArcPaymentReceiptRecord = {
+      id: "436dd5c3-d784-4980-b708-3f1ddc84010e",
+      idempotencyKey: "436dd5c3-d784-4980-b708-3f1ddc84010e",
+      walletAddress: "0x1111111111111111111111111111111111111111",
+      recipient: "0x2222222222222222222222222222222222222222",
+      amount: "1",
+      token: "USDC",
+      chain: "ARC-TESTNET",
+      purpose: "Invoice INV-1",
+      status: "COMPLETED",
+      transactionId: "circle_tx_1",
+      transactionHash: txHash,
+      explorerUrl: "https://evil.example/tx",
+      createdAt: "2026-07-26T09:00:00.000Z",
+      updatedAt: "2026-07-26T09:01:00.000Z",
+    };
+
+    const output = await getPaymentReceipt(
+      { receiptId: receipt.id },
+      {
+        receipts: {
+          async getPaymentReceipt(receiptId) {
+            assert.equal(receiptId, receipt.id);
+            return receipt;
+          },
+        },
+      },
+    );
+
+    assert.equal(output.receipt.explorerUrl, `https://testnet.arcscan.app/tx/${txHash}`);
+    assert.notEqual(output.receipt, receipt);
+  });
+
+  it("rejects invalid receipt IDs and missing receipts", async () => {
+    const dependencies = {
+      receipts: {
+        async getPaymentReceipt() {
+          return null;
+        },
+      },
+    };
+    await assert.rejects(
+      () => getPaymentReceipt({ receiptId: "not-a-uuid" }, dependencies),
+      /uuid|version 4/i,
+    );
+    await assert.rejects(
+      () => getPaymentReceipt(
+        { receiptId: "436dd5c3-d784-4980-b708-3f1ddc84010e" },
+        dependencies,
+      ),
+      /not found/i,
+    );
   });
 });
