@@ -161,6 +161,53 @@ describe("Arc payment tools", () => {
     assert.equal(output.receipt.status, "SUBMITTED");
   });
 
+  it("binds receipt replay to the currently authenticated selected wallet", async () => {
+    const repository = memoryRepository();
+    await repository.saveReceipt({
+      ...baseReceipt(RECEIPT_ID),
+      status: "SUBMITTED",
+      transactionId: "circle_tx_existing",
+    });
+    let transfers = 0;
+    const foreignWallet: CircleAgentWallet = {
+      address: "0x9999999999999999999999999999999999999999",
+      type: "agent",
+      blockchain: "ARC-TESTNET",
+    };
+    const handler = createSendUsdcHandler({
+      circleCli: fakeCircleCli({
+        listAgentWallets: async () => [foreignWallet],
+        transfer: async () => {
+          transfers += 1;
+          return completeTransaction("unexpected", TX_HASH_A);
+        },
+      }),
+      payments: repository,
+      clock: fixedClock,
+    });
+
+    await assert.rejects(
+      () => handler({
+        idempotencyKey: RECEIPT_ID,
+        recipient: RECIPIENT_A,
+        amount: "2.5",
+        purpose: "Invoice INV-1",
+      }),
+      /wallet|authenticated|bound/i,
+    );
+    await assert.rejects(
+      () => handler({
+        idempotencyKey: RECEIPT_ID,
+        walletAddress: WALLET,
+        recipient: RECIPIENT_A,
+        amount: "2.5",
+        purpose: "Invoice INV-1",
+      }),
+      /authenticated Circle Agent Wallet/i,
+    );
+    assert.equal(transfers, 0);
+  });
+
   it("does not overwrite a PENDING receipt as FAILED when submitted identity persistence fails", async () => {
     const stored: ArcPaymentReceiptRecord[] = [];
     let transfers = 0;
@@ -299,6 +346,61 @@ describe("Arc payment tools", () => {
     assert.deepEqual(transferred, [RECIPIENT_B]);
     assert.equal(output.batch.items[0]?.transactionId, "circle_tx_existing");
     assert.equal(output.batch.items[1]?.status, "COMPLETED");
+  });
+
+  it("resumes by a matching batch idempotency key and rejects key reuse across batch IDs", async () => {
+    const repository = memoryRepository();
+    await repository.createBatch({
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      walletAddress: WALLET,
+      chain: "ARC-TESTNET",
+      token: "USDC",
+      status: "COMPLETED",
+      createdAt: fixedClock().toISOString(),
+      updatedAt: fixedClock().toISOString(),
+      items: [{
+        id: `${BATCH_ID}:0`,
+        batchId: BATCH_ID,
+        index: 0,
+        recipient: RECIPIENT_A,
+        amount: "1",
+        status: "COMPLETED",
+        transactionId: "circle_tx_existing",
+        transactionHash: TX_HASH_A,
+        explorerUrl: `https://testnet.arcscan.app/tx/${TX_HASH_A}`,
+        createdAt: fixedClock().toISOString(),
+        updatedAt: fixedClock().toISOString(),
+      }],
+    });
+    let transfers = 0;
+    const handler = createBatchPayoutHandler({
+      circleCli: fakeCircleCli({
+        transfer: async () => {
+          transfers += 1;
+          return completeTransaction("unexpected", TX_HASH_B);
+        },
+      }),
+      payments: repository,
+      clock: fixedClock,
+    });
+
+    const replay = await handler({
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      payouts: [{ recipient: RECIPIENT_A, amount: "1" }],
+    });
+    assert.equal(replay.status, "COMPLETED");
+
+    await assert.rejects(
+      () => handler({
+        batchId: "c612a50c-89db-4de7-94ae-bc19ce2ff4a7",
+        idempotencyKey: BATCH_KEY,
+        payouts: [{ recipient: RECIPIENT_A, amount: "1" }],
+      }),
+      /idempotency.*different|already bound/i,
+    );
+    assert.equal(transfers, 0);
   });
 
   it("fails closed when a submitted batch transaction identity cannot be persisted", async () => {
@@ -447,6 +549,11 @@ function memoryRepository(events: string[] = []): ArcPaymentRepository {
     },
     async getBatch(batchId) {
       return clone(batches.get(batchId) ?? null);
+    },
+    async getBatchByIdempotencyKey(idempotencyKey) {
+      return clone(
+        [...batches.values()].find((batch) => batch.idempotencyKey === idempotencyKey) ?? null,
+      );
     },
     async createBatch(batch) {
       batches.set(batch.batchId, clone(batch));

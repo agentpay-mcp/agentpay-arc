@@ -217,6 +217,8 @@ describe("publishable AgentPay package manifests", () => {
     assert.ok(manifest.files.includes("src/services/production-setup-supabase.ts"));
     assert.ok(manifest.files.includes("src/tools/circle-agent-wallet.ts"));
     assert.ok(manifest.files.includes("src/tools/arc-payments.ts"));
+    assert.ok(manifest.files.includes("src/mcp/arc-payments.ts"));
+    assert.ok(manifest.files.includes("src/services/arc-payments-supabase.ts"));
     await access("apps/mcp-server/src/mcp/http.ts");
     await access("apps/mcp-server/src/mcp/celo-agent-payment.ts");
     await access("apps/mcp-server/src/runtime/paid-execution-canary-ledger.ts");
@@ -224,6 +226,8 @@ describe("publishable AgentPay package manifests", () => {
     await access("apps/mcp-server/src/services/production-setup-supabase.ts");
     await access("apps/mcp-server/src/tools/circle-agent-wallet.ts");
     await access("apps/mcp-server/src/tools/arc-payments.ts");
+    await access("apps/mcp-server/src/mcp/arc-payments.ts");
+    await access("apps/mcp-server/src/services/arc-payments-supabase.ts");
 
     const sharedManifest = await readPackageJson("packages/shared");
     assert.ok(sharedManifest.files.includes("src/batch-payout.ts"));

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 export { AGENTPAY_ARC_PUBLIC_URLS } from "@agentpay-ai/shared-arc";
 export * from "./mcp/agentpay-mcp.ts";
+export * from "./mcp/arc-payments.ts";
 export * from "./mcp/consumer-auth.ts";
 export {
   startAgentPayHttpServer,
@@ -21,6 +22,7 @@ export * from "./auth/consumer-session-api.ts";
 export * from "./auth/oauth.ts";
 export * from "./auth/oauth-api.ts";
 export * from "./services/lifi.ts";
+export * from "./services/arc-payments-supabase.ts";
 export * from "./services/chain-executor.ts";
 export * from "./services/payment-authorization.ts";
 export * from "./services/mainnet-account-verifier.ts";
@@ -34,6 +36,7 @@ export * from "./services/production-setup-supabase.ts";
 export * from "./services/supabase.ts";
 export * from "./services/x402-bazaar.ts";
 export * from "./tools/account-admin.ts";
+export * from "./tools/arc-payments.ts";
 export * from "./tools/execute-payment.ts";
 export * from "./tools/get-balance.ts";
 export * from "./tools/invoice.ts";

@@ -43,6 +43,7 @@ export interface ArcPaymentRepository {
   saveReceipt(receipt: ArcPaymentReceiptRecord): Promise<ArcPaymentReceiptRecord>;
   appendActivity(activity: ArcAgentActivityRecord): Promise<void>;
   getBatch(batchId: string): Promise<ArcPaymentBatchRecord | null>;
+  getBatchByIdempotencyKey(idempotencyKey: string): Promise<ArcPaymentBatchRecord | null>;
   createBatch(batch: ArcPaymentBatchRecord): Promise<ArcPaymentBatchRecord>;
   saveBatchItem(item: ArcPaymentBatchItemRecord): Promise<ArcPaymentBatchItemRecord>;
   saveBatch(batch: ArcPaymentBatchRecord): Promise<ArcPaymentBatchRecord>;
@@ -73,16 +74,16 @@ export async function sendUsdc(
   dependencies: ArcPaymentDependencies,
 ): Promise<SendUsdcOutput> {
   const input = sendUsdcInputSchema.parse(rawInput);
-  const existing = await dependencies.payments.getReceiptByIdempotencyKey(input.idempotencyKey);
-  if (existing) {
-    assertReceiptMatches(existing, input);
-    return { status: existing.status, receipt: cloneReceipt(existing) };
-  }
-
   const wallet = selectWallet(
     await dependencies.circleCli.listAgentWallets(),
     input.walletAddress,
   );
+  const existing = await dependencies.payments.getReceiptByIdempotencyKey(input.idempotencyKey);
+  if (existing) {
+    assertReceiptMatches(existing, input, wallet.address);
+    return { status: existing.status, receipt: cloneReceipt(existing) };
+  }
+
   await assertSufficientBalance(
     dependencies.circleCli,
     wallet.address,
@@ -161,7 +162,21 @@ export async function batchPayout(
     await dependencies.circleCli.listAgentWallets(),
     input.walletAddress,
   );
-  const existing = await dependencies.payments.getBatch(input.batchId);
+  const [byBatchId, byIdempotencyKey] = await Promise.all([
+    dependencies.payments.getBatch(input.batchId),
+    dependencies.payments.getBatchByIdempotencyKey(input.idempotencyKey),
+  ]);
+  if (byIdempotencyKey && byIdempotencyKey.batchId !== input.batchId) {
+    throw new Error("Batch idempotency key is already bound to a different Arc payout batch.");
+  }
+  if (
+    byBatchId
+    && byIdempotencyKey
+    && byBatchId.batchId !== byIdempotencyKey.batchId
+  ) {
+    throw new Error("Batch identifiers resolve to different Arc payout batches.");
+  }
+  const existing = byBatchId ?? byIdempotencyKey;
   let batch: ArcPaymentBatchRecord;
 
   if (existing) {
@@ -463,9 +478,11 @@ function selectWallet(
 function assertReceiptMatches(
   receipt: ArcPaymentReceiptRecord,
   input: z.output<typeof sendUsdcInputSchema>,
+  selectedWalletAddress: string,
 ): void {
   if (
-    receipt.recipient.toLowerCase() !== input.recipient.toLowerCase()
+    receipt.walletAddress.toLowerCase() !== selectedWalletAddress.toLowerCase()
+    || receipt.recipient.toLowerCase() !== input.recipient.toLowerCase()
     || receipt.amount !== input.amount
     || receipt.token !== input.token
     || receipt.chain !== input.chain

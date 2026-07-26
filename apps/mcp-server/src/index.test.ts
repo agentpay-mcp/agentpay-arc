@@ -8,4 +8,23 @@ describe("published MCP server API", () => {
     assert.equal("resolveProductionReadiness" in agentPay, false);
     assert.equal("shouldVerifyMainnetAccountAtStartup" in agentPay, false);
   });
+
+  it("exports the isolated Arc payment registrar, tools, and tenant repository factory", () => {
+    for (const exportName of [
+      "registerArcPaymentMcpTools",
+      "createTenantArcPaymentRepositories",
+    ]) {
+      assert.equal(typeof agentPay[exportName as keyof typeof agentPay], "function", exportName);
+    }
+    for (const exportName of [
+      "sendUsdcTool",
+      "createPaymentRequestTool",
+      "payInvoiceTool",
+      "batchPayoutTool",
+      "listAgentActivityTool",
+      "getPaymentReceiptTool",
+    ]) {
+      assert.equal(typeof agentPay[exportName as keyof typeof agentPay], "object", exportName);
+    }
+  });
 });
