@@ -28,6 +28,12 @@ import {
 
 import type { AgentPayRuntime } from "../runtime/agentpay-runtime.ts";
 import { prepareAccountAdminTransactionTool } from "../tools/account-admin.ts";
+import {
+  fundAgentWalletTool,
+  getAgentBudgetTool,
+  setupAgentWalletTool,
+  withdrawAgentBudgetTool,
+} from "../tools/circle-agent-wallet.ts";
 import { DurableExecutionError, executePaymentTool } from "../tools/execute-payment.ts";
 import { getBalanceTool } from "../tools/get-balance.ts";
 import { parseInvoicePaymentTool } from "../tools/invoice.ts";
@@ -68,6 +74,56 @@ export interface AgentPayMcpRegistrationOptions {
   publicExecutionOnly?: boolean;
   /** Explicit local/migration escape hatch. Production/public registration leaves this off. */
   legacyApprovalEnabled?: boolean;
+}
+
+export type CircleAgentWalletMcpRuntime = Pick<
+  AgentPayRuntime,
+  "setupAgentWallet" | "getAgentBudget" | "fundAgentWallet" | "withdrawAgentBudget"
+>;
+
+export function registerCircleAgentWalletMcpTools(
+  server: AgentPayMcpServer,
+  runtime: CircleAgentWalletMcpRuntime,
+): void {
+  server.registerTool(
+    setupAgentWalletTool.name,
+    {
+      title: "Setup Agent Wallet",
+      description: setupAgentWalletTool.description,
+      inputSchema: setupAgentWalletTool.inputSchema,
+    },
+    async (input) => toMcpResult(await runtime.setupAgentWallet(input)),
+  );
+
+  server.registerTool(
+    getAgentBudgetTool.name,
+    {
+      title: "Get Agent Budget",
+      description: getAgentBudgetTool.description,
+      inputSchema: getAgentBudgetTool.inputSchema,
+    },
+    async (input) => toMcpResult(await runtime.getAgentBudget(input)),
+  );
+
+  server.registerTool(
+    fundAgentWalletTool.name,
+    {
+      title: "Fund Agent Wallet",
+      description: fundAgentWalletTool.description,
+      inputSchema: fundAgentWalletTool.inputSchema,
+    },
+    async (input) => toMcpResult(await runtime.fundAgentWallet(input)),
+  );
+
+  server.registerTool(
+    withdrawAgentBudgetTool.name,
+    {
+      title: "Withdraw Agent Budget",
+      description: withdrawAgentBudgetTool.description,
+      inputSchema: withdrawAgentBudgetTool.inputSchema,
+    },
+    async (input) => toMcpResult(await runtime.withdrawAgentBudget(input)),
+  );
 }
 
 export function registerAgentPayMcpTools(
@@ -132,6 +188,10 @@ export function registerAgentPayMcpTools(
       toMcpResult(await runtime.getBalance(getBalanceInputSchema.parse(input))),
     ),
   );
+
+  if (!options.sessionContext) {
+    registerCircleAgentWalletMcpTools(server, runtime);
+  }
 
   server.registerTool(
     parseInvoicePaymentTool.name,

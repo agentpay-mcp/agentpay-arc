@@ -2,6 +2,10 @@
   "mcpServers": {
     "agentpay": {
       "url": "https://wallet.agentpay.site/arc/mcp"
+    },
+    "agentpay-wallet": {
+      "command": "npx",
+      "args": ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"]
     }
   }
 }

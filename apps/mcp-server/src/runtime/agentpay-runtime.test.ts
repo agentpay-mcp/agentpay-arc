@@ -545,7 +545,48 @@ describe("createAgentPayRuntime", () => {
       },
     };
 
-    const circleCli = {} as CircleCli;
+    const circleWalletAddress = "0x9999999999999999999999999999999999999999";
+    const circleCli = {
+      async status() {
+        return {
+          type: "agent" as const,
+          mainnet: { tokenStatus: "NOT_LOGGED_IN" as const },
+          testnet: { tokenStatus: "VALID" as const },
+        };
+      },
+      async listAgentWallets() {
+        return [{
+          address: circleWalletAddress,
+          type: "agent" as const,
+          blockchain: "ARC-TESTNET" as const,
+        }];
+      },
+      async getBalance() {
+        return {
+          balances: [{
+            amount: "4.25",
+            token: {
+              name: "USD Coin",
+              symbol: "USDC",
+              blockchain: "ARC-TESTNET" as const,
+              decimals: 6,
+              isNative: false,
+              tokenAddress: "0x3600000000000000000000000000000000000000",
+            },
+          }],
+        };
+      },
+      async getGatewayBalance() {
+        return {
+          message: "Gateway balance: 0.75 USDC",
+          address: circleWalletAddress,
+          backingEOA: "0x8888888888888888888888888888888888888888",
+          total: "0.75",
+          token: "USDC" as const,
+          balances: [{ network: "Arc Testnet", domain: 26, balance: "0.75" }],
+        };
+      },
+    } as unknown as CircleCli;
     const runtime = createAgentPayRuntime(
       {
         supabaseUrl: "https://agentpay.supabase.co",
@@ -594,6 +635,8 @@ describe("createAgentPayRuntime", () => {
     );
 
     const setup = await runtime.prepareWalletCreation({});
+    const circleSetup = await runtime.setupAgentWallet({});
+    const circleBudget = await runtime.getAgentBudget({});
     const wallet = await runtime.getAgentWallet({});
     const balance = await runtime.getBalance({ tokenSymbols: ["USDC"] });
     const invoice = await runtime.parseInvoicePayment({
@@ -662,6 +705,17 @@ describe("createAgentPayRuntime", () => {
 
     assert.equal(setup.status, "PENDING");
     assert.equal(runtime.circleCli, circleCli);
+    assert.equal(circleSetup.status, "READY");
+    assert.deepEqual(circleBudget, {
+      status: "READY",
+      walletAddress: circleWalletAddress,
+      chain: "ARC-TESTNET",
+      onchainUsdc: "4.25",
+      gatewayConfirmedUsdc: "0.75",
+      gatewayPendingUsdc: null,
+      pendingSource: "NOT_AVAILABLE_FROM_CIRCLE_CLI",
+      autonomousBudgetUsdc: "5",
+    });
     if (setup.status !== "PENDING") assert.fail("Expected the staging setup intent path.");
     assert.equal(setup.setupIntentId, "setup_runtime");
     assert.equal(setup.setupUrl, "https://setup.agentpay.dev/setup?setup_intent_id=setup_runtime");

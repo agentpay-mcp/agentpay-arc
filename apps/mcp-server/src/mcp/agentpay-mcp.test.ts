@@ -44,6 +44,10 @@ describe("registerAgentPayMcpTools", () => {
       "check_wallet_creation",
       "get_agent_wallet",
       "get_balance",
+      "setup_agent_wallet",
+      "get_agent_budget",
+      "fund_agent_wallet",
+      "withdraw_agent_budget",
       "parse_invoice_payment",
       "search_x402_services",
       "prepare_x402_service_request",
@@ -84,6 +88,126 @@ describe("registerAgentPayMcpTools", () => {
         homeChain: "X Layer",
       },
     });
+  });
+
+  it("registers the local Circle Agent Wallet budget tools", async () => {
+    const server = new FakeMcpServer();
+    const inputs: Array<[string, unknown]> = [];
+    const runtime = {
+      ...createRuntime({}),
+      async setupAgentWallet(input: unknown) {
+        inputs.push(["setup", input]);
+        return {
+          status: "READY" as const,
+          chain: "ARC-TESTNET" as const,
+          wallets: [],
+          selectedWalletAddress: "0x1111111111111111111111111111111111111111",
+          instructionToAgent: "Agent Wallet ready.",
+        };
+      },
+      async getAgentBudget(input: unknown) {
+        inputs.push(["budget", input]);
+        return {
+          status: "READY" as const,
+          walletAddress: "0x1111111111111111111111111111111111111111",
+          chain: "ARC-TESTNET" as const,
+          onchainUsdc: "5",
+          gatewayConfirmedUsdc: "1",
+          gatewayPendingUsdc: null,
+          pendingSource: "NOT_AVAILABLE_FROM_CIRCLE_CLI" as const,
+          autonomousBudgetUsdc: "6",
+        };
+      },
+      async fundAgentWallet(input: unknown) {
+        inputs.push(["fund", input]);
+        return {
+          status: "SUBMITTED" as const,
+          walletAddress: "0x1111111111111111111111111111111111111111",
+          chain: "ARC-TESTNET" as const,
+          funding: {
+            message: "Wallet funded",
+            address: "0x1111111111111111111111111111111111111111",
+            blockchain: "ARC-TESTNET" as const,
+            token: "USDC",
+          },
+        };
+      },
+      async withdrawAgentBudget(input: unknown) {
+        inputs.push(["withdraw", input]);
+        return {
+          status: "SUBMITTED" as const,
+          source: "ONCHAIN" as const,
+          walletAddress: "0x1111111111111111111111111111111111111111",
+          chain: "ARC-TESTNET" as const,
+          transaction: {
+            id: "tx_mcp",
+            state: "COMPLETE",
+            blockchain: "ARC-TESTNET" as const,
+          },
+        };
+      },
+    } as AgentPayRuntime;
+
+    registerAgentPayMcpTools(server, runtime);
+
+    const setup = server.tools.get("setup_agent_wallet");
+    const budget = server.tools.get("get_agent_budget");
+    const fund = server.tools.get("fund_agent_wallet");
+    const withdraw = server.tools.get("withdraw_agent_budget");
+    assert.ok(setup);
+    assert.ok(budget);
+    assert.ok(fund);
+    assert.ok(withdraw);
+    assert.match(String(setup.metadata.description), /Circle Agent Wallet/i);
+    assert.match(String(budget.metadata.description), /autonomous budget/i);
+    assert.equal((withdraw.metadata.inputSchema as { required?: string[] }).required?.[0], "amount");
+
+    await setup.handler({});
+    await budget.handler({});
+    await fund.handler({});
+    await withdraw.handler({
+      amount: "1",
+      recipient: "0x3333333333333333333333333333333333333333",
+    });
+
+    assert.deepEqual(inputs, [
+      ["setup", {}],
+      ["budget", {}],
+      ["fund", {}],
+      ["withdraw", {
+        amount: "1",
+        recipient: "0x3333333333333333333333333333333333333333",
+      }],
+    ]);
+  });
+
+  it("keeps local Circle Agent Wallet tools off hosted consumer sessions", () => {
+    const server = new FakeMcpServer();
+    const runtime = createRuntime({});
+    const sessionContext = createSessionContext({
+      sessionId: "session_local_boundary",
+      tenantId: "tenant_local_boundary",
+      ownerAddress: "0x1111111111111111111111111111111111111111",
+      accountAddress: "0x2222222222222222222222222222222222222222",
+      homeChainId: 5_042_002,
+      audience: "https://wallet.agentpay.site/arc/mcp",
+      environment: "staging",
+      scopes: ["wallet:read", "session:manage"],
+      authEpoch: 1,
+      issuedAt: "2026-07-26T00:00:00.000Z",
+      expiresAt: "2026-07-26T01:00:00.000Z",
+    });
+
+    registerAgentPayMcpTools(server, runtime, { sessionContext });
+
+    for (const toolName of [
+      "setup_agent_wallet",
+      "get_agent_budget",
+      "fund_agent_wallet",
+      "withdraw_agent_budget",
+    ]) {
+      assert.equal(server.tools.has(toolName), false);
+    }
   });
 
   it("registers x402 Bazaar discovery tools for users who do not provide a URL", async () => {
@@ -1181,6 +1305,18 @@ function createRuntime(overrides: Partial<AgentPayRuntime>): AgentPayRuntime {
     },
     async getBalance() {
       throw new Error("getBalance was not expected.");
+    },
+    async setupAgentWallet() {
+      throw new Error("setupAgentWallet was not expected.");
+    },
+    async getAgentBudget() {
+      throw new Error("getAgentBudget was not expected.");
+    },
+    async fundAgentWallet() {
+      throw new Error("fundAgentWallet was not expected.");
+    },
+    async withdrawAgentBudget() {
+      throw new Error("withdrawAgentBudget was not expected.");
     },
     async parseInvoicePayment() {
       throw new Error("parseInvoicePayment was not expected.");

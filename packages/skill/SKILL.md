@@ -1,13 +1,13 @@
 ---
 name: agentpay
-description: Use AgentPay MCP tools for owner-authorized Celo stablecoin payments, invoices, x402 purchases, batch payouts, remittance routes, agent-to-agent payments, balance checks, and payment tracking. Requires a verified owner EIP-712 signature before execution.
+description: Use AgentPay Arc MCP tools to set up, fund, inspect, and withdraw a local Circle Agent Wallet whose funded USDC balance is the agent's autonomous budget.
 ---
 
 # AgentPay
 
-AgentPay is an MCP payment plugin for owner-authorized stablecoin payments from a Celo smart account.
+AgentPay Arc is a local MCP payment plugin for autonomous USDC spending from an authenticated Circle Agent Wallet on Arc Testnet.
 
-Use this skill when the user asks to create an AgentPay wallet, send USDC/USDT/USDm, pay an invoice, purchase an x402 service, prepare a batch payout, quote a remittance route, pay another agent, check balance, or track an AgentPay transaction.
+Use this skill when the user asks to set up or fund an Agent Wallet, inspect its autonomous budget, or withdraw funds. Additional Arc payment, x402, liquidity, identity, job, marketplace, and compliance tools are introduced by later AgentPay Arc implementation phases.
 
 ## Scope
 
@@ -18,19 +18,19 @@ Do not bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI ca
 The public install command is:
 
 ```bash
-npx @agentpay-ai/agentpay-celo install
+npx @agentpay-ai/agentpay-arc install
 ```
 
 The install command only installs/configures the MCP plugin and instructions. It must not create a wallet, deploy a smart account, sign messages, approve payments, or move funds.
 
-Default installs connect to the authenticated consumer AgentPay MCP endpoint at `https://wallet.agentpay.site/celo/mcp`. Users do not need Supabase, RPC, executor, deployer, or bytecode config for normal chat usage. The separate paid public execution ASP is `https://mcp.agentpay.site/celo/mcp` and is used only after Review & Sign.
+The default install keeps the hosted consumer MCP for inherited tools and adds a config-free local `agentpay-wallet` MCP for the four Circle Agent Wallet tools. Circle Agent Wallet commands must run through that local surface because the authenticated Circle CLI session stays on the user's machine. Hosted AgentPay surfaces must not receive Circle OTPs, session credentials, wallet secrets, or mutation authority.
 
 After installation, ask the user to reload or reconnect the agent runtime if needed. Then return to the agent chat and continue with wallet creation or payment using AgentPay MCP tools.
 
 Use this diagnostic command only when checking self-hosted/operator configuration readiness or troubleshooting:
 
 ```bash
-npx @agentpay-ai/agentpay-celo doctor
+npx @agentpay-ai/agentpay-arc doctor
 ```
 
 This checks self-hosted MCP and setup-web readiness without starting services or printing secret values.
@@ -38,7 +38,7 @@ This checks self-hosted MCP and setup-web readiness without starting services or
 Use this fallback command only for self-hosted/operator mode when the setup/signing page needs to be served outside the hosted agent tool flow:
 
 ```bash
-npx @agentpay-ai/agentpay-celo setup-web
+npx @agentpay-ai/agentpay-arc setup-web
 ```
 
 ## If AgentPay Is Not Installed
@@ -49,26 +49,30 @@ If the user asks for a crypto payment and AgentPay MCP tools are unavailable:
 2. If you have terminal/local command access, ask for explicit approval before installing:
 
 ```txt
-I can install AgentPay by running `npx @agentpay-ai/agentpay-celo install`.
+I can install AgentPay by running `npx @agentpay-ai/agentpay-arc install`.
 This will modify local MCP/runtime configuration. Do you approve?
 ```
 
 3. Only after approval, run:
 
 ```bash
-npx @agentpay-ai/agentpay-celo install
+npx @agentpay-ai/agentpay-arc install
 ```
 
 4. Ask the user to reload or reconnect the runtime if needed, then return to the agent chat. Do not ask normal users to fill local Supabase, RPC, executor, deployer, or bytecode config.
 5. If you do not have terminal/local command access, explain that AgentPay cannot be installed or checked from this session.
-6. Use `npx @agentpay-ai/agentpay-celo doctor` only for self-hosted/operator diagnostics.
-7. Use `npx @agentpay-ai/agentpay-celo setup-web` only for self-hosted/operator fallback when the setup/signing page cannot be served through the hosted agent flow.
-8. Continue in chat with wallet creation by calling `prepare_wallet_creation`. If it returns `PENDING`, use the legacy `check_wallet_creation` flow. If it returns `SETUP_REQUIRED`, open the returned `setupUrl`, wait for the user to complete hosted setup, then call `get_agent_wallet`.
+6. Use `npx @agentpay-ai/agentpay-arc doctor` only for self-hosted/operator diagnostics.
+7. Use `npx @agentpay-ai/agentpay-arc setup-web` only for self-hosted/operator fallback.
+8. Continue in chat by calling `setup_agent_wallet`. Never ask the user to paste email, OTP, Terms acceptance, private keys, or a Circle session into chat.
 
 ## Available MCP Tools
 
 Expected AgentPay tools:
 
+- `setup_agent_wallet`: check the local Circle Agent Wallet testnet session and return `LOGIN_REQUIRED`, `TERMS_REQUIRED`, `WALLET_REQUIRED`, or `READY`. Login, Terms, and OTP remain manual local-terminal actions.
+- `get_agent_budget`: return canonical Arc onchain USDC plus confirmed Gateway USDC without summing Arc's native 18-decimal and ERC-20 six-decimal views of the same onchain balance.
+- `fund_agent_wallet`: request Arc Testnet faucet funding for the selected Agent Wallet. This is a real mutation and must never be retried blindly.
+- `withdraw_agent_budget`: withdraw from the onchain wallet to an explicit recipient, or from confirmed Gateway balance back to the selected wallet or an explicit recipient.
 - `prepare_wallet_creation`: start wallet setup. A legacy `PENDING` response includes a setup intent and signing link; a production `SETUP_REQUIRED` response includes the hosted `setupUrl`.
 - `check_wallet_creation`: check whether a legacy `PENDING` setup intent has completed and return the AgentPay smart account address.
 - `get_agent_wallet`: return owner, executor, smart account address, home chain, and status.
@@ -92,24 +96,27 @@ Expected AgentPay tools:
 
 If a tool name differs in the active MCP server, use the closest AgentPay tool with the same purpose.
 
-## Network Selection
+## Arc Agent Wallet Network
 
-AgentPay payment and balance tools support Celo mainnet and Celo Sepolia. Self-service chat wallet creation is currently available on Celo Sepolia. Mainnet uses an operator-managed, readiness-gated account path.
+The Circle Agent Wallet tools in this skill support only `ARC-TESTNET`. Do not ask the user to choose mainnet versus testnet for these tools and do not describe Arc Testnet activity as Arc mainnet.
 
-If the user does not clearly name a network, ask whether they want mainnet or testnet before calling wallet, balance, route-target, admin, contract-call, quote, or payment preparation tools. Pass the selected value as `network: "mainnet" | "testnet"` whenever a tool accepts it. Users can switch networks per request; do not assume a wallet, balance, allowlist, or payment intent on one network applies to the other.
+Arc's native 18-decimal USDC metadata and six-decimal ERC-20 application interface represent the same underlying onchain balance. Never sum those two views. Confirmed Gateway balance is separate deposited value and can be shown as a separate budget component.
 
-Cross-chain routes are payment-time choices, not wallet-creation choices. Create a Celo Sepolia wallet through chat, or use an already activated operator-managed Celo mainnet account, then decide during quote or payment preparation whether the payment stays on Celo or uses a remittance/swap-and-pay route.
+The inherited owner-signed smart-account tools below are legacy context while the remaining Arc phases are implemented. They do not define authorization for Circle Agent Wallet spending.
 
-## Wallet Creation Workflow
+## Circle Agent Wallet Setup Workflow
 
 When the user asks to create an AgentPay wallet:
 
-1. Call `prepare_wallet_creation` with the selected network.
-2. If the response status is `PENDING`, give the user the setup signing link, explain that the signing page proves wallet ownership and does not approve any payment, wait for the user to sign, then call `check_wallet_creation` with the returned setup intent id.
-3. If the response status is `SETUP_REQUIRED`, open the returned `setupUrl`, explain that hosted setup proves ownership and does not approve any payment, wait for the user to complete setup, then call `get_agent_wallet` with the same network.
-4. When completion is confirmed, show the AgentPay smart account address and network, then tell the user to fund it with supported Celo USDC, USDT, or USDm.
+1. Call `setup_agent_wallet`.
+2. For `LOGIN_REQUIRED`, tell the user to run Circle Agent Wallet testnet login locally and complete email OTP themselves.
+3. For `TERMS_REQUIRED`, show the instruction returned by AgentPay and wait for the user to review and accept Circle CLI Terms locally.
+4. For `WALLET_REQUIRED`, ask the user to finish testnet authentication; Circle provisions wallets during login.
+5. For `READY`, show the Arc wallet address. If several wallets exist, ask which address to use and pass it as `walletAddress`.
+6. Call `fund_agent_wallet` only after the user explicitly asks for a testnet faucet mutation.
+7. Call `get_agent_budget` to confirm the resulting available budget.
 
-Never claim the wallet is ready until `check_wallet_creation` confirms a legacy `PENDING` setup intent or `get_agent_wallet` confirms a production `SETUP_REQUIRED` setup.
+Never automate Circle login, Terms acceptance, or OTP entry. Never claim the wallet is ready until `setup_agent_wallet` returns `READY`.
 
 ## Owner Admin Workflow
 
@@ -119,16 +126,17 @@ Show the action, account address, owner address, chain, transaction target, and 
 
 ## Balance Workflow
 
-When the user asks about funds or before preparing payment:
+When the user asks about the Agent Wallet budget, call `get_agent_budget`. Show:
 
-1. Confirm Celo mainnet or Sepolia if the request is ambiguous.
-2. Call `get_agent_wallet` with the selected network if the active wallet is unknown.
-3. Call `get_balance` with the selected network.
-4. Show balances with token symbols, chain names, and wallet address.
+- Selected Arc Agent Wallet address.
+- Canonical onchain USDC.
+- Confirmed Gateway USDC.
+- Autonomous budget total.
+- Gateway pending value as unknown when the tool reports `NOT_AVAILABLE_FROM_CIRCLE_CLI`; never replace unknown with zero.
 
-Never use raw wallet balances, exchange balances, or generic RPC balance as AgentPay balance. AgentPay balance means the balance returned by `get_balance` for the AgentPay smart account on the selected network.
+If wallet selection is ambiguous, ask the user to choose one of the safe wallet addresses returned by `setup_agent_wallet`.
 
-If the wallet is not created, use the wallet creation workflow first.
+Never use raw wallet balances, exchange balances, or generic RPC balance as the AgentPay Agent Wallet budget. Use only `get_agent_budget`.
 
 ## Invoice Workflow
 
@@ -212,6 +220,10 @@ The summary shown before approval must include:
 
 ## Approval Rules
 
+Circle Agent Wallet spending does not use the inherited AgentPay per-payment Review & Sign flow. The user grants autonomous authority by funding the Agent Wallet, and can reclaim remaining funds through `withdraw_agent_budget`. AgentPay still validates amounts, wallet ownership, exact chain, single-attempt mutations, and audit data.
+
+The rules below apply only to the inherited owner-signed smart-account `prepare_payment` and `execute_payment` path:
+
 Payment authorization must be a valid owner EIP-712 signature over the immutable typed data returned by `prepare_payment`.
 
 Reject vague confirmations or other chat-only messages as payment authorization:
@@ -285,7 +297,10 @@ Use these responses:
 - Never ask the user to send funds to an address that was not returned by AgentPay.
 - Never modify payment details after approval.
 - Never execute payment outside AgentPay MCP tools.
-- Never run `npx @agentpay-ai/agentpay-celo install` without explicit user approval when acting on the user's machine.
+- Never run `npx @agentpay-ai/agentpay-arc install` without explicit user approval when acting on the user's machine.
+- Never expose the local Circle CLI session through a hosted MCP surface.
+- Never accept email, OTP, Terms acceptance, private keys, mnemonics, or Circle session data as Agent Wallet tool inputs.
+- Never retry `fund_agent_wallet` or `withdraw_agent_budget` after a transient or ambiguous failure.
 - Never treat installation approval as payment approval.
 - Never treat setup signature as payment approval.
 - Never treat an x402 parse result as payment approval or protocol settlement; retry x402 resources only after the matching payment intent is `COMPLETED`.

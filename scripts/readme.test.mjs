@@ -103,6 +103,14 @@ describe("README", () => {
     for (const file of files) {
       const contents = await readFile(file, "utf8");
 
+      if (file === "packages/skill/SKILL.md") {
+        assert.match(contents, /support only `ARC-TESTNET`/i);
+        assert.match(contents, /do not ask the user to choose mainnet versus testnet/i);
+        assert.match(contents, /walletAddress/);
+        assert.match(contents, /Circle Agent Wallet/i);
+        continue;
+      }
+
       assert.match(contents, /mainnet or (?:testnet|Sepolia)/i, `${file} must ask for Celo network choice`);
       assert.match(contents, /network: "mainnet" \| "testnet"/, `${file} must mention tool network input`);
       assert.match(contents, /switch networks per request/i, `${file} must describe per-request network switching`);
@@ -161,7 +169,7 @@ describe("README", () => {
     for (const file of files) {
       const contents = await readFile(file, "utf8");
 
-      assert.match(contents, /Use AgentPay MCP tools|Use AgentPay when/i, `${file} must route requests to AgentPay`);
+      assert.match(contents, /Use AgentPay(?: Arc)? MCP tools|Use AgentPay when/i, `${file} must route requests to AgentPay`);
       assert.match(contents, /prepare_wallet_creation/, `${file} must describe wallet setup`);
       assert.match(contents, /check_wallet_creation/, `${file} must describe wallet completion checks`);
       assert.match(

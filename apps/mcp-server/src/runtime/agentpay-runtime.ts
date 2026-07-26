@@ -107,6 +107,12 @@ import type {
   PrepareRouteTargetAllowanceDependencies,
 } from "../tools/route-target-allowance.ts";
 import {
+  createFundAgentWalletHandler,
+  createGetAgentBudgetHandler,
+  createSetupAgentWalletHandler,
+  createWithdrawAgentBudgetHandler,
+} from "../tools/circle-agent-wallet.ts";
+import {
   createCheckWalletCreationHandler,
   createGetAgentWalletHandler,
   createPrepareWalletCreationHandler,
@@ -224,6 +230,10 @@ export interface AgentPayRuntimeOptions {
 
 export interface AgentPayRuntime {
   circleCli?: CircleCli;
+  setupAgentWallet(input: unknown): ReturnType<ReturnType<typeof createSetupAgentWalletHandler>>;
+  getAgentBudget(input: unknown): ReturnType<ReturnType<typeof createGetAgentBudgetHandler>>;
+  fundAgentWallet(input: unknown): ReturnType<ReturnType<typeof createFundAgentWalletHandler>>;
+  withdrawAgentBudget(input: unknown): ReturnType<ReturnType<typeof createWithdrawAgentBudgetHandler>>;
   prepareWalletCreation(input: PrepareWalletCreationInput): ReturnType<ReturnType<typeof createPrepareWalletCreationHandler>>;
   checkWalletCreation(input: CheckWalletCreationInput): ReturnType<ReturnType<typeof createCheckWalletCreationHandler>>;
   getAgentWallet(input: GetAgentWalletInput): ReturnType<ReturnType<typeof createGetAgentWalletHandler>>;
@@ -455,9 +465,14 @@ export function createAgentPayRuntime(config: AgentPayRuntimeConfig, options: Ag
     clock,
     executionPolicy,
   };
+  const circleCli = options.circleCli ?? createCircleCli();
 
   return {
-    circleCli: options.circleCli ?? createCircleCli(),
+    circleCli,
+    setupAgentWallet: createSetupAgentWalletHandler({ circleCli }),
+    getAgentBudget: createGetAgentBudgetHandler({ circleCli }),
+    fundAgentWallet: createFundAgentWalletHandler({ circleCli }),
+    withdrawAgentBudget: createWithdrawAgentBudgetHandler({ circleCli }),
     prepareWalletCreation: createPrepareWalletCreationHandler(
       omitUndefined({
         setupIntents: repositories.setupIntents,

@@ -167,7 +167,7 @@ describe("publishable AgentPay package manifests", () => {
     assert.doesNotMatch(wrapper, /\["--import", "tsx"/);
   });
 
-  it("defaults installed MCP templates to the hosted HTTPS endpoint", async () => {
+  it("defaults installed MCP templates to hosted tools plus the local Agent Wallet", async () => {
     const templatePaths = [
       "packages/cli/templates/codex/mcp.json",
       "packages/cli/templates/cursor/mcp.json",
@@ -181,6 +181,10 @@ describe("publishable AgentPay package manifests", () => {
 
       assert.deepEqual(template.mcpServers.agentpay, {
         url: "https://wallet.agentpay.site/arc/mcp",
+      });
+      assert.deepEqual(template.mcpServers["agentpay-wallet"], {
+        command: "npx",
+        args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
       });
     }
   });
@@ -211,11 +215,13 @@ describe("publishable AgentPay package manifests", () => {
     assert.ok(manifest.files.includes("src/runtime/paid-execution-canary-ledger.ts"));
     assert.ok(manifest.files.includes("src/services/production-setup.ts"));
     assert.ok(manifest.files.includes("src/services/production-setup-supabase.ts"));
+    assert.ok(manifest.files.includes("src/tools/circle-agent-wallet.ts"));
     await access("apps/mcp-server/src/mcp/http.ts");
     await access("apps/mcp-server/src/mcp/celo-agent-payment.ts");
     await access("apps/mcp-server/src/runtime/paid-execution-canary-ledger.ts");
     await access("apps/mcp-server/src/services/production-setup.ts");
     await access("apps/mcp-server/src/services/production-setup-supabase.ts");
+    await access("apps/mcp-server/src/tools/circle-agent-wallet.ts");
   });
 
   it("publishes the isolated Celo onboarding web and deployment worker entrypoints", async () => {

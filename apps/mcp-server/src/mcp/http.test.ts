@@ -2220,6 +2220,18 @@ function createRuntime(overrides: Partial<AgentPayRuntime> = {}): AgentPayRuntim
     async getBalance() {
       throw new Error("getBalance was not expected.");
     },
+    async setupAgentWallet() {
+      throw new Error("setupAgentWallet was not expected.");
+    },
+    async getAgentBudget() {
+      throw new Error("getAgentBudget was not expected.");
+    },
+    async fundAgentWallet() {
+      throw new Error("fundAgentWallet was not expected.");
+    },
+    async withdrawAgentBudget() {
+      throw new Error("withdrawAgentBudget was not expected.");
+    },
     async parseInvoicePayment() {
       throw new Error("parseInvoicePayment was not expected.");
     },

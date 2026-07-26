@@ -3,7 +3,12 @@ import { describe, it } from "node:test";
 
 import type { AgentPayRuntime } from "../runtime/agentpay-runtime.ts";
 import type { AgentPayMcpServer } from "./agentpay-mcp.ts";
-import { createAgentPayMcpServer, startAgentPayMcpServer } from "./stdio.ts";
+import {
+  createAgentPayMcpServer,
+  createCircleAgentWalletMcpServer,
+  startAgentPayMcpServer,
+  startCircleAgentWalletMcpServer,
+} from "./stdio.ts";
 
 class FakeSdkServer implements AgentPayMcpServer {
   public registeredToolNames: string[] = [];
@@ -22,6 +27,10 @@ describe("createAgentPayMcpServer", () => {
       "check_wallet_creation",
       "get_agent_wallet",
       "get_balance",
+      "setup_agent_wallet",
+      "get_agent_budget",
+      "fund_agent_wallet",
+      "withdraw_agent_budget",
       "parse_invoice_payment",
       "search_x402_services",
       "prepare_x402_service_request",
@@ -37,6 +46,20 @@ describe("createAgentPayMcpServer", () => {
       "track_payment",
       "list_transactions",
       "list_payment_events",
+    ]);
+  });
+
+  it("creates a config-free local Circle Agent Wallet server with only four tools", () => {
+    const server = createCircleAgentWalletMcpServer(
+      createCircleWalletRuntime(),
+      () => new FakeSdkServer(),
+    );
+
+    assert.deepEqual(server.registeredToolNames, [
+      "setup_agent_wallet",
+      "get_agent_budget",
+      "fund_agent_wallet",
+      "withdraw_agent_budget",
     ]);
   });
 });
@@ -106,7 +129,49 @@ describe("startAgentPayMcpServer", () => {
     ]);
     assert.deepEqual(connectedTransports, [transport]);
   });
+
+  it("starts the local Circle Agent Wallet server without legacy runtime env", async () => {
+    const transport = { kind: "wallet-stdio" };
+    const connectedTransports: unknown[] = [];
+    const runtime = createCircleWalletRuntime();
+
+    await startCircleAgentWalletMcpServer({
+      createRuntime() {
+        return runtime;
+      },
+      createServer(createdRuntime) {
+        assert.equal(createdRuntime, runtime);
+        return {
+          async connect(createdTransport: unknown) {
+            connectedTransports.push(createdTransport);
+          },
+        };
+      },
+      createTransport() {
+        return transport;
+      },
+    });
+
+    assert.deepEqual(connectedTransports, [transport]);
+  });
 });
+
+function createCircleWalletRuntime() {
+  return {
+    async setupAgentWallet() {
+      throw new Error("setupAgentWallet was not expected.");
+    },
+    async getAgentBudget() {
+      throw new Error("getAgentBudget was not expected.");
+    },
+    async fundAgentWallet() {
+      throw new Error("fundAgentWallet was not expected.");
+    },
+    async withdrawAgentBudget() {
+      throw new Error("withdrawAgentBudget was not expected.");
+    },
+  };
+}
 
 function createRuntime(): AgentPayRuntime {
   return {
@@ -121,6 +186,18 @@ function createRuntime(): AgentPayRuntime {
     },
     async getBalance() {
       throw new Error("getBalance was not expected.");
+    },
+    async setupAgentWallet() {
+      throw new Error("setupAgentWallet was not expected.");
+    },
+    async getAgentBudget() {
+      throw new Error("getAgentBudget was not expected.");
+    },
+    async fundAgentWallet() {
+      throw new Error("fundAgentWallet was not expected.");
+    },
+    async withdrawAgentBudget() {
+      throw new Error("withdrawAgentBudget was not expected.");
     },
     async parseInvoicePayment() {
       throw new Error("parseInvoicePayment was not expected.");

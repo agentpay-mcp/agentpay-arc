@@ -10,9 +10,11 @@ import {
   AGENTPAY_ARC_PUBLIC_URLS,
   startAgentPayHttpServer,
   startAgentPayMcpServer,
+  startCircleAgentWalletMcpServer,
   type AgentPayHttpServer,
   type StartAgentPayHttpServerOptions,
   type StartAgentPayMcpServerOptions,
+  type StartCircleAgentWalletMcpServerOptions,
 } from "@agentpay-ai/mcp-server-arc";
 import {
   createSetupWebDependencies,
@@ -94,6 +96,7 @@ export type AgentPayCliCommand =
       mcpUrl: string;
     }
   | { command: "mcp" }
+  | { command: "agent-wallet-mcp" }
   | { command: "serve-http"; hostname: string; port: number }
   | { command: "setup-web" }
   | { command: "doctor" }
@@ -123,6 +126,9 @@ export interface RunAgentPayCliDependencies {
   stdout?: (message: string) => void;
   stderr?: (message: string) => void;
   startMcpServer?: (options: StartAgentPayMcpServerOptions) => Promise<void>;
+  startAgentWalletMcpServer?: (
+    options?: StartCircleAgentWalletMcpServerOptions,
+  ) => Promise<void>;
   startHttpServer?: (options: StartAgentPayHttpServerOptions) => Promise<AgentPayHttpServer>;
   startSetupWebServer?: (
     dependencies: SetupWebDependencies,
@@ -153,6 +159,10 @@ export function parseCliArgs(args: string[]): AgentPayCliCommand {
 
   if (command === "mcp") {
     return { command: "mcp" };
+  }
+
+  if (command === "agent-wallet-mcp") {
+    return { command: "agent-wallet-mcp" };
   }
 
   if (command === "serve-http") {
@@ -207,6 +217,14 @@ export async function runAgentPayCli(
     if (command.command === "mcp") {
       const env = await loadAgentPayConfigEnv(dependencies.env ?? process.env);
       await (dependencies.startMcpServer ?? startAgentPayMcpServer)({ env });
+      return 0;
+    }
+
+    if (command.command === "agent-wallet-mcp") {
+      await (
+        dependencies.startAgentWalletMcpServer ??
+        startCircleAgentWalletMcpServer
+      )();
       return 0;
     }
 
@@ -323,11 +341,11 @@ export async function installAgentPay(options: InstallAgentPayOptions): Promise<
       selfHosted,
       mcpUrl: options.mcpUrl ?? DEFAULT_HOSTED_MCP_URL,
     });
-    const mcpServers = mcpConfig.mcpServers as { agentpay: Record<string, unknown> };
+    const mcpServers = mcpConfig.mcpServers as Record<string, Record<string, unknown>>;
     const nativeConfigPath = getNativeRuntimeConfigPath(options);
 
     if (nativeConfigPath) {
-      await upsertNativeRuntimeAgentPayMcpServer(options.runtime, nativeConfigPath, mcpServers.agentpay);
+      await upsertNativeRuntimeAgentPayMcpServers(options.runtime, nativeConfigPath, mcpServers);
       writtenFiles.push(nativeConfigPath);
     }
   }
@@ -625,17 +643,25 @@ function isMcpConfigTemplateFile(fileName: string): boolean {
 function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl: string }): Record<string, unknown> {
   return {
     mcpServers: {
-      agentpay: options.selfHosted
+      ...(options.selfHosted
         ? {
-            command: "npx",
-            args: ["-y", "@agentpay-ai/agentpay-arc", "mcp"],
-            env: {
-              AGENTPAY_CONFIG: "~/.agentpay/config.json",
+            agentpay: {
+              command: "npx",
+              args: ["-y", "@agentpay-ai/agentpay-arc", "mcp"],
+              env: {
+                AGENTPAY_CONFIG: "~/.agentpay/config.json",
+              },
             },
           }
         : {
-            url: options.mcpUrl,
-          },
+            agentpay: {
+              url: options.mcpUrl,
+            },
+            "agentpay-wallet": {
+              command: "npx",
+              args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
+            },
+          }),
     },
   };
 }
@@ -668,20 +694,23 @@ function getClaudeDesktopConfigPath(): string {
   return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "Claude", "claude_desktop_config.json");
 }
 
-async function upsertNativeRuntimeAgentPayMcpServer(
+async function upsertNativeRuntimeAgentPayMcpServers(
   runtime: AgentPayRuntimeName,
   configPath: string,
-  serverConfig: Record<string, unknown>,
+  serverConfigs: Record<string, Record<string, unknown>>,
 ): Promise<void> {
   if (runtime === "hermes") {
-    await upsertHermesAgentPayMcpServer(configPath, serverConfig);
+    await upsertHermesAgentPayMcpServers(configPath, serverConfigs);
     return;
   }
 
-  await upsertJsonAgentPayMcpServer(configPath, serverConfig);
+  await upsertJsonAgentPayMcpServers(configPath, serverConfigs);
 }
 
-async function upsertJsonAgentPayMcpServer(configPath: string, serverConfig: Record<string, unknown>): Promise<void> {
+async function upsertJsonAgentPayMcpServers(
+  configPath: string,
+  serverConfigs: Record<string, Record<string, unknown>>,
+): Promise<void> {
   await mkdir(dirname(configPath), { recursive: true });
 
   let config: Record<string, unknown> = {};
@@ -703,16 +732,16 @@ async function upsertJsonAgentPayMcpServer(configPath: string, serverConfig: Rec
     ...config,
     mcpServers: {
       ...existingMcpServers,
-      agentpay: serverConfig,
+      ...serverConfigs,
     },
   };
 
   await writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
 }
 
-async function upsertHermesAgentPayMcpServer(
+async function upsertHermesAgentPayMcpServers(
   configPath: string,
-  serverConfig: Record<string, unknown>,
+  serverConfigs: Record<string, Record<string, unknown>>,
 ): Promise<void> {
   await mkdir(dirname(configPath), { recursive: true });
 
@@ -723,18 +752,25 @@ async function upsertHermesAgentPayMcpServer(
     // Hermes creates this file during setup, but a fresh machine can be empty.
   }
 
-  const nextContents = upsertYamlMapEntry(
+  const nextContents = Object.entries(serverConfigs).reduce(
+    (currentContents, [serverName, serverConfig]) =>
+      upsertYamlMapEntry(
+        currentContents,
+        "mcp_servers",
+        serverName,
+        formatHermesAgentPayMcpServer(serverName, serverConfig),
+      ),
     contents,
-    "mcp_servers",
-    "agentpay",
-    formatHermesAgentPayMcpServer(serverConfig),
   );
 
   await writeFile(configPath, nextContents, "utf8");
 }
 
-function formatHermesAgentPayMcpServer(serverConfig: Record<string, unknown>): string[] {
-  const lines = ["  agentpay:"];
+function formatHermesAgentPayMcpServer(
+  serverName: string,
+  serverConfig: Record<string, unknown>,
+): string[] {
+  const lines = [`  ${serverName}:`];
 
   if (typeof serverConfig.url === "string") {
     lines.push(`    url: ${quoteYamlString(serverConfig.url)}`);
@@ -893,6 +929,7 @@ function createHelpText(): string {
     "  agentpay doctor",
     "  agentpay setup-web",
     "  agentpay mcp",
+    "  agentpay agent-wallet-mcp",
     "  agentpay serve-http [--host 0.0.0.0] [--port 3001]",
   ].join("\n");
 }

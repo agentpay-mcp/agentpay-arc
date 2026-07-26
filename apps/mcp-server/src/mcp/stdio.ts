@@ -7,10 +7,19 @@ import {
   type AgentPayRuntime,
   type AgentPayRuntimeConfig,
 } from "../runtime/agentpay-runtime.ts";
+import { createCircleCli } from "../services/circle-cli.ts";
+import {
+  createFundAgentWalletHandler,
+  createGetAgentBudgetHandler,
+  createSetupAgentWalletHandler,
+  createWithdrawAgentBudgetHandler,
+} from "../tools/circle-agent-wallet.ts";
 import {
   type AgentPayMcpRegistrationOptions,
   type AgentPayMcpServer,
+  type CircleAgentWalletMcpRuntime,
   registerAgentPayMcpTools,
+  registerCircleAgentWalletMcpTools,
 } from "./agentpay-mcp.ts";
 
 export interface ConnectableAgentPayMcpServer extends AgentPayMcpServer {
@@ -26,6 +35,12 @@ export interface StartAgentPayMcpServerOptions {
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   createRuntime?: (config: AgentPayRuntimeConfig) => AgentPayRuntime;
   createServer?: (runtime: AgentPayRuntime) => AgentPayMcpConnection;
+  createTransport?: () => unknown;
+}
+
+export interface StartCircleAgentWalletMcpServerOptions {
+  createRuntime?: () => CircleAgentWalletMcpRuntime;
+  createServer?: (runtime: CircleAgentWalletMcpRuntime) => AgentPayMcpConnection;
   createTransport?: () => unknown;
 }
 
@@ -62,9 +77,60 @@ export async function startAgentPayMcpServer(options: StartAgentPayMcpServerOpti
   await server.connect(transport);
 }
 
+export function createCircleAgentWalletMcpRuntime(): CircleAgentWalletMcpRuntime {
+  const circleCli = createCircleCli();
+  return {
+    setupAgentWallet: createSetupAgentWalletHandler({ circleCli }),
+    getAgentBudget: createGetAgentBudgetHandler({ circleCli }),
+    fundAgentWallet: createFundAgentWalletHandler({ circleCli }),
+    withdrawAgentBudget: createWithdrawAgentBudgetHandler({ circleCli }),
+  };
+}
+
+export function createCircleAgentWalletMcpServer(
+  runtime: CircleAgentWalletMcpRuntime,
+): ConnectableAgentPayMcpServer;
+export function createCircleAgentWalletMcpServer<TServer extends AgentPayMcpServer>(
+  runtime: CircleAgentWalletMcpRuntime,
+  createServer: () => TServer,
+): TServer;
+export function createCircleAgentWalletMcpServer<TServer extends AgentPayMcpServer>(
+  runtime: CircleAgentWalletMcpRuntime,
+  createServer: () => TServer = createCircleWalletSdkMcpServer as unknown as () => TServer,
+): TServer | ConnectableAgentPayMcpServer {
+  const server = createServer();
+  registerCircleAgentWalletMcpTools(server, runtime);
+  return server;
+}
+
+export async function startCircleAgentWalletMcpServer(
+  options: StartCircleAgentWalletMcpServerOptions = {},
+): Promise<void> {
+  const runtime = options.createRuntime
+    ? options.createRuntime()
+    : createCircleAgentWalletMcpRuntime();
+  const server = options.createServer
+    ? options.createServer(runtime)
+    : createCircleAgentWalletMcpServer(runtime, createCircleWalletSdkMcpServer);
+  const transport = options.createTransport
+    ? options.createTransport()
+    : new StdioServerTransport();
+
+  await server.connect(transport);
+}
+
 function createSdkMcpServer(): ConnectableAgentPayMcpServer {
   const server = new McpServer({
     name: "agentpay",
+    version: "0.1.1",
+  });
+
+  return server as unknown as ConnectableAgentPayMcpServer;
+}
+
+function createCircleWalletSdkMcpServer(): ConnectableAgentPayMcpServer {
+  const server = new McpServer({
+    name: "agentpay-wallet",
     version: "0.1.1",
   });
 
