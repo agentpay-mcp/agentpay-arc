@@ -27,7 +27,8 @@
     "src/tokens.ts",
     "src/wallet-setup.ts",
     "src/x402.ts",
-    "src/x402-bazaar.ts"
+    "src/x402-bazaar.ts",
+    "src/x402-commerce.ts"
   ],
   "publishConfig": {
     "access": "public"

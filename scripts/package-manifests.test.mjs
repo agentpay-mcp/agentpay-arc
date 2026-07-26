@@ -108,10 +108,12 @@ describe("publishable AgentPay package manifests", () => {
         zod: rootManifest.dependencies.zod,
       },
       "@agentpay-ai/mcp-server-arc": {
+        "@circle-fin/x402-batching": "3.2.0",
         "@x402/core": rootManifest.dependencies["@x402/core"],
         "@x402/evm": rootManifest.dependencies["@x402/evm"],
         "@supabase/supabase-js": rootManifest.dependencies["@supabase/supabase-js"],
         ethers: rootManifest.dependencies.ethers,
+        viem: "2.55.8",
       },
       "@agentpay-ai/setup-web-arc": {
         ethers: rootManifest.dependencies.ethers,
@@ -219,6 +221,8 @@ describe("publishable AgentPay package manifests", () => {
     assert.ok(manifest.files.includes("src/tools/arc-payments.ts"));
     assert.ok(manifest.files.includes("src/mcp/arc-payments.ts"));
     assert.ok(manifest.files.includes("src/services/arc-payments-supabase.ts"));
+    assert.ok(manifest.files.includes("src/mcp/arc-agent-payment.ts"));
+    assert.ok(manifest.files.includes("src/tools/circle-services.ts"));
     await access("apps/mcp-server/src/mcp/http.ts");
     await access("apps/mcp-server/src/mcp/celo-agent-payment.ts");
     await access("apps/mcp-server/src/runtime/paid-execution-canary-ledger.ts");
@@ -228,10 +232,14 @@ describe("publishable AgentPay package manifests", () => {
     await access("apps/mcp-server/src/tools/arc-payments.ts");
     await access("apps/mcp-server/src/mcp/arc-payments.ts");
     await access("apps/mcp-server/src/services/arc-payments-supabase.ts");
+    await access("apps/mcp-server/src/mcp/arc-agent-payment.ts");
+    await access("apps/mcp-server/src/tools/circle-services.ts");
 
     const sharedManifest = await readPackageJson("packages/shared");
     assert.ok(sharedManifest.files.includes("src/batch-payout.ts"));
+    assert.ok(sharedManifest.files.includes("src/x402-commerce.ts"));
     await access("packages/shared/src/batch-payout.ts");
+    await access("packages/shared/src/x402-commerce.ts");
   });
 
   it("publishes the isolated Celo onboarding web and deployment worker entrypoints", async () => {

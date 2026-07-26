@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 export { AGENTPAY_ARC_PUBLIC_URLS } from "@agentpay-ai/shared-arc";
 export * from "./mcp/agentpay-mcp.ts";
 export * from "./mcp/arc-payments.ts";
+export * from "./mcp/arc-agent-payment.ts";
 export * from "./mcp/consumer-auth.ts";
 export {
   startAgentPayHttpServer,
@@ -37,6 +38,7 @@ export * from "./services/supabase.ts";
 export * from "./services/x402-bazaar.ts";
 export * from "./tools/account-admin.ts";
 export * from "./tools/arc-payments.ts";
+export * from "./tools/circle-services.ts";
 export * from "./tools/execute-payment.ts";
 export * from "./tools/get-balance.ts";
 export * from "./tools/invoice.ts";

@@ -13,6 +13,9 @@ describe("published MCP server API", () => {
     for (const exportName of [
       "registerArcPaymentMcpTools",
       "createTenantArcPaymentRepositories",
+      "createTenantArcAgentCommerceRepository",
+      "registerArcAgentPaymentMcpTools",
+      "createArcGatewayPaidService",
     ]) {
       assert.equal(typeof agentPay[exportName as keyof typeof agentPay], "function", exportName);
     }
@@ -23,6 +26,9 @@ describe("published MCP server API", () => {
       "batchPayoutTool",
       "listAgentActivityTool",
       "getPaymentReceiptTool",
+      "searchPaidServicesTool",
+      "inspectPaidServiceTool",
+      "payPaidServiceTool",
     ]) {
       assert.equal(typeof agentPay[exportName as keyof typeof agentPay], "object", exportName);
     }
