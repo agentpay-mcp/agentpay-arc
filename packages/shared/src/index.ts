@@ -4,6 +4,7 @@ export * from "./account-admin.ts";
 export * from "./auth.ts";
 export * from "./balance.ts";
 export * from "./chains.ts";
+export * from "./circle.ts";
 export * from "./celo-attribution.ts";
 export * from "./erc8004.ts";
 export * from "./invoice.ts";

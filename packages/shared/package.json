@@ -14,6 +14,7 @@
     "src/balance.ts",
     "src/celo-attribution.ts",
     "src/chains.ts",
+    "src/circle.ts",
     "src/erc8004.ts",
     "src/index.ts",
     "src/invoice.ts",

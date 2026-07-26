@@ -10,6 +10,7 @@ import {
   parseAgentPayEnv,
   type AgentPayRuntimeFactories,
 } from "./agentpay-runtime.ts";
+import type { CircleCli } from "../services/circle-cli.ts";
 
 const validPrivateKey = `0x${"1".repeat(64)}`;
 
@@ -544,6 +545,7 @@ describe("createAgentPayRuntime", () => {
       },
     };
 
+    const circleCli = {} as CircleCli;
     const runtime = createAgentPayRuntime(
       {
         supabaseUrl: "https://agentpay.supabase.co",
@@ -568,6 +570,7 @@ describe("createAgentPayRuntime", () => {
         createNonce: () => "42",
         createSetupIntentId: () => "setup_runtime",
         executorAddress: "0x4444444444444444444444444444444444444444",
+        circleCli,
         x402HttpClient: {
           async request(url, init) {
             calls.push([
@@ -658,6 +661,7 @@ describe("createAgentPayRuntime", () => {
     });
 
     assert.equal(setup.status, "PENDING");
+    assert.equal(runtime.circleCli, circleCli);
     if (setup.status !== "PENDING") assert.fail("Expected the staging setup intent path.");
     assert.equal(setup.setupIntentId, "setup_runtime");
     assert.equal(setup.setupUrl, "https://setup.agentpay.dev/setup?setup_intent_id=setup_runtime");

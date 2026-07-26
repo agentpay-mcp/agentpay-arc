@@ -30,6 +30,7 @@ import {
 import { Wallet } from "ethers";
 
 import { createEthersRuntimeAdapters, type EthersRuntimeConfig } from "../services/chain-executor.ts";
+import { createCircleCli, type CircleCli } from "../services/circle-cli.ts";
 import {
   createLifiRouteQuoteProvider,
   createLifiRouteStatusProvider,
@@ -218,9 +219,11 @@ export interface AgentPayRuntimeOptions {
   setupTtlSeconds?: number;
   factories?: AgentPayRuntimeFactories;
   tenantContext?: SessionContext;
+  circleCli?: CircleCli;
 }
 
 export interface AgentPayRuntime {
+  circleCli?: CircleCli;
   prepareWalletCreation(input: PrepareWalletCreationInput): ReturnType<ReturnType<typeof createPrepareWalletCreationHandler>>;
   checkWalletCreation(input: CheckWalletCreationInput): ReturnType<ReturnType<typeof createCheckWalletCreationHandler>>;
   getAgentWallet(input: GetAgentWalletInput): ReturnType<ReturnType<typeof createGetAgentWalletHandler>>;
@@ -454,6 +457,7 @@ export function createAgentPayRuntime(config: AgentPayRuntimeConfig, options: Ag
   };
 
   return {
+    circleCli: options.circleCli ?? createCircleCli(),
     prepareWalletCreation: createPrepareWalletCreationHandler(
       omitUndefined({
         setupIntents: repositories.setupIntents,
