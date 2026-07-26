@@ -35,7 +35,14 @@ create table if not exists public.arc_payment_receipts (
   chain text not null default 'ARC-TESTNET' check (chain = 'ARC-TESTNET'),
   purpose text not null check (char_length(purpose) between 1 and 512),
   status text not null default 'PENDING'
-    check (status in ('PENDING', 'SUBMITTED', 'COMPLETED', 'FAILED')),
+    check (status in (
+      'PENDING',
+      'SUBMITTING',
+      'SUBMITTED',
+      'COMPLETED',
+      'FAILED',
+      'RECONCILIATION_REQUIRED'
+    )),
   transaction_id text,
   transaction_hash text,
   error_message text,
@@ -47,8 +54,13 @@ create table if not exists public.arc_payment_receipts (
     references public.arc_payment_requests (tenant_id, id)
     on delete restrict,
   check (transaction_hash is null or transaction_hash ~ '^0x[0-9a-fA-F]{64}$'),
-  check (status <> 'PENDING' or transaction_id is null),
-  check (status <> 'COMPLETED' or (transaction_id is not null and transaction_hash is not null))
+  check (
+    status not in ('PENDING', 'SUBMITTING')
+    or (transaction_id is null and transaction_hash is null)
+  ),
+  check (status <> 'SUBMITTED' or transaction_id is not null),
+  check (status <> 'COMPLETED' or (transaction_id is not null and transaction_hash is not null)),
+  check (status <> 'FAILED' or (transaction_id is null and transaction_hash is null))
 );
 
 alter table public.arc_payment_requests
@@ -122,6 +134,9 @@ create index if not exists arc_payment_receipts_tenant_created_idx
 create index if not exists arc_payment_receipts_tenant_transaction_idx
   on public.arc_payment_receipts (tenant_id, transaction_id)
   where transaction_id is not null;
+create unique index if not exists arc_payment_receipts_request_idx
+  on public.arc_payment_receipts (tenant_id, payment_request_id)
+  where payment_request_id is not null;
 create index if not exists arc_payment_batches_tenant_created_idx
   on public.arc_payment_batches (tenant_id, created_at desc);
 create index if not exists arc_payment_batch_items_resume_idx
@@ -130,6 +145,225 @@ create index if not exists arc_agent_activity_tenant_created_idx
   on public.arc_agent_activity (tenant_id, created_at desc);
 create index if not exists arc_agent_activity_reference_idx
   on public.arc_agent_activity (tenant_id, reference_id, created_at desc);
+
+create or replace function public.claim_arc_payment_receipt(
+  p_tenant_id uuid,
+  p_receipt_id uuid,
+  p_idempotency_key uuid,
+  p_payment_request_id uuid,
+  p_wallet_address text,
+  p_recipient text,
+  p_amount text,
+  p_token text,
+  p_chain text,
+  p_purpose text,
+  p_created_at timestamptz,
+  p_updated_at timestamptz
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_by_id public.arc_payment_receipts%rowtype;
+  v_by_key public.arc_payment_receipts%rowtype;
+  v_by_request public.arc_payment_receipts%rowtype;
+  v_request public.arc_payment_requests%rowtype;
+  v_inserted integer;
+  v_receipt jsonb;
+begin
+  if current_user <> 'service_role' then
+    raise exception 'Arc payment receipt claim requires service_role'
+      using errcode = '42501';
+  end if;
+
+  if p_tenant_id is null
+    or p_receipt_id is null
+    or p_receipt_id::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_idempotency_key is null
+    or p_idempotency_key::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_wallet_address is null
+    or p_wallet_address !~ '^0x[0-9a-fA-F]{40}$'
+    or p_recipient is null
+    or p_recipient !~ '^0x[0-9a-fA-F]{40}$'
+    or not (
+      case
+        when p_amount ~ '^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$'
+        then p_amount::numeric > 0
+        else false
+      end
+    )
+    or p_token is distinct from 'USDC'
+    or p_chain is distinct from 'ARC-TESTNET'
+    or p_purpose is null
+    or char_length(p_purpose) not between 1 and 512
+    or p_created_at is null
+    or p_updated_at is distinct from p_created_at
+  then
+    raise exception 'Invalid Arc payment receipt claim';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('arc-payment-receipt:' || p_tenant_id::text, 0)
+  );
+
+  select *
+  into v_by_id
+  from public.arc_payment_receipts
+  where tenant_id = p_tenant_id
+    and id = p_receipt_id;
+
+  select *
+  into v_by_key
+  from public.arc_payment_receipts
+  where tenant_id = p_tenant_id
+    and idempotency_key = p_idempotency_key;
+
+  if p_payment_request_id is not null then
+    select *
+    into v_by_request
+    from public.arc_payment_receipts
+    where tenant_id = p_tenant_id
+      and payment_request_id = p_payment_request_id;
+  end if;
+
+  if v_by_id.id is not null
+    or v_by_key.id is not null
+    or (p_payment_request_id is not null and v_by_request.id is not null)
+  then
+    if v_by_id.id is null
+      or v_by_key.id is null
+      or v_by_id.id <> v_by_key.id
+      or (
+        p_payment_request_id is not null
+        and (
+          v_by_request.id is null
+          or v_by_request.id <> v_by_id.id
+        )
+      )
+      or v_by_id.payment_request_id is distinct from p_payment_request_id
+      or lower(v_by_id.wallet_address) <> lower(p_wallet_address)
+      or lower(v_by_id.recipient) <> lower(p_recipient)
+      or v_by_id.amount <> p_amount
+      or v_by_id.token <> p_token
+      or v_by_id.chain <> p_chain
+      or v_by_id.purpose <> p_purpose
+    then
+      raise exception 'Arc payment receipt replay conflicts with persisted input';
+    end if;
+
+    return jsonb_build_object(
+      'claimed',
+      false,
+      'receipt',
+      to_jsonb(v_by_id)
+    );
+  end if;
+
+  if p_payment_request_id is not null then
+    select *
+    into v_request
+    from public.arc_payment_requests
+    where tenant_id = p_tenant_id
+      and id = p_payment_request_id
+    for update;
+
+    if v_request.id is null
+      or v_request.status <> 'OPEN'
+      or v_request.expires_at <= pg_catalog.now()
+      or lower(v_request.recipient) <> lower(p_recipient)
+      or v_request.amount <> p_amount
+      or v_request.token <> p_token
+      or v_request.chain <> p_chain
+      or v_request.purpose <> p_purpose
+    then
+      raise exception 'Arc payment request is not claimable with these receipt fields';
+    end if;
+  end if;
+
+  insert into public.arc_payment_receipts (
+    tenant_id,
+    id,
+    idempotency_key,
+    payment_request_id,
+    wallet_address,
+    recipient,
+    amount,
+    token,
+    chain,
+    purpose,
+    status,
+    transaction_id,
+    transaction_hash,
+    error_message,
+    created_at,
+    updated_at
+  )
+  values (
+    p_tenant_id,
+    p_receipt_id,
+    p_idempotency_key,
+    p_payment_request_id,
+    p_wallet_address,
+    p_recipient,
+    p_amount,
+    p_token,
+    p_chain,
+    p_purpose,
+    'SUBMITTING',
+    null,
+    null,
+    null,
+    p_created_at,
+    p_updated_at
+  )
+  on conflict do nothing;
+  get diagnostics v_inserted = row_count;
+
+  if v_inserted <> 1 then
+    raise exception 'Arc payment receipt replay conflicts with persisted input';
+  end if;
+
+  insert into public.arc_agent_activity (
+    tenant_id,
+    id,
+    activity_type,
+    status,
+    reference_id,
+    metadata,
+    created_at
+  )
+  values (
+    p_tenant_id,
+    'payment_claimed:' || p_receipt_id::text,
+    'PAYMENT',
+    'SUBMITTING',
+    p_receipt_id::text,
+    jsonb_build_object(
+      'event', 'PAYMENT_CLAIMED',
+      'walletAddress', p_wallet_address,
+      'recipient', p_recipient,
+      'amount', p_amount,
+      'paymentRequestId', p_payment_request_id
+    ),
+    p_created_at
+  );
+
+  select to_jsonb(receipt_row)
+  into v_receipt
+  from public.arc_payment_receipts as receipt_row
+  where receipt_row.tenant_id = p_tenant_id
+    and receipt_row.id = p_receipt_id;
+
+  return jsonb_build_object(
+    'claimed',
+    true,
+    'receipt',
+    v_receipt
+  );
+end;
+$$;
 
 create or replace function public.create_arc_payment_batch(
   p_tenant_id uuid,
@@ -455,6 +689,7 @@ revoke all on table public.arc_payment_receipts from public, anon, authenticated
 revoke all on table public.arc_payment_batches from public, anon, authenticated;
 revoke all on table public.arc_payment_batch_items from public, anon, authenticated;
 revoke all on table public.arc_agent_activity from public, anon, authenticated;
+revoke all on function public.claim_arc_payment_receipt(uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, timestamptz) from public, anon, authenticated;
 revoke all on function public.create_arc_payment_batch(uuid, uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb) from public, anon, authenticated;
 revoke all on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.reject_arc_activity_mutation() from public, anon, authenticated;
@@ -464,6 +699,7 @@ grant select, insert, update, delete on table public.arc_payment_receipts to ser
 grant select, insert, update, delete on table public.arc_payment_batches to service_role;
 grant select, insert, update, delete on table public.arc_payment_batch_items to service_role;
 grant select, insert, update, delete on table public.arc_agent_activity to service_role;
+grant execute on function public.claim_arc_payment_receipt(uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, timestamptz) to service_role;
 grant execute on function public.create_arc_payment_batch(uuid, uuid, uuid, text, text, text, timestamptz, timestamptz, jsonb) to service_role;
 grant execute on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) to service_role;
 grant execute on function public.reject_arc_activity_mutation() to service_role;

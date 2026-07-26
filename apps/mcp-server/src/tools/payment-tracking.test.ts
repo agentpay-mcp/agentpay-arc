@@ -586,6 +586,31 @@ describe("Arc payment tracking tools", () => {
 
     assert.equal(output.receipt.explorerUrl, `https://testnet.arcscan.app/tx/${txHash}`);
     assert.notEqual(output.receipt, receipt);
+    assert.equal(output.receipt.reconciliationRequired, false);
+  });
+
+  it("marks a submitting receipt as requiring manual reconciliation", async () => {
+    const receipt: ArcPaymentReceiptRecord = {
+      id: "436dd5c3-d784-4980-b708-3f1ddc84010e",
+      idempotencyKey: "436dd5c3-d784-4980-b708-3f1ddc84010e",
+      walletAddress: "0x1111111111111111111111111111111111111111",
+      recipient: "0x2222222222222222222222222222222222222222",
+      amount: "1",
+      token: "USDC",
+      chain: "ARC-TESTNET",
+      purpose: "Invoice INV-1",
+      status: "SUBMITTING",
+      createdAt: "2026-07-26T09:00:00.000Z",
+      updatedAt: "2026-07-26T09:00:00.000Z",
+    };
+
+    const output = await getPaymentReceipt(
+      { receiptId: receipt.id },
+      { receipts: { getPaymentReceipt: async () => receipt } },
+    );
+
+    assert.equal(output.receipt.reconciliationRequired, true);
+    assert.match(output.receipt.reconciliationMessage ?? "", /do not retry|reconcile/i);
   });
 
   it("rejects invalid receipt IDs and missing receipts", async () => {

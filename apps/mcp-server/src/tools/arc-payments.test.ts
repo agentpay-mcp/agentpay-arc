@@ -2,14 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type {
-  ArcPaymentBatchRecord,
   ArcPaymentReceiptRecord,
   CircleAgentWallet,
-  CircleTransactionResult,
-  CircleWalletBalance,
 } from "@agentpay-ai/shared-arc";
 
-import type { CircleCli } from "../services/circle-cli.ts";
 import {
   batchPayoutTool,
   createBatchPayoutHandler,
@@ -17,16 +13,22 @@ import {
   type ArcPaymentRepository,
   sendUsdcTool,
 } from "./arc-payments.ts";
-
-const WALLET = "0x1111111111111111111111111111111111111111";
-const RECIPIENT_A = "0x2222222222222222222222222222222222222222";
-const RECIPIENT_B = "0x3333333333333333333333333333333333333333";
-const ARC_USDC = "0x3600000000000000000000000000000000000000";
-const RECEIPT_ID = "436dd5c3-d784-4980-b708-3f1ddc84010e";
-const BATCH_ID = "33d3d96a-983a-4f0c-8f66-921f2d6d4b15";
-const BATCH_KEY = "ea1e8ff1-edaa-4a27-a6de-715f76d5aa7c";
-const TX_HASH_A = `0x${"a".repeat(64)}`;
-const TX_HASH_B = `0x${"b".repeat(64)}`;
+import {
+  baseReceipt,
+  BATCH_ID,
+  BATCH_KEY,
+  completeTransaction,
+  fakeCircleCli,
+  fixedClock,
+  memoryRepository,
+  RECEIPT_ID,
+  RECIPIENT_A,
+  RECIPIENT_B,
+  TX_HASH_A,
+  TX_HASH_B,
+  usdcBalance,
+  WALLET,
+} from "./arc-payments.test-support.ts";
 
 describe("Arc payment tools", () => {
   it("publishes isolated send_usdc and batch_payout schemas", () => {
@@ -120,7 +122,7 @@ describe("Arc payment tools", () => {
 
     assert.equal(transfers, 1);
     assert.deepEqual(events.filter((event) => event.startsWith("receipt:")), [
-      "receipt:PENDING",
+      "receipt:SUBMITTING",
       "receipt:SUBMITTED:circle_tx_1",
       "receipt:COMPLETED:circle_tx_1",
     ]);
@@ -130,7 +132,7 @@ describe("Arc payment tools", () => {
 
   it("returns a previously persisted receipt without retrying the mutation", async () => {
     const repository = memoryRepository();
-    await repository.saveReceipt({
+    await repository.seedReceipt({
       ...baseReceipt(RECEIPT_ID),
       status: "SUBMITTED",
       transactionId: "circle_tx_existing",
@@ -163,7 +165,7 @@ describe("Arc payment tools", () => {
 
   it("binds receipt replay to the currently authenticated selected wallet", async () => {
     const repository = memoryRepository();
-    await repository.saveReceipt({
+    await repository.seedReceipt({
       ...baseReceipt(RECEIPT_ID),
       status: "SUBMITTED",
       transactionId: "circle_tx_existing",
@@ -208,18 +210,18 @@ describe("Arc payment tools", () => {
     assert.equal(transfers, 0);
   });
 
-  it("does not overwrite a PENDING receipt as FAILED when submitted identity persistence fails", async () => {
+  it("surfaces reconciliation when transaction identity persistence fails after transfer", async () => {
     const stored: ArcPaymentReceiptRecord[] = [];
     let transfers = 0;
     const base = memoryRepository();
     const repository: ArcPaymentRepository = {
       ...base,
-      async saveReceipt(receipt) {
+      async transitionReceipt(receipt, expectedStatus) {
         if (receipt.status === "SUBMITTED") {
           throw new Error("database unavailable");
         }
         stored.push(structuredClone(receipt));
-        return base.saveReceipt(receipt);
+        return base.transitionReceipt(receipt, expectedStatus);
       },
     };
     const handler = createSendUsdcHandler({
@@ -233,17 +235,64 @@ describe("Arc payment tools", () => {
       clock: fixedClock,
     });
 
-    await assert.rejects(
-      () => handler({
-        idempotencyKey: RECEIPT_ID,
-        recipient: RECIPIENT_A,
-        amount: "1",
-        purpose: "Persistence boundary",
-      }),
-      /database unavailable/i,
-    );
+    const output = await handler({
+      idempotencyKey: RECEIPT_ID,
+      recipient: RECIPIENT_A,
+      amount: "1",
+      purpose: "Persistence boundary",
+    });
     assert.equal(transfers, 1);
-    assert.deepEqual(stored.map((receipt) => receipt.status), ["PENDING"]);
+    assert.equal(output.status, "SUBMITTING");
+    assert.equal(output.reconciliationRequired, true);
+    assert.match(output.reconciliationMessage ?? "", /do not retry|get_payment_receipt/i);
+    assert.equal(output.reconciliationTransactionId, "circle_tx_unsafe_to_retry");
+    assert.equal(output.reconciliationTransactionHash, TX_HASH_A);
+    assert.deepEqual(stored.map((receipt) => receipt.status), []);
+    assert.equal(
+      (await base.getReceiptByIdempotencyKey(RECEIPT_ID))?.status,
+      "SUBMITTING",
+    );
+
+    const replay = await handler({
+      idempotencyKey: RECEIPT_ID,
+      recipient: RECIPIENT_A,
+      amount: "1",
+      purpose: "Persistence boundary",
+    });
+    assert.equal(transfers, 1);
+    assert.equal(replay.reconciliationRequired, true);
+  });
+
+  it("marks an ambiguous Circle transfer error for reconciliation without retrying", async () => {
+    const events: string[] = [];
+    const repository = memoryRepository(events);
+    let transfers = 0;
+    const handler = createSendUsdcHandler({
+      circleCli: fakeCircleCli({
+        transfer: async () => {
+          transfers += 1;
+          throw new Error("Circle response was lost");
+        },
+      }),
+      payments: repository,
+      clock: fixedClock,
+    });
+    const input = {
+      idempotencyKey: RECEIPT_ID,
+      recipient: RECIPIENT_A,
+      amount: "1",
+      purpose: "Ambiguous transfer",
+    };
+
+    const first = await handler(input);
+    const replay = await handler(input);
+
+    assert.equal(transfers, 1);
+    assert.equal(first.status, "RECONCILIATION_REQUIRED");
+    assert.equal(first.reconciliationRequired, true);
+    assert.equal(replay.status, "RECONCILIATION_REQUIRED");
+    assert.equal(replay.reconciliationRequired, true);
+    assert.ok(events.includes("activity:PAYMENT:RECONCILIATION_REQUIRED"));
   });
 
   it("returns exact persisted item states on partial batch failure", async () => {
@@ -564,157 +613,3 @@ describe("Arc payment tools", () => {
     assert.deepEqual(storedStatuses, ["SUBMITTED:circle_tx_unsafe_to_retry"]);
   });
 });
-
-function fixedClock(): Date {
-  return new Date("2026-07-26T09:00:00.000Z");
-}
-
-function baseReceipt(id: string): ArcPaymentReceiptRecord {
-  return {
-    id,
-    idempotencyKey: id,
-    walletAddress: WALLET,
-    recipient: RECIPIENT_A,
-    amount: "2.5",
-    token: "USDC",
-    chain: "ARC-TESTNET",
-    purpose: "Invoice INV-1",
-    status: "PENDING",
-    createdAt: fixedClock().toISOString(),
-    updatedAt: fixedClock().toISOString(),
-  };
-}
-
-function completeTransaction(id: string, txHash: string): CircleTransactionResult {
-  return {
-    id,
-    state: "COMPLETE",
-    blockchain: "ARC-TESTNET",
-    txHash,
-  };
-}
-
-function usdcBalance(amount: string): CircleWalletBalance {
-  return {
-    balances: [{
-      amount,
-      token: {
-        name: "USD Coin",
-        symbol: "USDC",
-        blockchain: "ARC-TESTNET",
-        decimals: 6,
-        isNative: false,
-        tokenAddress: ARC_USDC,
-      },
-    }],
-  };
-}
-
-function fakeCircleCli(overrides: Partial<CircleCli> = {}): CircleCli {
-  const wallet: CircleAgentWallet = {
-    address: WALLET,
-    type: "agent",
-    blockchain: "ARC-TESTNET",
-  };
-  const unavailable = async (): Promise<never> => {
-    throw new Error("Unexpected Circle CLI call");
-  };
-  return {
-    status: unavailable,
-    listAgentWallets: async () => [wallet],
-    getBalance: async () => usdcBalance("100"),
-    fundFromFaucet: unavailable,
-    transfer: unavailable,
-    swap: unavailable,
-    executeContract: unavailable,
-    searchServices: unavailable,
-    inspectService: unavailable,
-    payService: unavailable,
-    getGatewayBalance: unavailable,
-    depositGateway: unavailable,
-    withdrawGateway: unavailable,
-    bridge: unavailable,
-    ...overrides,
-  };
-}
-
-function memoryRepository(events: string[] = []): ArcPaymentRepository {
-  const receipts = new Map<string, ArcPaymentReceiptRecord>();
-  const batches = new Map<string, ArcPaymentBatchRecord>();
-
-  const repository: ArcPaymentRepository = {
-    async getReceiptByIdempotencyKey(idempotencyKey) {
-      return clone(receipts.get(idempotencyKey) ?? null);
-    },
-    async saveReceipt(receipt) {
-      receipts.set(receipt.idempotencyKey, clone(receipt));
-      events.push(
-        `receipt:${receipt.status}${receipt.transactionId ? `:${receipt.transactionId}` : ""}`,
-      );
-      return clone(receipt);
-    },
-    async appendActivity(activity) {
-      assert.ok(Object.isFrozen(activity), "activity records must be immutable");
-      events.push(`activity:${activity.type}:${activity.status}`);
-    },
-    async getBatch(batchId) {
-      return clone(batches.get(batchId) ?? null);
-    },
-    async getBatchByIdempotencyKey(idempotencyKey) {
-      return clone(
-        [...batches.values()].find((batch) => batch.idempotencyKey === idempotencyKey) ?? null,
-      );
-    },
-    async createBatch(batch) {
-      batches.set(batch.batchId, clone(batch));
-      events.push(`batch:${batch.status}`);
-      return clone(batch);
-    },
-    async claimBatchItem(item: ArcPaymentBatchRecord["items"][number]) {
-      const batch = batches.get(item.batchId);
-      assert.ok(batch);
-      const stored = batch.items.find((candidate) => candidate.id === item.id);
-      if (
-        !stored
-        || stored.status !== "PENDING"
-        || stored.transactionId !== undefined
-        || stored.transactionHash !== undefined
-      ) {
-        return null;
-      }
-      const claimed = {
-        ...stored,
-        status: "SUBMITTED" as const,
-        updatedAt: item.updatedAt,
-      };
-      batches.set(item.batchId, {
-        ...batch,
-        items: batch.items.map((candidate) =>
-          candidate.id === item.id ? clone(claimed) : candidate
-        ),
-      });
-      events.push(`item:${item.index}:SUBMITTED:CLAIMED`);
-      return clone(claimed);
-    },
-    async saveBatchItem(item) {
-      const batch = batches.get(item.batchId);
-      assert.ok(batch);
-      const items = batch.items.map((stored) => stored.id === item.id ? clone(item) : stored);
-      batches.set(item.batchId, { ...batch, items });
-      events.push(`item:${item.index}:${item.status}${item.transactionId ? `:${item.transactionId}` : ""}`);
-      return clone(item);
-    },
-    async saveBatch(batch) {
-      const stored = batches.get(batch.batchId);
-      const next = { ...clone(batch), items: stored?.items ?? clone(batch.items) };
-      batches.set(batch.batchId, next);
-      events.push(`batch:${batch.status}`);
-      return clone(next);
-    },
-  };
-  return repository;
-}
-
-function clone<T>(value: T): T {
-  return value === undefined ? value : structuredClone(value);
-}

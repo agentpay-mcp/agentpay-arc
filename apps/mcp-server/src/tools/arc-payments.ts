@@ -40,7 +40,14 @@ export type SendUsdcInput = z.input<typeof sendUsdcInputSchema>;
 
 export interface ArcPaymentRepository {
   getReceiptByIdempotencyKey(idempotencyKey: string): Promise<ArcPaymentReceiptRecord | null>;
-  saveReceipt(receipt: ArcPaymentReceiptRecord): Promise<ArcPaymentReceiptRecord>;
+  claimReceipt(receipt: ArcPaymentReceiptRecord): Promise<{
+    readonly claimed: boolean;
+    readonly receipt: ArcPaymentReceiptRecord;
+  }>;
+  transitionReceipt(
+    receipt: ArcPaymentReceiptRecord,
+    expectedStatus: ArcPaymentReceiptRecord["status"],
+  ): Promise<ArcPaymentReceiptRecord>;
   appendActivity(activity: ArcAgentActivityRecord): Promise<void>;
   getBatch(batchId: string): Promise<ArcPaymentBatchRecord | null>;
   getBatchByIdempotencyKey(idempotencyKey: string): Promise<ArcPaymentBatchRecord | null>;
@@ -59,12 +66,23 @@ export interface ArcPaymentDependencies {
 }
 
 export interface ArcPaymentExecutor {
-  sendUsdc(input: SendUsdcInput): Promise<SendUsdcOutput>;
+  sendUsdc(
+    input: SendUsdcInput,
+    context?: SendUsdcContext,
+  ): Promise<SendUsdcOutput>;
+}
+
+export interface SendUsdcContext {
+  readonly paymentRequestId?: string;
 }
 
 export interface SendUsdcOutput {
   readonly status: ArcPaymentReceiptRecord["status"];
   readonly receipt: ArcPaymentReceiptRecord;
+  readonly reconciliationRequired: boolean;
+  readonly reconciliationMessage?: string;
+  readonly reconciliationTransactionId?: string;
+  readonly reconciliationTransactionHash?: string;
 }
 
 export interface BatchPayoutOutput {
@@ -75,6 +93,7 @@ export interface BatchPayoutOutput {
 export async function sendUsdc(
   rawInput: unknown,
   dependencies: ArcPaymentDependencies,
+  context: SendUsdcContext = {},
 ): Promise<SendUsdcOutput> {
   const input = sendUsdcInputSchema.parse(rawInput);
   const wallet = selectWallet(
@@ -83,77 +102,155 @@ export async function sendUsdc(
   );
   const existing = await dependencies.payments.getReceiptByIdempotencyKey(input.idempotencyKey);
   if (existing) {
-    assertReceiptMatches(existing, input, wallet.address);
-    return { status: existing.status, receipt: cloneReceipt(existing) };
+    assertReceiptMatches(existing, input, wallet.address, context);
+    assertReceiptStateIsReplaySafe(existing);
+    return receiptOutput(existing);
   }
-
-  await assertSufficientBalance(
-    dependencies.circleCli,
-    wallet.address,
-    parseUsdcAtomic(input.amount),
-  );
 
   const now = dependencies.clock().toISOString();
   const pending: ArcPaymentReceiptRecord = {
     id: input.idempotencyKey,
     idempotencyKey: input.idempotencyKey,
+    ...(context.paymentRequestId
+      ? { paymentRequestId: uuidV4Schema.parse(context.paymentRequestId) }
+      : {}),
     walletAddress: wallet.address,
     recipient: input.recipient,
     amount: input.amount,
     token: input.token,
     chain: input.chain,
     purpose: input.purpose,
-    status: "PENDING",
+    status: "SUBMITTING",
     createdAt: now,
     updatedAt: now,
   };
-  await dependencies.payments.saveReceipt(pending);
-  await appendActivity(dependencies, "PAYMENT", pending.status, pending.id, {
-    recipient: pending.recipient,
-    amount: pending.amount,
-  });
+  const claim = await dependencies.payments.claimReceipt(pending);
+  assertReceiptMatches(claim.receipt, input, wallet.address, context);
+  if (!claim.claimed) {
+    assertReceiptStateIsReplaySafe(claim.receipt);
+    return receiptOutput(claim.receipt);
+  }
+  if (
+    claim.receipt.status !== "SUBMITTING"
+    || claim.receipt.transactionId !== undefined
+    || claim.receipt.transactionHash !== undefined
+  ) {
+    throw new Error("Arc payment receipt claim returned an ambiguous persisted state.");
+  }
+  const claimed = claim.receipt;
+
+  try {
+    await assertSufficientBalance(
+      dependencies.circleCli,
+      claimed.walletAddress,
+      parseUsdcAtomic(claimed.amount),
+    );
+  } catch (error) {
+    const failed = {
+      ...claimed,
+      status: "FAILED" as const,
+      errorMessage: safeErrorMessage(error),
+      updatedAt: dependencies.clock().toISOString(),
+    };
+    await dependencies.payments.transitionReceipt(failed, "SUBMITTING");
+    throw error;
+  }
 
   let transaction: CircleTransactionResult;
   try {
     transaction = await dependencies.circleCli.transfer({
       address: wallet.address,
-      amount: input.amount,
-      recipient: input.recipient,
+      amount: claimed.amount,
+      recipient: claimed.recipient,
     });
   } catch (error) {
-    const failed = {
-      ...pending,
-      status: "FAILED" as const,
+    const reconciliation = {
+      ...claimed,
+      status: "RECONCILIATION_REQUIRED" as const,
       errorMessage: safeErrorMessage(error),
       updatedAt: dependencies.clock().toISOString(),
     };
-    await dependencies.payments.saveReceipt(failed);
-    await appendActivity(dependencies, "PAYMENT", failed.status, failed.id, {
-      errorMessage: failed.errorMessage,
-    });
-    throw error;
+    try {
+      const persisted = await dependencies.payments.transitionReceipt(
+        reconciliation,
+        "SUBMITTING",
+      );
+      return receiptOutput(persisted);
+    } catch {
+      return receiptOutput(claimed);
+    }
   }
 
-  const submitted = withTransaction(pending, transaction, dependencies.clock().toISOString());
-  await dependencies.payments.saveReceipt(submitted);
-  await appendActivity(dependencies, "PAYMENT", submitted.status, submitted.id, {
-    transactionId: transaction.id,
-    ...(transaction.txHash ? { transactionHash: transaction.txHash } : {}),
-  });
+  const submitted = withTransaction(claimed, transaction, dependencies.clock().toISOString());
+  let persistedSubmitted: ArcPaymentReceiptRecord;
+  try {
+    persistedSubmitted = await dependencies.payments.transitionReceipt(
+      submitted,
+      "SUBMITTING",
+    );
+  } catch {
+    return receiptOutput(claimed, transaction);
+  }
 
   const finalReceipt =
     completedCircleStates.has(transaction.state.toUpperCase()) && transaction.txHash
-      ? { ...submitted, status: "COMPLETED" as const, updatedAt: dependencies.clock().toISOString() }
-      : submitted;
-  if (finalReceipt !== submitted) {
-    await dependencies.payments.saveReceipt(finalReceipt);
-    await appendActivity(dependencies, "PAYMENT", finalReceipt.status, finalReceipt.id, {
-      transactionId: transaction.id,
-      transactionHash: transaction.txHash,
-    });
+      ? {
+          ...persistedSubmitted,
+          status: "COMPLETED" as const,
+          updatedAt: dependencies.clock().toISOString(),
+        }
+      : persistedSubmitted;
+  if (finalReceipt !== persistedSubmitted) {
+    try {
+      const completed = await dependencies.payments.transitionReceipt(
+        finalReceipt,
+        "SUBMITTED",
+      );
+      return receiptOutput(completed);
+    } catch {
+      return {
+        ...receiptOutput(persistedSubmitted),
+        reconciliationRequired: true,
+        reconciliationMessage: reconciliationMessage,
+      };
+    }
   }
 
-  return { status: finalReceipt.status, receipt: cloneReceipt(finalReceipt) };
+  return receiptOutput(finalReceipt);
+}
+
+function assertReceiptStateIsReplaySafe(
+  receipt: ArcPaymentReceiptRecord,
+): void {
+  const pendingIsAmbiguous =
+    (receipt.status === "PENDING" || receipt.status === "SUBMITTING")
+    && (
+      receipt.transactionId !== undefined
+      || receipt.transactionHash !== undefined
+    );
+  const submittedIsAmbiguous =
+    receipt.status === "SUBMITTED"
+    && receipt.transactionId === undefined;
+  const completedIsAmbiguous =
+    receipt.status === "COMPLETED"
+    && (
+      receipt.transactionId === undefined
+      || receipt.transactionHash === undefined
+    );
+  const failedIsAmbiguous =
+    receipt.status === "FAILED"
+    && (
+      receipt.transactionId !== undefined
+      || receipt.transactionHash !== undefined
+    );
+  if (
+    pendingIsAmbiguous
+    || submittedIsAmbiguous
+    || completedIsAmbiguous
+    || failedIsAmbiguous
+  ) {
+    throw new Error("Arc payment receipt has an ambiguous persisted state.");
+  }
 }
 
 export async function batchPayout(
@@ -270,7 +367,7 @@ export function createBatchPayoutHandler(dependencies: ArcPaymentDependencies) {
 
 export function createArcPaymentExecutor(dependencies: ArcPaymentDependencies): ArcPaymentExecutor {
   return {
-    sendUsdc: (input) => sendUsdc(input, dependencies),
+    sendUsdc: (input, context) => sendUsdc(input, dependencies, context),
   };
 }
 
@@ -485,9 +582,12 @@ function assertReceiptMatches(
   receipt: ArcPaymentReceiptRecord,
   input: z.output<typeof sendUsdcInputSchema>,
   selectedWalletAddress: string,
+  context: SendUsdcContext = {},
 ): void {
   if (
-    receipt.walletAddress.toLowerCase() !== selectedWalletAddress.toLowerCase()
+    receipt.idempotencyKey !== input.idempotencyKey
+    || receipt.paymentRequestId !== context.paymentRequestId
+    || receipt.walletAddress.toLowerCase() !== selectedWalletAddress.toLowerCase()
     || receipt.recipient.toLowerCase() !== input.recipient.toLowerCase()
     || receipt.amount !== input.amount
     || receipt.token !== input.token
@@ -566,6 +666,33 @@ function safeErrorMessage(error: unknown): string {
 
 function cloneReceipt(receipt: ArcPaymentReceiptRecord): ArcPaymentReceiptRecord {
   return { ...receipt };
+}
+
+const reconciliationMessage =
+  "Do not retry this payment. Use get_payment_receipt and reconcile the Circle transaction manually.";
+
+function receiptOutput(
+  receipt: ArcPaymentReceiptRecord,
+  reconciliationTransaction?: CircleTransactionResult,
+): SendUsdcOutput {
+  const reconciliationRequired =
+    receipt.status === "PENDING"
+    || receipt.status === "SUBMITTING"
+    || receipt.status === "RECONCILIATION_REQUIRED";
+  return {
+    status: receipt.status,
+    receipt: cloneReceipt(receipt),
+    reconciliationRequired,
+    ...(reconciliationRequired ? { reconciliationMessage } : {}),
+    ...(reconciliationTransaction
+      ? {
+          reconciliationTransactionId: reconciliationTransaction.id,
+          ...(reconciliationTransaction.txHash
+            ? { reconciliationTransactionHash: reconciliationTransaction.txHash }
+            : {}),
+        }
+      : {}),
+  };
 }
 
 function cloneBatch(batch: ArcPaymentBatchRecord): ArcPaymentBatchRecord {

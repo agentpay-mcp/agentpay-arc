@@ -24,9 +24,11 @@ export const arcUsdcAmountSchema = z
 
 export const arcPaymentStatusSchema = z.enum([
   "PENDING",
+  "SUBMITTING",
   "SUBMITTED",
   "COMPLETED",
   "FAILED",
+  "RECONCILIATION_REQUIRED",
 ]);
 
 export const arcBatchStatusSchema = z.enum([
@@ -73,6 +75,7 @@ export const arcBatchPayoutInputSchema = z
 export interface ArcPaymentReceiptRecord {
   readonly id: string;
   readonly idempotencyKey: string;
+  readonly paymentRequestId?: string;
   readonly walletAddress: string;
   readonly recipient: string;
   readonly amount: string;

@@ -174,6 +174,13 @@ const atomicBatchResultSchema = z
   })
   .strict();
 
+const atomicReceiptClaimSchema = z
+  .object({
+    claimed: z.boolean(),
+    receipt: receiptRowSchema,
+  })
+  .strict();
+
 export function createTenantArcPaymentRepositories(
   client: ArcPaymentSupabaseClient,
   trustedTenantId: string,
@@ -193,14 +200,106 @@ export function createTenantArcPaymentRepositories(
       );
       return row ? mapReceipt(row, tenantId) : null;
     },
-    async saveReceipt(receipt) {
-      await upsertRow(
-        client,
-        "arc_payment_receipts",
-        toReceiptRow(receipt, tenantId),
-        "tenant_id,id",
-      );
-      return { ...receipt };
+    async claimReceipt(receipt) {
+      const result = await client.rpc("claim_arc_payment_receipt", {
+        p_tenant_id: tenantId,
+        p_receipt_id: receipt.id,
+        p_idempotency_key: receipt.idempotencyKey,
+        p_payment_request_id: receipt.paymentRequestId ?? null,
+        p_wallet_address: receipt.walletAddress,
+        p_recipient: receipt.recipient,
+        p_amount: receipt.amount,
+        p_token: receipt.token,
+        p_chain: receipt.chain,
+        p_purpose: receipt.purpose,
+        p_created_at: receipt.createdAt,
+        p_updated_at: receipt.updatedAt,
+      });
+      if (result.error) {
+        throw new Error("Arc payment atomic receipt claim failed.");
+      }
+      const parsed = atomicReceiptClaimSchema.safeParse(result.data);
+      if (!parsed.success) {
+        throw new Error("Arc payment atomic receipt claim returned invalid data.");
+      }
+      const persisted = mapReceipt(parsed.data.receipt, tenantId);
+      const matches =
+        persisted.id === receipt.id
+        && persisted.idempotencyKey === receipt.idempotencyKey
+        && persisted.paymentRequestId === receipt.paymentRequestId
+        && persisted.walletAddress.toLowerCase() === receipt.walletAddress.toLowerCase()
+        && persisted.recipient.toLowerCase() === receipt.recipient.toLowerCase()
+        && persisted.amount === receipt.amount
+        && persisted.token === receipt.token
+        && persisted.chain === receipt.chain
+        && persisted.purpose === receipt.purpose;
+      const validPendingState =
+        !["PENDING", "SUBMITTING"].includes(persisted.status)
+        || (
+          persisted.transactionId === undefined
+          && persisted.transactionHash === undefined
+        );
+      const validSubmittedState =
+        persisted.status !== "SUBMITTED"
+        || persisted.transactionId !== undefined;
+      const validWinningState =
+        !parsed.data.claimed
+        || (
+          persisted.status === "SUBMITTING"
+          && persisted.transactionId === undefined
+          && persisted.transactionHash === undefined
+        );
+      if (
+        !matches
+        || !validPendingState
+        || !validSubmittedState
+        || !validWinningState
+      ) {
+        throw new Error("Arc payment atomic receipt claim returned conflicting data.");
+      }
+      return {
+        claimed: parsed.data.claimed,
+        receipt: persisted,
+      };
+    },
+    async transitionReceipt(receipt, expectedStatus) {
+      const result = await client.rpc("transition_arc_payment_receipt", {
+        p_tenant_id: tenantId,
+        p_receipt_id: receipt.id,
+        p_expected_status: expectedStatus,
+        p_status: receipt.status,
+        p_transaction_id: receipt.transactionId ?? null,
+        p_transaction_hash: receipt.transactionHash ?? null,
+        p_error_message: receipt.errorMessage ?? null,
+        p_updated_at: receipt.updatedAt,
+      });
+      if (result.error) {
+        throw new Error("Arc payment receipt transition failed.");
+      }
+      let persisted: ArcPaymentReceiptRecord;
+      try {
+        persisted = mapReceipt(result.data, tenantId);
+      } catch {
+        throw new Error("Arc payment receipt transition returned invalid data.");
+      }
+      if (
+        persisted.id !== receipt.id
+        || persisted.idempotencyKey !== receipt.idempotencyKey
+        || persisted.paymentRequestId !== receipt.paymentRequestId
+        || persisted.walletAddress.toLowerCase() !== receipt.walletAddress.toLowerCase()
+        || persisted.recipient.toLowerCase() !== receipt.recipient.toLowerCase()
+        || persisted.amount !== receipt.amount
+        || persisted.token !== receipt.token
+        || persisted.chain !== receipt.chain
+        || persisted.purpose !== receipt.purpose
+        || persisted.status !== receipt.status
+        || persisted.transactionId !== receipt.transactionId
+        || persisted.transactionHash !== receipt.transactionHash
+        || persisted.errorMessage !== receipt.errorMessage
+      ) {
+        throw new Error("Arc payment receipt transition returned conflicting data.");
+      }
+      return persisted;
     },
     async appendActivity(activity) {
       await insertRow(
@@ -494,6 +593,7 @@ function mapReceipt(row: unknown, tenantId: string): ArcPaymentReceiptRecord {
   return omitUndefined({
     id: parsed.id,
     idempotencyKey: parsed.idempotency_key,
+    paymentRequestId: parsed.payment_request_id ?? undefined,
     walletAddress: parsed.wallet_address,
     recipient: parsed.recipient,
     amount: parsed.amount,
@@ -570,29 +670,6 @@ function mapActivity(
     metadata: Object.freeze({ ...parsed.metadata }),
     createdAt: parsed.created_at,
   });
-}
-
-function toReceiptRow(
-  receipt: ArcPaymentReceiptRecord,
-  tenantId: string,
-): Record<string, unknown> {
-  return {
-    tenant_id: tenantId,
-    id: receipt.id,
-    idempotency_key: receipt.idempotencyKey,
-    wallet_address: receipt.walletAddress,
-    recipient: receipt.recipient,
-    amount: receipt.amount,
-    token: receipt.token,
-    chain: receipt.chain,
-    purpose: receipt.purpose,
-    status: receipt.status,
-    transaction_id: receipt.transactionId ?? null,
-    transaction_hash: receipt.transactionHash ?? null,
-    error_message: receipt.errorMessage ?? null,
-    created_at: receipt.createdAt,
-    updated_at: receipt.updatedAt,
-  };
 }
 
 function toBatchRow(

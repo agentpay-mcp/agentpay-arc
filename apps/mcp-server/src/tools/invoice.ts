@@ -196,15 +196,18 @@ export async function payInvoice(
     throw new Error(`Arc payment request is already ${paymentRequest.status.toLowerCase()}.`);
   }
 
-  const payment = await dependencies.paymentExecutor.sendUsdc({
-    idempotencyKey: input.idempotencyKey,
-    ...(input.walletAddress ? { walletAddress: input.walletAddress } : {}),
-    recipient: paymentRequest.recipient,
-    amount: paymentRequest.amount,
-    token: paymentRequest.token,
-    chain: paymentRequest.chain,
-    purpose: paymentRequest.purpose,
-  });
+  const payment = await dependencies.paymentExecutor.sendUsdc(
+    {
+      idempotencyKey: input.idempotencyKey,
+      ...(input.walletAddress ? { walletAddress: input.walletAddress } : {}),
+      recipient: paymentRequest.recipient,
+      amount: paymentRequest.amount,
+      token: paymentRequest.token,
+      chain: paymentRequest.chain,
+      purpose: paymentRequest.purpose,
+    },
+    { paymentRequestId: paymentRequest.id },
+  );
   if (payment.status !== "COMPLETED") {
     return {
       status: payment.status,
@@ -333,5 +336,15 @@ function clonePaymentOutput(payment: SendUsdcOutput): SendUsdcOutput {
   return {
     status: payment.status,
     receipt: { ...payment.receipt },
+    reconciliationRequired: payment.reconciliationRequired,
+    ...(payment.reconciliationMessage
+      ? { reconciliationMessage: payment.reconciliationMessage }
+      : {}),
+    ...(payment.reconciliationTransactionId
+      ? { reconciliationTransactionId: payment.reconciliationTransactionId }
+      : {}),
+    ...(payment.reconciliationTransactionHash
+      ? { reconciliationTransactionHash: payment.reconciliationTransactionHash }
+      : {}),
   };
 }

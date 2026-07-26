@@ -18,6 +18,8 @@ const celoConsumerResourceMigrationPath = "supabase/migrations/20260721120000_ce
 const productionSetupMigrationPath = "supabase/migrations/20260721130000_celo_production_mainnet_onboarding.sql";
 const celoX402SettlementAuditMigrationPath = "supabase/migrations/20260721160000_celo_x402_settlement_audit.sql";
 const arcAgentActivityMigrationPath = "supabase/migrations/20260726090000_arc_agent_activity.sql";
+const arcReceiptTransitionMigrationPath =
+  "supabase/migrations/20260726091000_arc_payment_receipt_transitions.sql";
 const migrationsDir = "supabase/migrations";
 const requiredTables = ["setup_intents", "agent_wallets", "payment_intents", "payment_events"];
 const requiredSecurityStatements = [
@@ -310,7 +312,8 @@ describe("AgentPay Supabase migration", () => {
       "token text not null default 'USDC' check (token = 'USDC')",
       "check (recipient ~ '^0x[0-9a-fa-f]{40}$')",
       "check (amount ~ '^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$' and amount::numeric > 0)",
-      "status text not null default 'PENDING' check (status in ('PENDING', 'SUBMITTED', 'COMPLETED', 'FAILED'))",
+      "'SUBMITTING'",
+      "'RECONCILIATION_REQUIRED'",
       "check (transaction_hash is null or transaction_hash ~ '^0x[0-9a-fa-f]{64}$')",
       "unique (tenant_id, idempotency_key)",
       "unique (tenant_id, batch_id, item_index)",
@@ -387,6 +390,71 @@ describe("AgentPay Supabase migration", () => {
     assert.ok(
       sql.includes(
         "grant execute on function public.claim_arc_payment_batch_item(uuid, uuid, text, timestamptz) to service_role",
+      ),
+    );
+  });
+
+  it("transitions Arc receipts and audits them in one state-checked RPC", async () => {
+    const sql = normalizeSql(
+      await readFile(arcReceiptTransitionMigrationPath, "utf8"),
+    );
+
+    assert.ok(sql.includes("create or replace function public.transition_arc_payment_receipt("));
+    assert.ok(sql.includes("security invoker"));
+    assert.ok(sql.includes("if current_user <> 'service_role' then"));
+    assert.ok(sql.includes("for update"));
+    assert.ok(sql.includes("v_receipt.status <> p_expected_status"));
+    assert.ok(sql.includes("p_expected_status = 'submitting'"));
+    assert.ok(sql.includes("p_expected_status = 'submitted'"));
+    assert.ok(sql.includes("update public.arc_payment_receipts"));
+    assert.ok(sql.includes("insert into public.arc_agent_activity"));
+    assert.ok(sql.includes("'payment_transitioned'"));
+    assert.ok(sql.includes("return to_jsonb(v_receipt)"));
+    assert.doesNotMatch(sql, /update public\.arc_payment_receipts[\s\S]*idempotency_key\s*=/);
+    assert.doesNotMatch(sql, /exception\s+when/);
+    assert.ok(
+      sql.includes(
+        "revoke all on function public.transition_arc_payment_receipt( uuid, uuid, text, text, text, text, text, timestamptz ) from public, anon, authenticated",
+      ),
+    );
+    assert.ok(
+      sql.includes(
+        "grant execute on function public.transition_arc_payment_receipt( uuid, uuid, text, text, text, text, text, timestamptz ) to service_role",
+      ),
+    );
+  });
+
+  it("claims one Arc receipt atomically with exact replay binding and audit", async () => {
+    const sql = normalizeSql(await readFile(arcAgentActivityMigrationPath, "utf8"));
+
+    assert.ok(sql.includes("create or replace function public.claim_arc_payment_receipt("));
+    assert.ok(sql.includes("security invoker"));
+    assert.ok(sql.includes("if current_user <> 'service_role' then"));
+    assert.ok(sql.includes("insert into public.arc_payment_receipts"));
+    assert.ok(sql.includes("on conflict do nothing"));
+    assert.ok(sql.includes("get diagnostics v_inserted = row_count"));
+    assert.ok(sql.includes("arc payment receipt replay conflicts with persisted input"));
+    assert.ok(sql.includes("create unique index if not exists arc_payment_receipts_request_idx"));
+    assert.ok(sql.includes("where payment_request_id is not null"));
+    assert.ok(sql.includes("v_request.expires_at <= pg_catalog.now()"));
+    assert.ok(sql.includes("'payment_claimed:' || p_receipt_id::text"));
+    assert.ok(sql.includes("'payment_claimed'"));
+    assert.ok(
+      sql.includes(
+        "status not in ('pending', 'submitting') or (transaction_id is null and transaction_hash is null)",
+      ),
+    );
+    assert.ok(
+      sql.includes("check (status <> 'submitted' or transaction_id is not null)"),
+    );
+    assert.ok(
+      sql.includes(
+        "revoke all on function public.claim_arc_payment_receipt(uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, timestamptz) from public, anon, authenticated",
+      ),
+    );
+    assert.ok(
+      sql.includes(
+        "grant execute on function public.claim_arc_payment_receipt(uuid, uuid, uuid, uuid, text, text, text, text, text, text, timestamptz, timestamptz) to service_role",
       ),
     );
   });

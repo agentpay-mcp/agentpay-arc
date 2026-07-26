@@ -37,7 +37,6 @@ describe("tenant-bound Arc payment Supabase repositories", () => {
     await repositories.paymentRequests.getByIdempotencyKey(BATCH_KEY);
     await repositories.activity.listAgentActivity({ limit: 5 });
     await repositories.receipts.getPaymentReceipt(RECEIPT_ID);
-    await repositories.payments.saveReceipt(receiptRecord());
     await repositories.paymentRequests.save(requestRecord());
     await repositories.payments.createBatch(batchRecord());
     await repositories.payments.saveBatchItem(batchRecord().items[0]!);
@@ -58,7 +57,7 @@ describe("tenant-bound Arc payment Supabase repositories", () => {
         false,
       );
     }
-    assert.ok(client.writes.length >= 5);
+    assert.ok(client.writes.length >= 4);
     for (const write of client.writes) {
       assert.equal(write.row.tenant_id, TENANT_ID, `${write.table} write tenant`);
       assert.equal("tenantId" in write.row, false);
@@ -102,6 +101,183 @@ describe("tenant-bound Arc payment Supabase repositories", () => {
     assert.equal(client.rpcCalls.length, 1);
     assert.equal(client.writes.length, 0);
     assert.equal(client.queries.length, 0);
+  });
+
+  it("atomically claims a receipt with exact tenant and payment binding", async () => {
+    const requested = {
+      ...receiptRecord(),
+      paymentRequestId: REQUEST_ID,
+    };
+    const client = new SupabaseSpy({}, {
+      data: {
+        claimed: true,
+        receipt: {
+          ...receiptRpcRow(),
+          payment_request_id: REQUEST_ID,
+        },
+      },
+      error: null,
+    });
+    const payments = createTenantArcPaymentRepositories(
+      client,
+      TENANT_ID,
+    ).payments as ArcPaymentRepositoryWithReceiptClaim;
+
+    const result = await payments.claimReceipt(requested);
+
+    assert.equal(result.claimed, true);
+    assert.deepEqual(result.receipt, requested);
+    assert.deepEqual(client.rpcCalls, [{
+      functionName: "claim_arc_payment_receipt",
+      args: {
+        p_tenant_id: TENANT_ID,
+        p_receipt_id: RECEIPT_ID,
+        p_idempotency_key: RECEIPT_ID,
+        p_payment_request_id: REQUEST_ID,
+        p_wallet_address: WALLET,
+        p_recipient: RECIPIENT,
+        p_amount: "1",
+        p_token: "USDC",
+        p_chain: "ARC-TESTNET",
+        p_purpose: "Tenant test",
+        p_created_at: "2026-07-26T09:00:00.000Z",
+        p_updated_at: "2026-07-26T09:00:00.000Z",
+      },
+    }]);
+    assert.equal(client.writes.length, 0);
+    assert.equal(client.queries.length, 0);
+  });
+
+  it("returns the exact persisted receipt to a losing claimant and fails closed on RPC errors", async () => {
+    const losingClient = new SupabaseSpy({}, {
+      data: {
+        claimed: false,
+        receipt: receiptRpcRow(),
+      },
+      error: null,
+    });
+    const losingPayments = createTenantArcPaymentRepositories(
+      losingClient,
+      TENANT_ID,
+    ).payments as ArcPaymentRepositoryWithReceiptClaim;
+    const replay = await losingPayments.claimReceipt(receiptRecord());
+    assert.equal(replay.claimed, false);
+    assert.deepEqual(replay.receipt, receiptRecord());
+    assert.equal(losingClient.writes.length, 0);
+
+    const failedClient = new SupabaseSpy({}, {
+      data: null,
+      error: { message: "sensitive receipt conflict detail" },
+    });
+    const failedPayments = createTenantArcPaymentRepositories(
+      failedClient,
+      TENANT_ID,
+    ).payments as ArcPaymentRepositoryWithReceiptClaim;
+    await assert.rejects(
+      failedPayments.claimReceipt(receiptRecord()),
+      (error: unknown) =>
+        error instanceof Error
+        && /atomic receipt claim failed/i.test(error.message)
+        && !/sensitive receipt conflict detail/i.test(error.message),
+    );
+    assert.equal(failedClient.rpcCalls.length, 1);
+    assert.equal(failedClient.writes.length, 0);
+  });
+
+  it("rejects a losing receipt claim with mismatched or ambiguous persisted data", async () => {
+    for (const receipt of [
+      {
+        ...receiptRpcRow(),
+        tenant_id: OTHER_TENANT_ID,
+      },
+      {
+        ...receiptRpcRow(),
+        transaction_hash: `0x${"a".repeat(64)}`,
+      },
+    ]) {
+      const client = new SupabaseSpy({}, {
+        data: { claimed: false, receipt },
+        error: null,
+      });
+      const payments = createTenantArcPaymentRepositories(
+        client,
+        TENANT_ID,
+      ).payments as ArcPaymentRepositoryWithReceiptClaim;
+
+      await assert.rejects(
+        payments.claimReceipt(receiptRecord()),
+        /cross-tenant|conflicting data/i,
+      );
+      assert.equal(client.writes.length, 0);
+    }
+  });
+
+  it("transitions a receipt and appends its audit through one tenant-scoped RPC", async () => {
+    const next: ArcPaymentReceiptRecord = {
+      ...receiptRecord(),
+      status: "SUBMITTED",
+      transactionId: "circle_tx_1",
+      updatedAt: "2026-07-26T09:01:00.000Z",
+    };
+    const client = new SupabaseSpy({}, {
+      data: {
+        ...receiptRpcRow(),
+        status: "SUBMITTED",
+        transaction_id: "circle_tx_1",
+        updated_at: "2026-07-26T09:01:00.000Z",
+      },
+      error: null,
+    });
+    const payments = createTenantArcPaymentRepositories(client, TENANT_ID).payments;
+
+    const persisted = await payments.transitionReceipt(next, "SUBMITTING");
+
+    assert.deepEqual(persisted, next);
+    assert.deepEqual(client.rpcCalls, [{
+      functionName: "transition_arc_payment_receipt",
+      args: {
+        p_tenant_id: TENANT_ID,
+        p_receipt_id: RECEIPT_ID,
+        p_expected_status: "SUBMITTING",
+        p_status: "SUBMITTED",
+        p_transaction_id: "circle_tx_1",
+        p_transaction_hash: null,
+        p_error_message: null,
+        p_updated_at: "2026-07-26T09:01:00.000Z",
+      },
+    }]);
+    assert.equal(client.writes.length, 0);
+    assert.equal(client.queries.length, 0);
+  });
+
+  it("fails closed on receipt transition errors and conflicting results", async () => {
+    for (const rpcResult of [
+      { data: null, error: { message: "sensitive transition detail" } },
+      {
+        data: {
+          ...receiptRpcRow(),
+          status: "FAILED",
+          updated_at: "2026-07-26T09:01:00.000Z",
+        },
+        error: null,
+      },
+    ]) {
+      const client = new SupabaseSpy({}, rpcResult);
+      const payments = createTenantArcPaymentRepositories(client, TENANT_ID).payments;
+      const next: ArcPaymentReceiptRecord = {
+        ...receiptRecord(),
+        status: "SUBMITTED",
+        transactionId: "circle_tx_1",
+        updatedAt: "2026-07-26T09:01:00.000Z",
+      };
+
+      await assert.rejects(
+        payments.transitionReceipt(next, "SUBMITTING"),
+        /receipt transition (?:failed|returned conflicting data)/i,
+      );
+      assert.equal(client.rpcCalls.length, 1);
+      assert.equal(client.writes.length, 0);
+    }
   });
 
   it("claims a pending batch item with one RPC and returns null to a concurrent loser", async () => {
@@ -288,6 +464,15 @@ interface ArcPaymentRepositoryWithClaim {
   ): Promise<ArcPaymentBatchItemRecord | null>;
 }
 
+interface ArcPaymentRepositoryWithReceiptClaim {
+  claimReceipt(
+    receipt: ArcPaymentReceiptRecord,
+  ): Promise<{
+    readonly claimed: boolean;
+    readonly receipt: ArcPaymentReceiptRecord;
+  }>;
+}
+
 class SupabaseSpy implements ArcPaymentSupabaseClient {
   readonly queries: QuerySpy[] = [];
   readonly writes: Array<{ table: string; row: Record<string, unknown> }> = [];
@@ -410,7 +595,7 @@ function receiptRecord(): ArcPaymentReceiptRecord {
     token: "USDC",
     chain: "ARC-TESTNET",
     purpose: "Tenant test",
-    status: "PENDING",
+    status: "SUBMITTING",
     createdAt: "2026-07-26T09:00:00.000Z",
     updatedAt: "2026-07-26T09:00:00.000Z",
   };
@@ -484,6 +669,27 @@ function batchRpcResult(): Record<string, unknown> {
       created_at: "2026-07-26T09:00:00.000Z",
       updated_at: "2026-07-26T09:00:00.000Z",
     }],
+  };
+}
+
+function receiptRpcRow(): Record<string, unknown> {
+  return {
+    tenant_id: TENANT_ID,
+    id: RECEIPT_ID,
+    idempotency_key: RECEIPT_ID,
+    payment_request_id: null,
+    wallet_address: WALLET,
+    recipient: RECIPIENT,
+    amount: "1",
+    token: "USDC",
+    chain: "ARC-TESTNET",
+    purpose: "Tenant test",
+    status: "SUBMITTING",
+    transaction_id: null,
+    transaction_hash: null,
+    error_message: null,
+    created_at: "2026-07-26T09:00:00.000Z",
+    updated_at: "2026-07-26T09:00:00.000Z",
   };
 }
 

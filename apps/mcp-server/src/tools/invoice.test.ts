@@ -190,6 +190,46 @@ describe("Arc payment request and invoice tools", () => {
     assert.equal(saves.at(-1)?.status, "PAID");
     assert.equal(saves.at(-1)?.receiptId, PAYMENT_KEY);
   });
+
+  it("keeps the invoice open when the payment requires reconciliation", async () => {
+    const saves: ArcPaymentRequestRecord[] = [];
+    const handler = createPayInvoiceHandler({
+      paymentRequests: paymentRequestRepository(requestRecord(), saves),
+      paymentExecutor: {
+        async sendUsdc(input) {
+          const completed = completedPayment(input);
+          return {
+            ...completed,
+            status: "SUBMITTING",
+            receipt: {
+              ...completed.receipt,
+              status: "SUBMITTING",
+              transactionId: undefined,
+              transactionHash: undefined,
+            },
+            reconciliationRequired: true,
+            reconciliationMessage: "Do not retry; reconcile manually.",
+          };
+        },
+      },
+      clock: fixedClock,
+    });
+
+    const output = await handler({
+      paymentRequestId: REQUEST_ID,
+      idempotencyKey: PAYMENT_KEY,
+      recipient: RECIPIENT,
+      amount: "12.000001",
+      token: "USDC",
+      chain: "ARC-TESTNET",
+      purpose: "Invoice INV-42",
+    });
+
+    assert.equal(output.status, "SUBMITTING");
+    assert.equal(output.payment.reconciliationRequired, true);
+    assert.match(output.payment.reconciliationMessage ?? "", /do not retry/i);
+    assert.equal(saves.length, 0);
+  });
 });
 
 function fixedClock(): Date {
@@ -236,6 +276,7 @@ function completedPayment(input: SendUsdcInput): SendUsdcOutput {
   const parsed = input as Required<Omit<SendUsdcInput, "walletAddress">>;
   return {
     status: "COMPLETED",
+    reconciliationRequired: false,
     receipt: {
       id: parsed.idempotencyKey,
       idempotencyKey: parsed.idempotencyKey,

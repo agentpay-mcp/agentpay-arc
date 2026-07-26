@@ -363,9 +363,17 @@ export async function getPaymentReceipt(
   if (!receipt) {
     throw new Error(`Arc payment receipt ${input.receiptId} was not found.`);
   }
+  const reconciliationRequired =
+    receipt.status === "PENDING"
+    || receipt.status === "SUBMITTING"
+    || receipt.status === "RECONCILIATION_REQUIRED";
   return {
     receipt: {
       ...receipt,
+      reconciliationRequired,
+      reconciliationMessage: reconciliationRequired
+        ? "Do not retry this payment. Reconcile the Circle transaction manually."
+        : undefined,
       ...(receipt.transactionHash
         ? {
             explorerUrl: `https://testnet.arcscan.app/tx/${receipt.transactionHash}`,
