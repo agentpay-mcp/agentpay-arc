@@ -77,8 +77,8 @@ describe("getNativeCurrency", () => {
       circleChain: "ARC-TESTNET",
       name: "Arc Testnet",
       nativeCurrency: { symbol: "USDC", decimals: 18 },
-      rpcUrl: "https://rpc.testnet.arc.network",
-      websocketUrl: "wss://rpc.testnet.arc.network",
+      rpcUrl: "https://rpc.testnet.arc.io",
+      websocketUrl: "wss://rpc.testnet.arc.io",
       explorerUrl: "https://testnet.arcscan.app",
     });
     assert.deepEqual(AGENTPAY_ARC_PUBLIC_URLS, {
