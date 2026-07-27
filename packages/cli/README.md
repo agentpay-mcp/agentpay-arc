@@ -1,25 +1,45 @@
-# @agentpay-ai/agentpay-celo
+# @agentpay-ai/agentpay-arc
 
-AgentPay installs MCP tools and runtime instructions for owner-authorized Celo payments. Hosted chat mode connects to the authenticated consumer endpoint at `https://wallet.agentpay.site/celo/mcp`; the separate paid public execution endpoint at `https://mcp.agentpay.site/celo/mcp` is used only after Review & Sign. Normal users do not manage Supabase, RPC, executor, deployer, or bytecode configuration.
+AgentPay installs MCP tools and runtime instructions that let an AI agent hold a
+Circle Agent Wallet and transact autonomously in USDC on **Arc**, Circle's
+stablecoin-native L1. Hosted chat mode connects to the authenticated consumer
+endpoint at `https://wallet.agentpay.site/arc/mcp`; the separate paid public
+execution endpoint is `https://mcp.agentpay.site/arc/mcp`. Normal users do not
+manage Supabase, RPC, executor, deployer, or bytecode configuration.
 
 ## Install
 
 ```bash
-npx @agentpay-ai/agentpay-celo install
+npx @agentpay-ai/agentpay-arc install
 ```
 
 Then return to your agent chat:
 
 ```text
-Create an AgentPay wallet for me on Celo Sepolia.
-Pay 5 USDT to 0x... on Celo Sepolia for invoice INV-001.
+Set up an Arc agent wallet for me.
+Pay 5 USDC to 0x... on Arc Testnet for invoice INV-001.
 ```
 
-No user secrets are required for hosted mode. Payment and balance tools support Celo mainnet or testnet (Celo Sepolia) through `network: "mainnet" | "testnet"`; the agent asks when the choice is ambiguous, and users can switch networks per request. Self-service chat wallet creation is currently available on Celo Sepolia, while mainnet uses an operator-managed, readiness-gated account path. Cross-chain routes are selected at payment time after a Celo wallet exists.
+No user secrets are required for hosted mode.
 
-AgentPay covers direct send payments, invoice payments, x402 purchases, batch payout workflows, remittance/swap-and-pay routes, and agent-to-agent payments. Every executable payment still requires the owner to sign the exact EIP-712 authorization.
+AgentPay runs on **Arc Testnet only** — Arc has no mainnet — so there is no
+network to choose. Circle login, Terms acceptance, and email OTP stay manual
+human steps, and the authenticated Circle CLI session never leaves the user's
+machine.
 
-For x402 discovery without a URL, the agent uses `search_x402_services` and `prepare_x402_service_request`. After payment completes, `retry_x402_request` attaches AgentPay receipt proof, reads `PAYMENT-RESPONSE`, and passes `payment-identifier` idempotency data when supported.
+The funded Agent Wallet balance is the agent's budget. AgentPay does not ask for
+a separate approval on every payment, and it does not add daily allowances,
+per-payment maximums, or recipient allowlists. Cross-chain funding is selected at
+payment time after the Arc wallet exists.
+
+AgentPay covers agent wallet setup and funding, direct USDC sends, invoice
+payments and payment requests, x402 service purchases, batch payouts, unified
+balance and bridge/swap routes, agent-to-agent payments, and ERC-8004 identity
+and reputation.
+
+For x402 discovery without a URL, the agent uses `search_paid_services` and
+`inspect_paid_service`, then `pay_paid_service` executes the buyer path through
+`circle services pay` exactly once. Receipts carry an Arcscan proof link.
 
 ## Commands
 
@@ -32,17 +52,36 @@ agentpay setup-web
 agentpay doctor
 ```
 
-`install` detects the target runtime. `--self-hosted` additionally writes a local config and pinned V2 account bytecode. `doctor` and `setup-web` are operator diagnostics/fallbacks, not the normal hosted-user flow.
+`install` detects the target runtime. `--self-hosted` additionally writes a local
+config. `doctor` and `setup-web` are operator diagnostics and fallbacks, not the
+normal hosted-user flow.
 
-The public Celo x402 seller gate is enabled with `AGENTPAY_A2MCP_PAYMENT_ENABLED=true`, pay-to, price, network, asset, and `AGENTPAY_CELO_X402_API_KEY`. `/healthz` remains free.
+The public x402 seller gate is enabled with `AGENTPAY_A2MCP_PAYMENT_ENABLED=true`
+plus pay-to, price, network, and asset values. `/healthz` remains free.
 
-Self-hosted staging/local configuration uses:
+Hosted mode needs no configuration at all, and the Circle Agent Wallet tools run
+on a config-free local MCP surface either way.
 
-- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`;
-- `CELO_RPC_URL`, plus optional `CELO_MAINNET_RPC_URL` and `CELO_SEPOLIA_RPC_URL`;
-- `EXECUTOR_PRIVATE_KEY`;
-- setup bytecode and `SETUP_DEPLOYER_PRIVATE_KEY` when setup-web is enabled.
+`install --self-hosted` and `doctor` require the inherited Celo config surface,
+not an Arc one. `requiredConfigKeys` in `src/index.ts` is:
 
-Optional values include `SETUP_WEB_URL`, `LIFI_API_KEY`, `X402_BAZAAR_FACILITATOR_URL`, Celo token overrides, Review & Sign secrets, and the Celo x402 seller variables.
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `CELO_RPC_URL`
+- `EXECUTOR_PRIVATE_KEY`
 
-Production uses the isolated Celo mainnet boundary: `AGENTPAY_ENVIRONMENT=production`, `AGENTPAY_HOME_CHAIN_ID=42220`, `CELO_MAINNET_RPC_URL=https://forno.celo.org`, production-only Supabase aliases, the V2 bytecode pin, and a tracked readiness manifest.
+Plus Review & Sign secrets when the setup web flow is enabled. Optional values
+include `SETUP_WEB_URL`, `LIFI_API_KEY`, and `X402_BAZAAR_FACILITATOR_URL`.
+
+`ARC_TESTNET_RPC_URL` is **not** read by this CLI. It is required by the MCP
+server's Arc readiness gate, so `.env.example` carries it, but `doctor` will not
+ask for it and will not report it missing.
+
+The Arc migration is incomplete at the configuration layer: the parser that
+starts the MCP server, this CLI's generator, and `doctor` all still require the
+inherited Celo environment, while a separate Arc readiness gate expects Arc
+values. Use the values committed in `.env.example`; they are covered by a
+regression test that runs them through the real startup parser.
+
+This package is an isolated Arc fork of AgentPay. The separate Celo and OKX
+X Layer deployments are unaffected by it.

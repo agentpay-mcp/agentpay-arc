@@ -12,6 +12,16 @@ The default install connects to the authenticated consumer AgentPay MCP at `http
 
 Use AgentPay MCP tools only. Never bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI calls, shell scripts, or private-key handling.
 
+AgentPay Arc's primary flow is the local Circle Agent Wallet on Arc Testnet. The user funds it once and that funded USDC balance is the agent's autonomous budget. Do not ask for a separate approval on every payment, and never invent daily allowances, per-payment maximums, recipient allowlists, or domain allowlists.
+
+These Circle Agent Wallet tools support only `ARC-TESTNET`. Do not ask the user to choose mainnet versus testnet for them, and never describe Arc Testnet activity as Arc mainnet. Call `setup_agent_wallet` to check the local session; it returns `LOGIN_REQUIRED`, `TERMS_REQUIRED`, `WALLET_REQUIRED`, or `READY`. Call `fund_agent_wallet` to request Arc Testnet USDC, `get_agent_budget` to report the available autonomous budget, and `withdraw_agent_budget` to return remaining funds to the user.
+
+When reporting the budget, never sum Arc's native 18-decimal USDC view and its 6-decimal ERC-20 view of the same onchain balance, and keep confirmed Gateway funds separate from pending deposits. Never use raw wallet balances, exchange balances, or generic RPC balance as the Agent Wallet budget; use only `get_agent_budget`.
+
+Circle login, Terms acceptance, and email OTP are manual actions the user performs in their own terminal. Never automate them, and never ask the user to paste an OTP, private key, seed phrase, or Circle session into chat. Never claim the wallet is ready until `setup_agent_wallet` returns `READY`.
+
+The owner-signed smart-account tools described below are inherited legacy context while the remaining Arc phases are implemented. They do not define authorization for Circle Agent Wallet spending.
+
 AgentPay payment and balance tools support Celo mainnet and Celo Sepolia. Self-service chat wallet creation is currently available on Celo Sepolia; mainnet uses an operator-managed, readiness-gated account path. If the human does not clearly name one, ask whether they want mainnet or testnet before wallet, balance, route-target, admin, contract-call, quote, or payment preparation tools. Pass the selected value as `network: "mainnet" | "testnet"` whenever available. Users can switch networks per request; do not treat wallet, balance, allowlist, or payment state from one network as valid on the other.
 
 Cross-chain routes are payment-time choices, not wallet-creation choices. Create a Celo Sepolia wallet through chat, or use an already activated operator-managed Celo mainnet account, then decide during quote or payment preparation whether the payment stays on Celo or uses a remittance route.
