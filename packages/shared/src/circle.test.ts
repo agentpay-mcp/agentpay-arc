@@ -269,3 +269,90 @@ describe("Circle schemas", () => {
     );
   });
 });
+
+describe("bytes32 contract parameters", () => {
+  const BYTES32 = `0x${"ab".repeat(32)}`;
+  const ADDRESS = "0x1111111111111111111111111111111111111111";
+  const CONTRACT = "0x0747EEf0706327138c69792bF28Cd525089e4583";
+
+  it("accepts a bytes32 argument at a position the signature types as bytes32", () => {
+    // A bytes32 hash is byte-identical to a private key, so the heuristic alone
+    // cannot tell them apart. The signature is the only reliable discriminator.
+    assert.doesNotThrow(() =>
+      circleContractExecutionInputSchema.parse({
+        contract: CONTRACT,
+        address: ADDRESS,
+        functionSignature: "complete(uint256,bytes32,bytes)",
+        parameters: ["1", BYTES32, "0x"],
+      }),
+    );
+  });
+
+  it("accepts every bytes32 position in a multi-hash signature", () => {
+    assert.doesNotThrow(() =>
+      circleContractExecutionInputSchema.parse({
+        contract: CONTRACT,
+        address: ADDRESS,
+        functionSignature: "validationResponse(bytes32,uint8,string,bytes32,string)",
+        parameters: [BYTES32, "1", "https://example.com/r", BYTES32, "tag"],
+      }),
+    );
+  });
+
+  it("still rejects a 32-byte secret at a position that is NOT bytes32", () => {
+    assert.throws(
+      () =>
+        circleContractExecutionInputSchema.parse({
+          contract: CONTRACT,
+          address: ADDRESS,
+          functionSignature: "transfer(address,uint256)",
+          parameters: [BYTES32, "1"],
+        }),
+      /private key/i,
+    );
+  });
+
+  it("still rejects a private key smuggled into a string argument", () => {
+    assert.throws(
+      () =>
+        circleContractExecutionInputSchema.parse({
+          contract: CONTRACT,
+          address: ADDRESS,
+          functionSignature: "createJob(address,address,uint256,string,address)",
+          parameters: [ADDRESS, ADDRESS, "1", `key ${BYTES32}`, ADDRESS],
+        }),
+      /private key/i,
+    );
+  });
+
+  it("keeps every other guard at a bytes32 position", () => {
+    for (const [value, expected] of [
+      ["-0xdeadbeef", /hyphen/i],
+      ["password: hunter2", /secrets/i],
+    ] as const) {
+      assert.throws(
+        () =>
+          circleContractExecutionInputSchema.parse({
+            contract: CONTRACT,
+            address: ADDRESS,
+            functionSignature: "complete(uint256,bytes32,bytes)",
+            parameters: ["1", value, "0x"],
+          }),
+        expected,
+      );
+    }
+  });
+
+  it("does not relax anything when the signature cannot be parsed", () => {
+    assert.throws(
+      () =>
+        circleContractExecutionInputSchema.parse({
+          contract: CONTRACT,
+          address: ADDRESS,
+          functionSignature: "opaque()",
+          parameters: [BYTES32],
+        }),
+      /private key/i,
+    );
+  });
+});

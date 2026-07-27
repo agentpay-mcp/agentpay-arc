@@ -29,25 +29,12 @@ const TX_HASH = `0x${"cd".repeat(32)}`;
 const FUTURE = "4102444800";
 
 /**
- * The adapter rejects any positional parameter matching 0x + 64 hex as a
- * suspected private key. A bytes32 hash is byte-identical to a private key, so
- * every ERC-8183 deliverable and reason hash trips it — as do the already
- * merged ERC-8004 validation tools. That conflict is an open blocker owned by
- * the integrator, tracked in the Task 8 handback.
- *
- * We still validate every other rule, and we re-raise anything that is not
- * that known issue, so this stays a real check rather than a bypass.
+ * Every write this module builds must satisfy the real adapter schema. No
+ * allowances: the bytes32-vs-private-key conflict that once forced one is
+ * fixed, so anything the adapter rejects is now a genuine defect.
  */
 function assertAdapterAccepts(input: Record<string, unknown>): void {
-  const result = circleContractExecutionInputSchema.safeParse(input);
-  if (result.success) return;
-
-  const unrelated = result.error.issues.filter(
-    (issue) => !/must not contain a private key/.test(issue.message),
-  );
-  if (unrelated.length > 0) {
-    throw new Error(`adapter rejected the input: ${JSON.stringify(unrelated)}`);
-  }
+  circleContractExecutionInputSchema.parse(input);
 }
 
 function job(overrides: Partial<ArcAgentJobOnchainRecord> = {}): ArcAgentJobOnchainRecord {
@@ -404,23 +391,28 @@ describe("contract execution inputs match the real adapter schema", () => {
     assert.doesNotThrow(() => assertAdapterAccepts(calls[0]!));
   });
 
-  it("documents the open bytes32-vs-private-key blocker rather than hiding it", () => {
+  it("accepts a bytes32 hash at a bytes32 position but still rejects one elsewhere", () => {
     const bytes32 = `0x${"ab".repeat(32)}`;
-    const result = circleContractExecutionInputSchema.safeParse({
-      contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
-      address: CLIENT,
-      functionSignature: "complete(uint256,bytes32,bytes)",
-      parameters: ["1", bytes32, "0x"],
-    });
 
-    // When the integrator teaches the adapter to recognise bytes32 argument
-    // positions, this assertion flips and this test is the reminder to delete
-    // assertAdapterAccepts' allowance above.
-    assert.equal(result.success, false, "blocker resolved -- tighten the harness");
-    assert.match(
-      result.error!.issues[0]!.message,
-      /must not contain a private key/,
-      "a bytes32 hash is byte-identical to a private key, so the heuristic cannot tell them apart",
+    assert.doesNotThrow(() =>
+      circleContractExecutionInputSchema.parse({
+        contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+        address: CLIENT,
+        functionSignature: "complete(uint256,bytes32,bytes)",
+        parameters: ["1", bytes32, "0x"],
+      }),
+    );
+
+    assert.throws(
+      () =>
+        circleContractExecutionInputSchema.parse({
+          contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+          address: CLIENT,
+          functionSignature: "transfer(address,uint256)",
+          parameters: [bytes32, "1"],
+        }),
+      /private key/i,
+      "the guard must still fire where the signature does not declare bytes32",
     );
   });
 
