@@ -5,6 +5,7 @@ import {
   arcAgentJobCompleteInputSchema,
   arcAgentJobCreateInputSchema,
   arcAgentJobFundInputSchema,
+  arcAgentJobIdSchema,
   arcAgentJobReadInputSchema,
   arcAgentJobRejectInputSchema,
   arcAgentJobSubmitInputSchema,
@@ -128,6 +129,16 @@ export interface ArcAgentJobMutationOutput {
   readonly explorerUrl?: string;
   readonly reconciliationRequired?: boolean;
   readonly reconciliationMessage?: string;
+  /**
+   * Funding is two separate visible writes. The approval's own proof is kept
+   * here rather than discarded in favour of the later fund proof.
+   */
+  readonly approval?: {
+    readonly circleTransactionId?: string;
+    readonly transactionHash?: string;
+    readonly blockNumber?: string;
+    readonly explorerUrl?: string;
+  };
 }
 
 export interface ArcAgentJobReadOutput extends ArcAgentJobOnchainRecord {
@@ -210,7 +221,10 @@ async function submitOnce(
 
   try {
     const proof = await dependencies.proofReader.proveMutation(transaction.id, {
-      contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+      // The contract this write actually targeted, not the module's default.
+      // fund_agent_job approves against USDC first, so a hardcoded expectation
+      // would send the proof reader hunting on the wrong contract.
+      contract: input.contract,
       jobId,
     });
 
@@ -330,14 +344,18 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
       // numeric job_id, so persisting "" would throw AFTER the onchain
       // mutation, hide the reconciliation response, and invite a duplicate
       // retry. Downgrade to reconciliation instead.
+      // proveMutation returns an unvalidated string. A truthy but malformed id
+      // would reach numeric(78,0) columns and throw after the onchain mutation.
+      const decodedJobId = arcAgentJobIdSchema.safeParse(submitted.jobId ?? "");
       const output: ArcAgentJobMutationOutput =
-        submitted.status === "SUBMITTED" && !submitted.jobId
+        submitted.status === "SUBMITTED" && !decodedJobId.success
           ? {
               ...submitted,
               status: "RECONCILIATION_REQUIRED",
               reconciliationRequired: true,
               reconciliationMessage:
-                "The create transaction was verified but its JobCreated id could not be decoded. Recover the job id from Arcscan before retrying; retrying blind would create a second job.",
+                "The create transaction was verified but no canonical JobCreated id could be decoded. Recover the job id from Arcscan before retrying; retrying blind would create a second job.",
+              jobId: undefined,
             }
           : submitted;
 
@@ -437,12 +455,15 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
       // is read-compare-write and NOT atomic. A budget change landing between
       // this read and the write below would still be funded. Documented, not
       // hidden.
-      if (job.budget !== input.expectedBudget) {
+      // 25 and 25.000000 are the same 25_000_000 atomic units. Comparing the
+      // textual forms would report a phantom budget change.
+      if (parseUsdcAtomic(job.budget) !== parseUsdcAtomic(input.expectedBudget)) {
         throw new Error(
           `Budget changed: expected ${input.expectedBudget} USDC but the job now holds ${job.budget} USDC. Re-inspect before funding.`,
         );
       }
 
+      let approvalProof: ArcAgentJobMutationOutput["approval"];
       const budgetAtomic = parseUsdcAtomic(input.expectedBudget);
       const allowance = BigInt(
         await dependencies.reader.usdcAllowance(wallet, ARC_TESTNET_ERC8183_AGENTIC_COMMERCE),
@@ -463,9 +484,29 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
         );
 
         if (approval.status === "RECONCILIATION_REQUIRED") return approval;
+
+        approvalProof = {
+          circleTransactionId: approval.circleTransactionId,
+          transactionHash: approval.transactionHash,
+          blockNumber: approval.blockNumber,
+          explorerUrl: approval.explorerUrl,
+        };
+
+        await audit({
+          jobId: input.jobId,
+          action: "FUND",
+          fromState: job.state,
+          toState: null,
+          actor: wallet,
+          circleTransactionId: approval.circleTransactionId,
+          transactionHash: approval.transactionHash,
+          blockNumber: approval.blockNumber,
+          explorerUrl: approval.explorerUrl,
+          status: approval.status,
+        });
       }
 
-      const output = await submitOnce(
+      const funded = await submitOnce(
         dependencies,
         "FUND",
         {
@@ -476,6 +517,9 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
         } as ContractExecutionInput,
         input.jobId,
       );
+      const output: ArcAgentJobMutationOutput = approvalProof
+        ? { ...funded, approval: approvalProof }
+        : funded;
 
       if (output.status === "SUBMITTED") await record(job, "Funded");
       await audit({

@@ -237,6 +237,15 @@ describe("ERC-8183 input schemas", () => {
     assert.doesNotThrow(() => arcAgentJobRejectInputSchema.parse({ jobId: "1", reason: HASH }));
   });
 
+  it("fails rather than throws on non-numeric text", () => {
+    // zod runs refinements after a failed regex, so an unguarded BigInt() here
+    // would throw instead of returning a parse failure.
+    for (const bad of ["not-a-uint256", "0x1", "1e3", ""]) {
+      const result = arcAgentJobIdSchema.safeParse(bad);
+      assert.equal(result.success, false, `${bad} must fail, not throw`);
+    }
+  });
+
   it("accepts only canonical uint256 job ids", () => {
     assert.equal(arcAgentJobIdSchema.parse("0"), "0");
     assert.throws(() => arcAgentJobIdSchema.parse("01"), /job id/i);

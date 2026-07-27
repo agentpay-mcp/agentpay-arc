@@ -172,7 +172,9 @@ export const arcAgentJobIdSchema = z
   .string()
   .trim()
   .regex(/^(?:0|[1-9]\d*)$/, "Expected a canonical uint256 job id")
-  .refine((value) => BigInt(value) <= UINT256_MAX, "Job id exceeds uint256");
+  // Guarded: zod still runs this refinement after a failed regex, and a bare
+  // BigInt() on non-numeric text throws instead of returning a parse failure.
+  .refine((value) => !/^(?:0|[1-9]\d*)$/.test(value) || BigInt(value) <= UINT256_MAX, "Job id exceeds uint256");
 
 /**
  * Lowercase only. The persistence layer constrains these columns to
@@ -208,7 +210,10 @@ const expiredAtSchema = z
   .string()
   .trim()
   .regex(/^(?:0|[1-9]\d*)$/, "Expected a unix timestamp in seconds")
-  .refine((value) => BigInt(value) <= UINT256_MAX, "Expiry exceeds uint256");
+  .refine(
+    (value) => !/^(?:0|[1-9]\d*)$/.test(value) || BigInt(value) <= UINT256_MAX,
+    "Expiry exceeds uint256",
+  );
 
 export const arcAgentJobCreateInputSchema = z
   .object({

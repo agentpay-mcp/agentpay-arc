@@ -55,6 +55,7 @@ function job(overrides: Partial<ArcAgentJobOnchainRecord> = {}): ArcAgentJobOnch
 interface Harness {
   readonly dependencies: ArcAgentJobDependencies;
   readonly calls: Array<Record<string, unknown>>;
+  readonly proofTargets: string[];
   readonly saved: Array<Record<string, unknown>>;
   readonly events: Array<Record<string, unknown>>;
 }
@@ -69,6 +70,7 @@ function harness(options: {
   readonly hookWhitelisted?: boolean;
 } = {}): Harness {
   const calls: Array<Record<string, unknown>> = [];
+  const proofTargets: string[] = [];
   const saved: Array<Record<string, unknown>> = [];
   const events: Array<Record<string, unknown>> = [];
   const record = options.record ?? job();
@@ -96,7 +98,10 @@ function harness(options: {
       isHookWhitelisted: async () => options.hookWhitelisted ?? true,
     },
     proofReader: {
-      proveMutation: async () => options.proveMutation?.() ?? { transactionHash: TX_HASH, blockNumber: "42", jobId: "1" },
+      proveMutation: async (_transactionId: string, expectation: { contract: string }) => {
+        proofTargets.push(expectation.contract);
+        return options.proveMutation?.() ?? { transactionHash: TX_HASH, blockNumber: "42", jobId: "1" };
+      },
     },
     repository: {
       saveJob: async (input) => {
@@ -109,7 +114,7 @@ function harness(options: {
     now: () => 1_700_000_000,
   };
 
-  return { dependencies, calls, saved, events };
+  return { dependencies, calls, proofTargets, saved, events };
 }
 
 describe("Arc agent job tool definitions", () => {
@@ -764,5 +769,81 @@ describe("hook whitelist precheck", () => {
     });
 
     assert.equal(calls.length, 1);
+  });
+});
+
+describe("transaction boundary correctness", () => {
+  it("proves each write against the contract it actually targeted", async () => {
+    // The approval targets USDC, the fund targets AgenticCommerce. A proof
+    // reader that honours expectation.contract would otherwise hunt for the
+    // approval on the wrong contract and stall every fresh funding attempt.
+    const { dependencies, calls, proofTargets } = harness();
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await handlers.fundAgentJob({ jobId: "1", expectedBudget: "25.000000" });
+
+    assert.deepEqual(calls.map((call) => call.contract), [USDC, ARC_TESTNET_ERC8183_AGENTIC_COMMERCE]);
+    assert.deepEqual(proofTargets, [USDC, ARC_TESTNET_ERC8183_AGENTIC_COMMERCE]);
+  });
+
+  it("keeps the approval proof visible instead of returning only the fund proof", async () => {
+    const { dependencies, events } = harness();
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.fundAgentJob({ jobId: "1", expectedBudget: "25.000000" });
+
+    assert.ok(output.approval, "approval and fund are separate visible writes");
+    assert.equal(output.approval!.transactionHash, TX_HASH);
+    assert.equal(
+      events.filter((event) => event.action === "FUND").length,
+      2,
+      "the approval and the fund each get an audit row",
+    );
+  });
+
+  it("refuses a decoded job id that is not a canonical uint256", async () => {
+    // proveMutation returns an unvalidated string. A truthy but malformed id
+    // reaches numeric(78,0) columns and throws after the onchain mutation.
+    const { dependencies, saved, events } = harness({
+      proveMutation: () => ({ transactionHash: TX_HASH, blockNumber: "42", jobId: "not-a-uint256" }),
+    });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.createAgentJob({
+      provider: PROVIDER,
+      evaluator: EVALUATOR,
+      expiredAt: FUTURE,
+      description: "Ship",
+    });
+
+    assert.equal(output.status, "RECONCILIATION_REQUIRED");
+    assert.equal(saved.length, 0);
+    assert.equal(events.length, 0, "no event row may carry a non-numeric job id");
+  });
+
+  it("treats equivalent USDC amounts as equal rather than as a changed budget", async () => {
+    // 25 and 25.000000 are both exactly 25_000_000 atomic units.
+    for (const [onchain, expected] of [
+      ["25", "25.000000"],
+      ["25.000000", "25"],
+      ["25.5", "25.500000"],
+    ] as const) {
+      const { dependencies, calls } = harness({ record: job({ budget: onchain }) });
+      const handlers = createArcAgentJobHandlers(dependencies);
+
+      await handlers.fundAgentJob({ jobId: "1", expectedBudget: expected });
+      assert.ok(calls.length > 0, `${onchain} vs ${expected} must not read as a budget change`);
+    }
+  });
+
+  it("still refuses a genuinely different budget", async () => {
+    const { dependencies, calls } = harness({ record: job({ budget: "25.000001" }) });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await assert.rejects(
+      handlers.fundAgentJob({ jobId: "1", expectedBudget: "25.000000" }),
+      /budget changed/i,
+    );
+    assert.equal(calls.length, 0);
   });
 });
