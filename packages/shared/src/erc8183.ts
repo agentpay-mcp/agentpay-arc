@@ -189,10 +189,17 @@ export const arcAgentJobIdSchema = z
 export const arcAgentJobProofSchema = z
   .object({
     transactionHash: z.string().trim().regex(/^0x[0-9a-f]{64}$/, "Expected a canonical lowercase transaction hash"),
+    // Bounded to uint256, which is exactly what numeric(78,0) holds: 2^256-1
+    // is 78 digits. A 79-digit value passes the digit pattern and then
+    // overflows the column after the onchain mutation.
     blockNumber: z
       .string()
       .trim()
-      .regex(CANONICAL_UINT_PATTERN, "Expected a canonical non-negative block number"),
+      .regex(CANONICAL_UINT_PATTERN, "Expected a canonical non-negative block number")
+      .refine(
+        (value) => !CANONICAL_UINT_PATTERN.test(value) || BigInt(value) <= UINT256_MAX,
+        "Block number exceeds uint256",
+      ),
     jobId: arcAgentJobIdSchema.optional(),
   })
   .strict();

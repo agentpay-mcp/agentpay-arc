@@ -51,9 +51,18 @@ function assertSqlConstraints(row: Record<string, unknown>): void {
     }
   };
 
-  check("jobId", /^(?:0|[1-9][0-9]*)$/);
+  const numeric78 = (field: string) => {
+    const value = row[field];
+    if (value === undefined || value === null) return;
+    const text = String(value);
+    if (!/^(?:0|[1-9][0-9]*)$/.test(text) || text.length > 78) {
+      throw new Error(`SQL constraint violated: ${field}=${text} (numeric field overflow)`);
+    }
+  };
+
+  numeric78("jobId");
+  numeric78("blockNumber");
   check("transactionHash", /^0x[0-9a-f]{64}$/);
-  check("blockNumber", /^(?:0|[1-9][0-9]*)$/);
   check("deliverableHash", /^0x[0-9a-f]{64}$/);
   check("reasonHash", /^0x[0-9a-f]{64}$/);
   check("explorerUrl", /^https:\/\/testnet\.arcscan\.app\/tx\/0x[0-9a-f]{64}$/);
@@ -932,4 +941,29 @@ describe("the whole proof shape is validated, not just the job id", () => {
     assert.equal(output.status, "RECONCILIATION_REQUIRED");
     assert.equal(saved.length, 0);
   });
+});
+
+describe("block numbers are bounded to what numeric(78,0) holds", () => {
+  for (const [label, blockNumber] of [
+    ["79 digits", "9".repeat(79)],
+    ["UINT256_MAX + 1", ((1n << 256n) - 1n + 1n).toString()],
+  ] as const) {
+    it(`refuses a ${label} block number before persistence`, async () => {
+      const { dependencies, saved, events } = harness({
+        proveMutation: () => ({ transactionHash: TX_HASH, blockNumber, jobId: "1" }),
+      });
+      const handlers = createArcAgentJobHandlers(dependencies);
+
+      const output = await handlers.createAgentJob({
+        provider: PROVIDER,
+        evaluator: EVALUATOR,
+        expiredAt: FUTURE,
+        description: "Ship",
+      });
+
+      assert.equal(output.status, "RECONCILIATION_REQUIRED");
+      assert.equal(saved.length, 0, "an overflowing block number must not reach the database");
+      assert.equal(events.length, 0);
+    });
+  }
 });

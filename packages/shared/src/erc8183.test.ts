@@ -8,6 +8,7 @@ import {
   arcAgentJobCreateInputSchema,
   arcAgentJobFundInputSchema,
   arcAgentJobIdSchema,
+  arcAgentJobProofSchema,
   arcAgentJobReadInputSchema,
   arcAgentJobRejectInputSchema,
   arcAgentJobCompleteInputSchema,
@@ -271,6 +272,42 @@ describe("ERC-8183 input schemas", () => {
 
     arcAgentJobBudgetInputSchema.parse(frozen);
     assert.deepEqual(frozen, input);
+  });
+});
+
+describe("ERC-8183 proof shape", () => {
+  const TX = `0x${"cd".repeat(32)}`;
+  const UINT256_MAX = (1n << 256n) - 1n;
+
+  it("bounds the block number to uint256, which is exactly numeric(78,0)", () => {
+    assert.equal(UINT256_MAX.toString().length, 78);
+
+    assert.equal(
+      arcAgentJobProofSchema.safeParse({ transactionHash: TX, blockNumber: UINT256_MAX.toString() })
+        .success,
+      true,
+    );
+
+    for (const [label, blockNumber] of [
+      ["79 digits", "9".repeat(79)],
+      ["100 digits", "1".repeat(100)],
+      ["UINT256_MAX + 1", (UINT256_MAX + 1n).toString()],
+    ] as const) {
+      assert.equal(
+        arcAgentJobProofSchema.safeParse({ transactionHash: TX, blockNumber }).success,
+        false,
+        `${label} overflows numeric(78,0) and must be refused before persistence`,
+      );
+    }
+  });
+
+  it("requires a canonical lowercase transaction hash", () => {
+    for (const bad of [`0x${"CD".repeat(32)}`, "not-a-hash", "0xabc"]) {
+      assert.equal(
+        arcAgentJobProofSchema.safeParse({ transactionHash: bad, blockNumber: "1" }).success,
+        false,
+      );
+    }
   });
 });
 
