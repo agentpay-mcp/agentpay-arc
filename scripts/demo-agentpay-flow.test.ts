@@ -4,16 +4,9 @@ import { describe, it } from "node:test";
 import { runLocalAgentPayDemo } from "./demo-agentpay-flow.ts";
 
 describe("runLocalAgentPayDemo", () => {
-  it("runs wallet setup and the chat-approved payment flow with in-memory adapters", async () => {
+  it("runs an authenticated Arc Agent Wallet payment flow with in-memory adapters", async () => {
     const result = await runLocalAgentPayDemo();
-    assert.equal(result.setup.status, "PENDING");
-    if (result.setup.status !== "PENDING") assert.fail("Expected the local setup intent path.");
-
     assert.equal(result.initialWallet.status, "NOT_CREATED");
-    assert.equal(result.setup.setupIntentId, "setup_demo");
-    assert.equal(result.completedSetup.status, "COMPLETED");
-    assert.equal(result.checkedSetup.status, "COMPLETED");
-    assert.equal(result.checkedSetup.accountAddress, "0x3333333333333333333333333333333333333333");
     assert.equal(result.wallet.status, "ACTIVE");
     assert.equal(result.balance.status, "ACTIVE");
     assert.equal(result.invoice.status, "PARSED");
@@ -24,12 +17,12 @@ describe("runLocalAgentPayDemo", () => {
     assert.equal(result.x402.standardX402SignatureRequired, true);
     assert.equal(result.x402.resource.serviceName, "Market API");
     assert.equal(result.quote.paymentType, "SWAP_BRIDGE_PAY");
-    assert.equal(result.quote.maxNativeFeeDisplay, "0.0025 CELO");
+    assert.equal(result.quote.maxNativeFeeDisplay, "0.0025 USDC");
     assert.equal(result.routeAllowance.status, "ACTIVE");
     assert.equal(result.routeAllowance.routeTargetAllowed, true);
     assert.equal(result.prepared.paymentIntentId, "pay_demo");
     assert.equal(result.prepared.approvalPhrase, "APPROVE pay_demo");
-    assert.equal(result.prepared.summary.maxNativeFeeDisplay, "0.0025 CELO");
+    assert.equal(result.prepared.summary.maxNativeFeeDisplay, "0.0025 USDC");
     assert.match(result.prepared.summary.purpose, /^x402 payment for Market API: Premium market data \[x402-request:0x[a-f0-9]{64}\]$/);
     assert.equal(result.executed.status, "EXECUTING");
     assert.equal(result.tracked.status, "COMPLETED");
@@ -44,8 +37,7 @@ describe("runLocalAgentPayDemo", () => {
       result.events.events.map((event) => event.eventType),
       ["PAYMENT_PREPARED", "PAYMENT_APPROVED", "PAYMENT_EXECUTING", "PAYMENT_COMPLETED"],
     );
-    assert.match(result.transcript.join("\n"), /Setup intent: setup_demo/);
-    assert.match(result.transcript.join("\n"), /Setup completed: 0x3333333333333333333333333333333333333333/);
+    assert.match(result.transcript.join("\n"), /Authenticated Agent Wallet: 0x3333333333333333333333333333333333333333 on Arc Testnet/);
     assert.match(result.transcript.join("\n"), /Invoice parsed: inv_demo/);
     assert.match(result.transcript.join("\n"), /x402 parsed: Market API/);
     assert.match(result.transcript.join("\n"), /x402 retry result: 200 with settled/);

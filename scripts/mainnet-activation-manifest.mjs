@@ -681,6 +681,7 @@ export async function generateMainnetActivatedManifest({ outputPath = MAINNET_AC
 export async function generateMainnetCanaryManifest({
   sourcePath = MAINNET_ACTIVATED_MANIFEST_PATH,
   outputPath = MAINNET_CANARY_MANIFEST_PATH,
+  artifactDigests: suppliedArtifactDigests,
 } = {}) {
   const resolvedSourcePath = resolve(sourcePath);
   const resolvedOutputPath = resolve(outputPath);
@@ -688,7 +689,7 @@ export async function generateMainnetCanaryManifest({
     throw new Error("Canary source and output paths must differ; the DEPLOYED/OFF manifest is immutable.");
   }
 
-  const artifactDigests = await computeArtifactDigests();
+  const artifactDigests = suppliedArtifactDigests ?? await computeArtifactDigests();
   const deployedManifest = JSON.parse(await readFile(resolvedSourcePath, "utf8"));
   const sourceValidation = validateMainnetActivationManifest(deployedManifest, { artifactDigests });
   if (!sourceValidation.valid) {

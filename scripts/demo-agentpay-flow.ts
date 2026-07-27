@@ -7,16 +7,9 @@ import {
 } from "@agentpay-ai/mcp-server-arc";
 import type { PaymentEventRecord, PaymentIntentRecord, RouteQuote, SetupIntentRecord } from "@agentpay-ai/shared-arc";
 
-import {
-  completeWalletSetup,
-  type CompleteWalletSetupDependencies,
-} from "../apps/setup-web/src/services/complete-wallet-setup.ts";
-
 const demoNow = new Date("2026-07-03T12:00:00.000Z");
 const sourceTxHash = `0x${"a".repeat(64)}`;
 const destinationTxHash = `0x${"b".repeat(64)}`;
-const setupDeploymentTxHash = `0x${"d".repeat(64)}`;
-const setupSignature = `0x${"c".repeat(130)}`;
 const demoInvoice = [
   "Invoice ID: inv_demo",
   "Recipient: 0x1111111111111111111111111111111111111111",
@@ -47,30 +40,27 @@ const demoX402PaymentRequired = {
 const demoWallet: AgentWallet = {
   ownerAddress: "0x2222222222222222222222222222222222222222",
   accountAddress: "0x3333333333333333333333333333333333333333",
-  homeChainId: 11142220,
+  homeChainId: 5042002,
   executorAddress: "0x4444444444444444444444444444444444444444",
   status: "ACTIVE",
 };
 
 const demoRouteQuote: RouteQuote = {
   routeProvider: "LI.FI",
-  sourceTokenAddress: "0x01C5C0122039549AD1493B8220cABEdD739BC44E",
+  sourceTokenAddress: "0x3600000000000000000000000000000000000000",
   destinationTokenAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   maxAmountIn: "0.011",
   maxNativeFee: "2500000000000000",
   routeTarget: "0x7777777777777777777777777777777777777777",
   routeCalldata: "0x1234",
   routeCalldataHash: "0x56570de287d73cd1cb6092bb8fdee6173974955fdef345ae579ee9f475ea7432",
-  routeSummary: "Bridge USDC from Celo Sepolia and pay USDC on Base.",
+  routeSummary: "Bridge USDC from Arc Testnet and pay USDC on Base.",
   estimatedFee: "0.12",
   estimatedEtaSeconds: 120,
 };
 
 export interface LocalAgentPayDemoResult {
   initialWallet: Awaited<ReturnType<ReturnType<typeof createAgentPayRuntime>["getAgentWallet"]>>;
-  setup: Awaited<ReturnType<ReturnType<typeof createAgentPayRuntime>["prepareWalletCreation"]>>;
-  completedSetup: Awaited<ReturnType<typeof completeWalletSetup>>;
-  checkedSetup: Awaited<ReturnType<ReturnType<typeof createAgentPayRuntime>["checkWalletCreation"]>>;
   wallet: Awaited<ReturnType<ReturnType<typeof createAgentPayRuntime>["getAgentWallet"]>>;
   balance: Awaited<ReturnType<ReturnType<typeof createAgentPayRuntime>["getBalance"]>>;
   invoice: Awaited<ReturnType<ReturnType<typeof createAgentPayRuntime>["parseInvoicePayment"]>>;
@@ -127,18 +117,7 @@ export async function runLocalAgentPayDemo(): Promise<LocalAgentPayDemoResult> {
   );
 
   const initialWallet = await runtime.getAgentWallet({});
-  const setup = await runtime.prepareWalletCreation({ ownerAddress: demoWallet.ownerAddress });
-  if (setup.status !== "PENDING") {
-    throw new Error("The local demo requires the legacy in-memory setup intent path.");
-  }
-  const completedSetup = await completeWalletSetup(
-    {
-      setupIntentId: setup.setupIntentId,
-      signature: setupSignature,
-    },
-    createSetupCompletionDependencies(state),
-  );
-  const checkedSetup = await runtime.checkWalletCreation({ setupIntentId: setup.setupIntentId });
+  state.wallet = clone(demoWallet);
   const wallet = await runtime.getAgentWallet({});
   const balance = await runtime.getBalance({});
   const invoice = await runtime.parseInvoicePayment({ invoice: demoInvoice });
@@ -160,9 +139,6 @@ export async function runLocalAgentPayDemo(): Promise<LocalAgentPayDemoResult> {
 
   return {
     initialWallet,
-    setup,
-    completedSetup,
-    checkedSetup,
     wallet,
     balance,
     invoice,
@@ -177,9 +153,7 @@ export async function runLocalAgentPayDemo(): Promise<LocalAgentPayDemoResult> {
     events,
     transcript: [
       `Initial wallet: ${initialWallet.status}.`,
-      `Setup intent: ${setup.setupIntentId} at ${setup.setupUrl}.`,
-      `Setup completed: ${completedSetup.accountAddress}.`,
-      `Wallet: ${demoWallet.accountAddress} on Celo Sepolia.`,
+      `Authenticated Agent Wallet: ${demoWallet.accountAddress} on Arc Testnet.`,
       `Invoice parsed: ${invoice.invoiceId ?? "without id"}.`,
       `x402 parsed: ${x402.resource.serviceName}; AgentPay proof retry available after approval.`,
       `Quote: spend up to ${quote.maxAmountIn} ${quote.sourceTokenSymbol}; max native fee ${quote.maxNativeFeeDisplay}.`,
@@ -365,73 +339,6 @@ function createDemoFactories(state: DemoState): AgentPayRuntimeFactories {
   };
 }
 
-function createSetupCompletionDependencies(state: DemoState): CompleteWalletSetupDependencies {
-  return {
-    setupIntents: {
-      async getSetupIntent(setupIntentId) {
-        const intent = state.setupIntents.get(setupIntentId);
-        return intent ? clone(intent) : null;
-      },
-      async markSetupSigned(setupIntentId, ownerAddress, signature) {
-        updateSetupIntent(state, setupIntentId, {
-          ownerAddress,
-          signature,
-          status: "SIGNED",
-        });
-      },
-      async markSetupCompleted(setupIntentId, accountAddress, completedAt) {
-        updateSetupIntent(state, setupIntentId, {
-          accountAddress,
-          completedAt,
-          status: "COMPLETED",
-        });
-      },
-      async markSetupExpired(setupIntentId) {
-        updateSetupIntent(state, setupIntentId, { status: "EXPIRED" });
-      },
-      async markSetupFailed(setupIntentId, errorCode, errorMessage) {
-        updateSetupIntent(state, setupIntentId, {
-          errorCode,
-          errorMessage,
-          status: "FAILED",
-        });
-      },
-    },
-    wallets: {
-      async createAgentWallet(wallet) {
-        state.wallet = clone(wallet);
-      },
-    },
-    deployer: {
-      async deployAgentPayAccount(request) {
-        if (request.ownerAddress.toLowerCase() !== demoWallet.ownerAddress.toLowerCase()) {
-          throw new Error("Demo setup owner did not match the prepared owner.");
-        }
-
-        if (request.executorAddress.toLowerCase() !== demoWallet.executorAddress.toLowerCase()) {
-          throw new Error("Demo setup executor did not match the runtime executor.");
-        }
-
-        return {
-          accountAddress: demoWallet.accountAddress,
-          deploymentTxHash: setupDeploymentTxHash,
-        };
-      },
-    },
-    signatureVerifier: {
-      async recoverSignerAddress(message, signature) {
-        if (signature !== setupSignature || !message.includes("Setup ID: setup_demo")) {
-          throw new Error("Unexpected demo setup signature.");
-        }
-
-        return demoWallet.ownerAddress;
-      },
-    },
-    clock: () => demoNow,
-    homeChainId: demoWallet.homeChainId,
-  };
-}
-
 function updatePaymentIntent(state: DemoState, paymentIntentId: string, patch: Partial<PaymentIntentRecord>): void {
   const intent = state.paymentIntents.get(paymentIntentId);
   if (!intent) {
@@ -439,15 +346,6 @@ function updatePaymentIntent(state: DemoState, paymentIntentId: string, patch: P
   }
 
   state.paymentIntents.set(paymentIntentId, { ...intent, ...patch });
-}
-
-function updateSetupIntent(state: DemoState, setupIntentId: string, patch: Partial<SetupIntentRecord>): void {
-  const intent = state.setupIntents.get(setupIntentId);
-  if (!intent) {
-    throw new Error(`Setup intent ${setupIntentId} was not found.`);
-  }
-
-  state.setupIntents.set(setupIntentId, { ...intent, ...patch });
 }
 
 function addPaymentEvent(

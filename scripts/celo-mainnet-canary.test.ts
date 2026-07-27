@@ -273,6 +273,12 @@ describe("Celo mainnet canary operator", () => {
         CELO_MAINNET_RPC_URL: "https://forno.celo.org",
       },
       {
+        async computeArtifactDigests() {
+          return {
+            packageLockSha256: "91b857d17fb7c7e65d312135595275b72887c0b73510f935de9a8a26d09fe68e",
+            creationBytecodeKeccak256: "0x2ede9e46a03a9b3d8e8dc322905443b0fedfabd324c54c73fe1c748f10d0152a",
+          };
+        },
         createPayerSigner() {
           return {
             address: "0x98802C2d45284F2bcA06BF3d6bdb41221a7Cc5cD",

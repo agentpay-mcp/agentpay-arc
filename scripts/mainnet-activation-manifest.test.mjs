@@ -26,6 +26,10 @@ const shadowManifest = buildMainnetShadowManifest({
 const deployedMainnetManifest = JSON.parse(
   await readFile(MAINNET_ACTIVATED_MANIFEST_PATH, "utf8"),
 );
+const frozenArtifactDigests = Object.freeze({
+  packageLockSha256: deployedMainnetManifest.release.packageLockSha256,
+  creationBytecodeKeccak256: deployedMainnetManifest.release.creationBytecodeKeccak256,
+});
 
 function makeProductionCanaryManifest() {
   const boundManifest = bindMainnetCanaryPolicy({
@@ -256,12 +260,20 @@ describe("Celo mainnet activation manifest", () => {
     const outputPath = join(temporaryDirectory, "celo-mainnet.canary.json");
     const sourceBefore = await readFile(MAINNET_ACTIVATED_MANIFEST_PATH, "utf8");
 
-    const first = await generateMainnetCanaryManifest({ outputPath });
+    const first = await generateMainnetCanaryManifest({
+      outputPath,
+      artifactDigests: frozenArtifactDigests,
+    });
     const firstOutput = await readFile(outputPath, "utf8");
-    const second = await generateMainnetCanaryManifest({ outputPath });
+    const second = await generateMainnetCanaryManifest({
+      outputPath,
+      artifactDigests: frozenArtifactDigests,
+    });
     const secondOutput = await readFile(outputPath, "utf8");
     const sourceAfter = await readFile(MAINNET_ACTIVATED_MANIFEST_PATH, "utf8");
-    const validation = validateMainnetCanaryManifest(first.manifest, { artifactDigests });
+    const validation = validateMainnetCanaryManifest(first.manifest, {
+      artifactDigests: frozenArtifactDigests,
+    });
 
     assert.equal(validation.valid, true, validation.errors.join("; "));
     assert.equal(sourceAfter, sourceBefore);
@@ -577,7 +589,10 @@ describe("Celo mainnet activation manifest", () => {
     await symlink(protectedPath, outputPath);
 
     await assert.rejects(
-      generateMainnetCanaryManifest({ outputPath }),
+      generateMainnetCanaryManifest({
+        outputPath,
+        artifactDigests: frozenArtifactDigests,
+      }),
       /symbolic link/i,
     );
 
