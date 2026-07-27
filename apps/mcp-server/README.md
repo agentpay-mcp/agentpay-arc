@@ -1,33 +1,79 @@
-# @agentpay-ai/mcp-server-celo
+# @agentpay-ai/mcp-server-arc
 
-AgentPay's MCP server exposes owner-authorized Celo payment tools over stdio or Streamable HTTP. It supports wallet setup, Celo USDC/USDT/USDm balances, direct payments, invoice parsing, LI.FI remittance routes, x402 service discovery and purchase, Review & Sign, execution, tracking, and audit events.
+AgentPay's MCP server exposes Arc payment tools over stdio or Streamable HTTP.
+It supports Circle Agent Wallet setup and funding, autonomous budget reads and
+withdrawal, direct USDC sends, invoice payments and payment requests, batch
+payouts, x402 paid-service discovery and purchase, unified balance and
+bridge/swap routes, ERC-8004 identity and reputation, activity receipts with
+Arcscan proofs, and audit events.
 
 Run locally:
 
 ```bash
-npm run start --workspace @agentpay-ai/mcp-server-celo
+npm run start --workspace @agentpay-ai/mcp-server-arc
 ```
 
-Core local/staging configuration is `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CELO_RPC_URL`, and `EXECUTOR_PRIVATE_KEY`. Per-request network switching can use `CELO_MAINNET_RPC_URL` and `CELO_SEPOLIA_RPC_URL`.
+Core local/staging configuration is `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+and `ARC_TESTNET_RPC_URL`.
 
-For the public Celo x402 seller gate (production route: `/celo/mcp`):
+Agent Wallet writes run through the safe Circle CLI adapter in
+`src/services/circle-cli.ts`: a fixed `circle` binary, `execFile` with
+`shell: false`, bounded output, timeouts, Zod response validation, secret and
+OTP rejection, option-injection rejection, and exactly one attempt for every
+mutation. The authenticated Circle CLI session stays on the user's machine and
+is never sent to a hosted surface.
+
+Reads use an injected Viem public client pinned to Arc Testnet.
+
+For the public x402 seller gate:
 
 ```bash
 AGENTPAY_A2MCP_PAYMENT_ENABLED=true
 AGENTPAY_A2MCP_PAYMENT_PAY_TO=0x...
 AGENTPAY_A2MCP_PAYMENT_PRICE=$0.01
-AGENTPAY_A2MCP_PAYMENT_NETWORK=eip155:42220
-AGENTPAY_A2MCP_PAYMENT_ASSET=0xcebA9300f2b948710d2653dD7B07f33A8B32118C
-AGENTPAY_A2MCP_PAYMENT_FACILITATOR_URL=https://api.x402.celo.org
-AGENTPAY_CELO_X402_API_KEY=...
 ```
 
-Unpaid calls receive HTTP `402` with `PAYMENT-REQUIRED`; verified calls are accepted only when their exact seller terms match configuration, settled before fulfilment, and returned with `PAYMENT-RESPONSE`. Durable lifecycle rows prevent duplicate fulfilment and write payer, payee, amount, asset, network, and settlement transaction evidence to `payment_events`. `/healthz` is never paywalled.
+Unpaid calls receive HTTP `402` with `PAYMENT-REQUIRED`; verified calls are
+accepted only when their exact seller terms match configuration, settled before
+fulfilment, and returned with `PAYMENT-RESPONSE`. Durable lifecycle rows prevent
+duplicate fulfilment and write payer, payee, amount, asset, network, and
+settlement transaction evidence to `payment_events`. `/healthz` is never
+paywalled.
 
-When `AGENTPAY_ERC8004_ENABLED=true` in the Celo mainnet production environment, the server exposes `/.well-known/agent-registration.json` without OAuth or x402. Publication requires a non-zero deployed `AGENTPAY_ERC8004_AGENT_WALLET`; `AGENTPAY_ERC8004_AGENT_ID` is added only after the registry transaction confirms. The document is schema-validated and does not advertise unimplemented trust mechanisms.
+When `AGENTPAY_ERC8004_ENABLED=true`, the server exposes
+`/.well-known/agent-registration.json` without OAuth or x402. Publication
+requires a non-zero deployed `AGENTPAY_ERC8004_AGENT_WALLET`;
+`AGENTPAY_ERC8004_AGENT_ID` is added only after the registry transaction
+confirms. The document is schema-validated and does not advertise unimplemented
+trust mechanisms.
 
-The buyer flow can search Bazaar with `search_x402_services`, prepare a result with `prepare_x402_service_request`, and pass both `paymentRequired` and the exact request to `parse_x402_payment_required`. The URL, method, body, and safe headers are bound into the owner-signed purpose before payment. After completion, `retry_x402_request` accepts only that request shape, attaches the explicitly labeled `agentpay-receipt` proof, and includes `payment-identifier` idempotency data when advertised. This bridge is AgentPay-specific, not a universal exact-scheme signer.
+The Arc buyer flow uses `search_paid_services` and `inspect_paid_service` for
+read-only discovery, then `pay_paid_service` executes `circle services pay`
+exactly once against the exact inspected quote. A quote that changed between
+inspection and execution stops the payment. Payment signatures are never
+persisted or returned.
 
-Celo mainnet production uses only `AGENTPAY_ENVIRONMENT=production`, `AGENTPAY_HOME_CHAIN_ID=42220`, `AGENTPAY_ACCOUNT_VERSION=v2`, production-only Supabase aliases, and `CELO_MAINNET_RPC_URL=https://forno.celo.org`. Generic and Sepolia aliases are rejected. The bounded canary is pinned to canonical Celo USDC and the tracked Celo manifest; `/readyz` remains closed until the database identity, deployed contract, account history, x402 configuration, and durable canary checks all agree.
+The inherited Celo owner-signature tools remain registered as legacy context
+while the remaining Arc phases are implemented. They do not define
+authorization for Circle Agent Wallet spending.
 
-Production stdio is disabled. Setup-web production deployment stays separately gated, and all broadcast or external provisioning actions require explicit operator approval.
+That legacy path keeps its own x402 flow: search Bazaar with
+`search_x402_services`, prepare a result with `prepare_x402_service_request`
+when the user has no URL, and pass both `paymentRequired` and the exact request
+to `parse_x402_payment_required`. The URL, method, body, and safe headers are bound into the owner-signed purpose before payment.
+
+After completion,
+`retry_x402_request` accepts only that request shape, attaches the explicitly
+labeled `agentpay-receipt` proof, and includes `payment-identifier` idempotency
+data when advertised. This bridge is AgentPay-specific, not a universal
+exact-scheme signer.
+
+Production readiness requires `AGENTPAY_ENVIRONMENT=production`,
+`AGENTPAY_HOME_CHAIN_ID=5042002`, `AGENTPAY_ACCOUNT_VERSION=v2`, an HTTPS
+`ARC_TESTNET_RPC_URL`, production-only Supabase aliases, and the pinned `/arc/`
+public routes. A localhost RPC or a mismatched public route is rejected, and
+`/readyz` stays closed until every readiness check agrees.
+
+Production stdio is disabled. Setup-web production deployment stays separately
+gated, and all broadcast or external provisioning actions require explicit
+operator approval.

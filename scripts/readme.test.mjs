@@ -236,6 +236,46 @@ describe("README", () => {
     }
   });
 
+  it("keeps the Arc Circle Agent Wallet contract in every installed instruction file", async () => {
+    const files = [
+      "packages/skill/SKILL.md",
+      "packages/cli/templates/codex/AGENTS.md",
+      "packages/cli/templates/claude/CLAUDE.md",
+      "packages/cli/templates/cursor/rules.md",
+      "packages/cli/templates/generic/instructions.md",
+      "packages/cli/templates/hermes/instructions.md",
+    ];
+
+    for (const file of files) {
+      const contents = await readFile(file, "utf8");
+
+      assert.match(contents, /setup_agent_wallet/, `${file} must describe Agent Wallet setup`);
+      assert.match(contents, /get_agent_budget/, `${file} must describe the autonomous budget read`);
+      assert.match(contents, /ARC-TESTNET/, `${file} must pin the Circle chain`);
+      assert.match(
+        contents,
+        /do not ask the user to choose mainnet versus testnet/i,
+        `${file} must not offer a network choice for Agent Wallet tools`,
+      );
+      assert.match(contents, /READY/, `${file} must gate on the READY session state`);
+      assert.match(
+        contents,
+        /never automate|remain manual|manual (?:local-terminal )?actions/i,
+        `${file} must keep Circle login, Terms, and OTP manual`,
+      );
+      assert.match(
+        contents,
+        /18-decimal[\s\S]{0,80}(?:six|6)-decimal|(?:six|6)-decimal[\s\S]{0,80}18-decimal/i,
+        `${file} must warn about the Arc native vs ERC-20 decimal views`,
+      );
+      assert.match(
+        contents,
+        /(?:not sum|never sum|without summing)/i,
+        `${file} must forbid summing the two Arc USDC views`,
+      );
+    }
+  });
+
   // Legacy Celo-shaped surfaces that this Arc migration has not rewritten yet.
   // The central MCP server still registers the Celo owner-signature tool flow,
   // so these files stay under their original contract until that is migrated.
