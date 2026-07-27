@@ -29,14 +29,9 @@ export function startMarketplaceServer(
   const server = createServer((incoming, outgoing) => {
     let request: Request;
 
-    const target = incoming.url ?? "/";
+    const resolved = resolveRequestUrl(incoming.url ?? "/", origin);
 
-    // Only origin-form targets. `new URL(target, origin)` happily accepts an
-    // absolute-form target, which lets a raw client replace the configured
-    // origin: `GET http://evil.example/activity` reached the handler with
-    // request.url set to the attacker's origin. Authority-form (`//host/path`)
-    // does the same through protocol-relative resolution.
-    if (!target.startsWith("/") || target.startsWith("//")) {
+    if (!resolved) {
       outgoing.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
       outgoing.end("Bad request.");
       return;
@@ -45,7 +40,7 @@ export function startMarketplaceServer(
     try {
       // Construction is synchronous, so it must be inside the guard: a promise
       // catch further down would never see it.
-      request = new Request(new URL(target, origin), {
+      request = new Request(resolved, {
         method: incoming.method ?? "GET",
         headers: forwardableHeaders(incoming.headers),
       });
@@ -68,6 +63,33 @@ export function startMarketplaceServer(
 
   server.listen(port);
   return server;
+}
+
+/**
+ * Resolves a request target against the configured origin, or returns null.
+ *
+ * Two layers, because pattern-matching the raw target alone kept losing:
+ *
+ *  1. Reject anything that is not plainly origin-form. Backslashes are
+ *     rejected outright — for special schemes the URL parser normalises `\` to
+ *     `/`, so `/\evil.example/x` parses as `//evil.example/x`.
+ *  2. Then check the PARSED origin against the configured one. This is the
+ *     check that holds regardless of which normalisation quirk is used next;
+ *     the shape rules above are only there to fail fast.
+ */
+function resolveRequestUrl(target: string, origin: string): URL | null {
+  if (!target.startsWith("/") || target.startsWith("//") || target.includes("\\")) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(target, origin);
+  } catch {
+    return null;
+  }
+
+  return url.origin === new URL(origin).origin ? url : null;
 }
 
 /**

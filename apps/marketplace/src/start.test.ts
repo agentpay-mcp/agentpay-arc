@@ -147,6 +147,35 @@ describe("the configured origin cannot be overridden by the request target", () 
     assert.doesNotMatch(lastRequestUrl, /evil\.example/);
   });
 
+  it("rejects a backslash network path, which WHATWG normalises to an authority", async () => {
+    // For special schemes the URL parser treats \\ as /, so /\evil.example/x
+    // parses as //evil.example/x and replaced the configured origin.
+    for (const target of ["/\\evil.example/activity", "/\\\\evil2.example/activity"]) {
+      const before = lastRequestUrl;
+      const response = await rawRequest(`GET ${target} HTTP/1.1\r\nHost: x\r\n\r\n`);
+
+      assert.match(response, /^HTTP\/1\.1 400/, `${target} must be refused`);
+      assert.equal(lastRequestUrl, before, `${target} must never reach the handler`);
+    }
+  });
+
+  it("refuses any target whose parsed origin is not the configured one", async () => {
+    // The guard that matters: whatever normalisation trick is used, the parsed
+    // origin has to match. Pattern-matching the raw target alone kept losing.
+    const before = lastRequestUrl;
+
+    for (const target of [
+      "/\\evil.example/activity",
+      "//evil.example/activity",
+      "http://evil.example/activity",
+    ]) {
+      await rawRequest(`GET ${target} HTTP/1.1\r\nHost: x\r\n\r\n`);
+      assert.doesNotMatch(lastRequestUrl, /evil/, `${target} leaked an origin`);
+    }
+
+    assert.equal(lastRequestUrl, before);
+  });
+
   it("still serves an ordinary origin-form target", async () => {
     const response = await fetch(`http://127.0.0.1:${PORT}/`);
 
