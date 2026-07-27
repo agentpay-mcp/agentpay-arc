@@ -24,6 +24,14 @@ import {
   TX_HASH_A,
 } from "./arc-payments.test-support.ts";
 
+const allowAllCompliance = {
+  screen: async () => ({
+    allowed: true,
+    engineDecision: "UNAVAILABLE" as const,
+    evidence: [],
+  }),
+};
+
 describe("Arc send and invoice concurrency", () => {
   it("atomically claims a send idempotency key so concurrent calls transfer once", async () => {
     const base = memoryRepository();
@@ -73,6 +81,7 @@ describe("Arc send and invoice concurrency", () => {
         },
       }),
       payments: repository,
+      compliance: allowAllCompliance,
       clock: fixedClock,
     });
     const input = {
@@ -119,6 +128,7 @@ describe("Arc send and invoice concurrency", () => {
         },
       }),
       payments: repository,
+      compliance: allowAllCompliance,
       clock: fixedClock,
     });
 
@@ -205,6 +215,7 @@ describe("Arc send and invoice concurrency", () => {
         },
       }),
       payments: concurrentPayments,
+      compliance: allowAllCompliance,
       clock: fixedClock,
     });
     const handler = createPayInvoiceHandler({

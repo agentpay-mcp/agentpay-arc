@@ -42,6 +42,7 @@
     "src/services/production-setup-supabase.ts",
     "src/services/chain-executor.ts",
     "src/services/circle-cli.ts",
+    "src/services/circle-compliance.ts",
     "src/services/lifi.ts",
     "src/services/mainnet-account-verifier.ts",
     "src/services/supabase.ts",

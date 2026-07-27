@@ -10,10 +10,11 @@ import {
 import type { CircleCli } from "../services/circle-cli.ts";
 import {
   createInspectPaidServiceHandler,
-  createPayPaidServiceHandler,
+  createPayPaidServiceHandler as createPayPaidServiceHandlerUnderTest,
   createSearchPaidServicesHandler,
   createTenantArcAgentCommerceRepository,
   type ArcAgentCommerceRepository,
+  type PayPaidServiceDependencies,
 } from "./circle-services.ts";
 
 const BUYER = "buyer-agent";
@@ -23,6 +24,25 @@ const SELLER_ADDRESS = "0x2222222222222222222222222222222222222222";
 const IDEMPOTENCY_KEY = "c93cc97f-ff9d-4fe1-a98e-9e6a655bf924";
 const URL = "https://seller.example/v1/report";
 const NOW = new Date("2026-07-27T01:00:00.000Z");
+
+const allowAllCompliance = {
+  screen: async () => ({
+    allowed: true,
+    engineDecision: "UNAVAILABLE" as const,
+    evidence: [],
+  }),
+};
+
+function createPayPaidServiceHandler(
+  dependencies: Omit<PayPaidServiceDependencies, "compliance"> & {
+    readonly compliance?: PayPaidServiceDependencies["compliance"];
+  },
+) {
+  return createPayPaidServiceHandlerUnderTest({
+    ...dependencies,
+    compliance: dependencies.compliance ?? allowAllCompliance,
+  });
+}
 
 function fakeCircle(overrides: Partial<CircleCli> = {}): CircleCli {
   return {
@@ -177,6 +197,52 @@ describe("Circle paid service buyer tools", () => {
     assert.equal(result.receipt.sellerAgentId, SELLER);
     assert.equal(result.receipt.proof?.network, ARC_TESTNET_CAIP2);
     assert.doesNotMatch(JSON.stringify(repository.read()), /signature|credential/i);
+  });
+
+  it("screens the seller after its atomic claim and before paying for a service", async () => {
+    let payments = 0;
+    const repository = memoryRepository();
+    const request = { url: URL, method: "GET" as const, headers: {} };
+    const quote = createArcPaidServiceQuoteBinding({
+      request,
+      amountAtomic: "1250000",
+      seller: SELLER_ADDRESS,
+      inspectedAt: NOW.toISOString(),
+      expiresAt: new Date(NOW.getTime() + 300_000).toISOString(),
+    });
+    const pay = createPayPaidServiceHandler({
+      circleCli: fakeCircle({
+        payService: async (input) => {
+          payments += 1;
+          return fakeCircle().payService(input);
+        },
+      }),
+      commerce: repository,
+      compliance: {
+        screen: async (input) => {
+          assert.deepEqual(input, {
+            operationId: IDEMPOTENCY_KEY,
+            address: SELLER_ADDRESS,
+            direction: "SEND",
+            channel: "AGENT_WALLET_PAID_SERVICE",
+          });
+          throw new Error("Payment blocked by compliance.");
+        },
+      },
+      clock: () => NOW,
+    });
+
+    const result = await pay({
+      idempotencyKey: IDEMPOTENCY_KEY,
+      buyerAgentId: BUYER,
+      sellerAgentId: SELLER,
+      request,
+      inspectedQuote: quote,
+    });
+    assert.equal(payments, 0);
+    assert.equal(result.receipt.status, "RECONCILIATION_REQUIRED");
+    assert.equal(result.receipt.settlementResult?.outcome, "COMPLIANCE_BLOCKED");
+    assert.equal(repository.read()?.status, "RECONCILIATION_REQUIRED");
   });
 
   it("atomically elects one concurrent payer before the Circle mutation", async () => {

@@ -8,8 +8,9 @@ import type {
 
 import {
   batchPayoutTool,
-  createBatchPayoutHandler,
-  createSendUsdcHandler,
+  createBatchPayoutHandler as createBatchPayoutHandlerUnderTest,
+  createSendUsdcHandler as createSendUsdcHandlerUnderTest,
+  type ArcPaymentDependencies,
   type ArcPaymentRepository,
   sendUsdcTool,
 } from "./arc-payments.ts";
@@ -29,6 +30,36 @@ import {
   usdcBalance,
   WALLET,
 } from "./arc-payments.test-support.ts";
+
+const allowAllCompliance = {
+  screen: async () => ({
+    allowed: true,
+    engineDecision: "UNAVAILABLE" as const,
+    evidence: [],
+  }),
+};
+
+function createSendUsdcHandler(
+  dependencies: Omit<ArcPaymentDependencies, "compliance"> & {
+    readonly compliance?: ArcPaymentDependencies["compliance"];
+  },
+) {
+  return createSendUsdcHandlerUnderTest({
+    ...dependencies,
+    compliance: dependencies.compliance ?? allowAllCompliance,
+  });
+}
+
+function createBatchPayoutHandler(
+  dependencies: Omit<ArcPaymentDependencies, "compliance"> & {
+    readonly compliance?: ArcPaymentDependencies["compliance"];
+  },
+) {
+  return createBatchPayoutHandlerUnderTest({
+    ...dependencies,
+    compliance: dependencies.compliance ?? allowAllCompliance,
+  });
+}
 
 describe("Arc payment tools", () => {
   it("publishes isolated send_usdc and batch_payout schemas", () => {
@@ -88,6 +119,88 @@ describe("Arc payment tools", () => {
       /insufficient/i,
     );
     assert.equal(transfers, 0);
+  });
+
+  it("screens a direct recipient after its atomic claim and before transferring funds", async () => {
+    const events: string[] = [];
+    let transfers = 0;
+    const handler = createSendUsdcHandler({
+      circleCli: fakeCircleCli({
+        transfer: async () => {
+          transfers += 1;
+          return completeTransaction("unexpected", TX_HASH_A);
+        },
+      }),
+      payments: memoryRepository(events),
+      compliance: {
+        screen: async (input) => {
+          assert.deepEqual(input, {
+            operationId: RECEIPT_ID,
+            address: RECIPIENT_A,
+            direction: "SEND",
+            channel: "AGENT_WALLET_TRANSFER",
+          });
+          throw new Error("Payment blocked by compliance.");
+        },
+      },
+      clock: fixedClock,
+    });
+
+    await assert.rejects(
+      () => handler({
+        idempotencyKey: RECEIPT_ID,
+        recipient: RECIPIENT_A,
+        amount: "1",
+        purpose: "Invoice INV-1",
+      }),
+      /compliance/i,
+    );
+    assert.equal(transfers, 0);
+    assert.deepEqual(events, [
+      "receipt:SUBMITTING",
+      "activity:PAYMENT:SUBMITTING",
+      "receipt:FAILED",
+      "activity:PAYMENT:FAILED",
+    ]);
+  });
+
+  it("fails closed when the required compliance gate is missing or returns allowed false", async () => {
+    for (const compliance of [
+      undefined,
+      {
+        screen: async () => ({
+          allowed: false,
+          engineDecision: "DENIED" as const,
+          evidence: [],
+        }),
+      },
+    ]) {
+      let transfers = 0;
+      const events: string[] = [];
+      const handler = createSendUsdcHandlerUnderTest({
+        circleCli: fakeCircleCli({
+          transfer: async () => {
+            transfers += 1;
+            return completeTransaction("unexpected", TX_HASH_A);
+          },
+        }),
+        payments: memoryRepository(events),
+        ...(compliance ? { compliance } : {}),
+        clock: fixedClock,
+      } as unknown as ArcPaymentDependencies);
+
+      await assert.rejects(
+        () => handler({
+          idempotencyKey: RECEIPT_ID,
+          recipient: RECIPIENT_A,
+          amount: "1",
+          purpose: "Invoice INV-1",
+        }),
+        /compliance/i,
+      );
+      assert.equal(transfers, 0);
+      assert.ok(events.includes("receipt:FAILED"));
+    }
   });
 
   it("persists transaction identity before completion and invokes Circle transfer exactly once", async () => {
@@ -611,5 +724,38 @@ describe("Arc payment tools", () => {
     assert.equal(resumed.batch.items[0]?.status, "SUBMITTED");
     assert.equal(resumed.batch.items[0]?.transactionId, undefined);
     assert.deepEqual(storedStatuses, ["SUBMITTED:circle_tx_unsafe_to_retry"]);
+  });
+
+  it("screens each claimed batch recipient before transferring the item", async () => {
+    const events: string[] = [];
+    let transfers = 0;
+    const handler = createBatchPayoutHandler({
+      circleCli: fakeCircleCli({
+        transfer: async () => {
+          transfers += 1;
+          return completeTransaction("unexpected", TX_HASH_A);
+        },
+      }),
+      payments: memoryRepository(events),
+      compliance: {
+        screen: async (input) => {
+          assert.equal(input.address, RECIPIENT_A);
+          assert.equal(input.direction, "SEND");
+          assert.equal(input.channel, "AGENT_WALLET_TRANSFER");
+          throw new Error("Payment blocked by compliance.");
+        },
+      },
+      clock: fixedClock,
+    });
+
+    const result = await handler({
+      batchId: BATCH_ID,
+      idempotencyKey: BATCH_KEY,
+      payouts: [{ recipient: RECIPIENT_A, amount: "1" }],
+    });
+    assert.equal(transfers, 0);
+    assert.equal(result.status, "FAILED");
+    assert.equal(events.includes("item:0:SUBMITTED:CLAIMED"), true);
+    assert.equal(events.includes("item:0:FAILED"), true);
   });
 });

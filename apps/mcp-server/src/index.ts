@@ -31,6 +31,7 @@ export * from "./services/arc-liquidity-supabase.ts";
 export * from "./services/arc-erc8004-supabase.ts";
 export * from "./services/arc-payments-supabase.ts";
 export * from "./services/chain-executor.ts";
+export * from "./services/circle-compliance.ts";
 export * from "./services/payment-authorization.ts";
 export * from "./services/mainnet-account-verifier.ts";
 export * from "./services/payment-review.ts";

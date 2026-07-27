@@ -20,6 +20,7 @@ import {
 import { z } from "zod";
 
 import type { CircleCli } from "../services/circle-cli.ts";
+import type { CompliancePaymentGate } from "../services/circle-compliance.ts";
 
 const ARC_EXPLORER_TRANSACTION_BASE_URL = "https://testnet.arcscan.app/tx/";
 const completedCircleStates = new Set(["COMPLETE", "COMPLETED", "CONFIRMED"]);
@@ -62,6 +63,7 @@ export interface ArcPaymentRepository {
 export interface ArcPaymentDependencies {
   readonly circleCli: CircleCli;
   readonly payments: ArcPaymentRepository;
+  readonly compliance: CompliancePaymentGate;
   readonly clock: () => Date;
 }
 
@@ -140,6 +142,12 @@ export async function sendUsdc(
   const claimed = claim.receipt;
 
   try {
+    await assertComplianceAllowed(dependencies.compliance, {
+      operationId: claimed.idempotencyKey,
+      address: claimed.recipient,
+      direction: "SEND",
+      channel: "AGENT_WALLET_TRANSFER",
+    });
     await assertSufficientBalance(
       dependencies.circleCli,
       claimed.walletAddress,
@@ -437,6 +445,12 @@ async function executeBatchItem(
   }
   let transaction: CircleTransactionResult;
   try {
+    await assertComplianceAllowed(dependencies.compliance, {
+      operationId: claimed.id,
+      address: claimed.recipient,
+      direction: "SEND",
+      channel: "AGENT_WALLET_TRANSFER",
+    });
     transaction = await dependencies.circleCli.transfer({
       address: walletAddress,
       amount: claimed.amount,
@@ -460,6 +474,29 @@ async function executeBatchItem(
       status: "COMPLETED",
       updatedAt: dependencies.clock().toISOString(),
     });
+  }
+}
+
+async function assertComplianceAllowed(
+  gate: CompliancePaymentGate | undefined,
+  input: Parameters<CompliancePaymentGate["screen"]>[0],
+): Promise<void> {
+  if (!gate) {
+    throw new ComplianceBlockedError();
+  }
+  try {
+    const result = await gate.screen(input);
+    if (!result.allowed) {
+      throw new ComplianceBlockedError();
+    }
+  } catch {
+    throw new ComplianceBlockedError();
+  }
+}
+
+class ComplianceBlockedError extends Error {
+  constructor() {
+    super("Payment blocked because compliance approval is unavailable.");
   }
 }
 
