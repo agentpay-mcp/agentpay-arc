@@ -27,7 +27,32 @@ export const circlePositiveAmountSchema = circleAmountSchema.refine(
 export const circleChainSchema = z.literal(CIRCLE_ARC_CHAIN);
 export const circleIdempotencyKeySchema = z.string().uuid();
 
-const safeCliTextSchema = (label: string, maxLength: number) =>
+/**
+ * A bytes32 hash and a private key are byte-identical: both are `0x` followed
+ * by 64 hex characters. No pattern can separate them, so the ABI signature is
+ * the only reliable discriminator for a contract parameter.
+ *
+ * Returns the argument types of a flat signature, or `undefined` when the
+ * signature cannot be parsed with confidence — including anything containing a
+ * tuple, where positional indexes no longer map one-to-one to arguments.
+ * Callers must treat `undefined` as "apply every check", never as permission.
+ */
+export function parseAbiArgumentTypes(signature: string): readonly string[] | undefined {
+  const match = /^[A-Za-z_][A-Za-z0-9_]*\((.*)\)$/.exec(signature.trim());
+  if (!match) return undefined;
+
+  const args = match[1]!.trim();
+  if (args.length === 0) return [];
+  if (args.includes("(") || args.includes(")")) return undefined;
+
+  return args.split(",").map((type) => type.trim().split(/\s+/)[0] ?? "");
+}
+
+const safeCliTextSchema = (
+  label: string,
+  maxLength: number,
+  options: { readonly allowThirtyTwoByteValue?: boolean } = {},
+) =>
   z
     .string()
     .trim()
@@ -40,7 +65,7 @@ const safeCliTextSchema = (label: string, maxLength: number) =>
           message: `${label} contains a forbidden null byte`,
         });
       }
-      if (privateKeyPattern.test(value)) {
+      if (!options.allowThirtyTwoByteValue && privateKeyPattern.test(value)) {
         context.addIssue({
           code: "custom",
           message: `${label} must not contain a private key`,
@@ -62,11 +87,27 @@ const safeCliTextSchema = (label: string, maxLength: number) =>
 
 export const circleSafeCliTextSchema = safeCliTextSchema("Circle CLI value", 16_384);
 
-const safePositionalCliTextSchema = (label: string, maxLength: number) =>
-  safeCliTextSchema(label, maxLength).refine(
+const safePositionalCliTextSchema = (
+  label: string,
+  maxLength: number,
+  options: { readonly allowThirtyTwoByteValue?: boolean } = {},
+) =>
+  safeCliTextSchema(label, maxLength, options).refine(
     (value) => !value.startsWith("-"),
     `${label} must not begin with a hyphen or CLI option`,
   );
+
+/**
+ * Same rules as a positional parameter minus the private-key heuristic, which
+ * is re-applied per position once the signature says which arguments are
+ * genuinely bytes32. Every other guard — null bytes, mnemonics, secret labels,
+ * leading hyphens, length — still applies.
+ */
+const bytes32ToleratingParameterSchema = safePositionalCliTextSchema(
+  "contract parameter",
+  16_384,
+  { allowThirtyTwoByteValue: true },
+);
 
 const circleHeaderValueSchema = safeCliTextSchema("Circle service header", 4_096).refine(
   (value) => !/[\u0000-\u001f\u007f]/.test(value),
@@ -326,10 +367,32 @@ export const circleContractExecutionInputSchema = z
       /^[A-Za-z_][A-Za-z0-9_]*\(.+\)$|^[A-Za-z_][A-Za-z0-9_]*\(\)$/,
       "Expected an ABI function signature",
     ),
-    parameters: z.array(safePositionalCliTextSchema("contract parameter", 16_384)).max(64).default([]),
+    parameters: z.array(bytes32ToleratingParameterSchema).max(64).default([]),
     value: circleAmountSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    const argumentTypes = parseAbiArgumentTypes(input.functionSignature);
+
+    input.parameters?.forEach((parameter, index) => {
+      // Fail closed: an unparsable signature, or an arity that does not match,
+      // means we cannot prove this position is bytes32, so the strict check
+      // applies exactly as it did before.
+      const declaredType =
+        argumentTypes && argumentTypes.length === input.parameters!.length
+          ? argumentTypes[index]
+          : undefined;
+
+      if (declaredType === "bytes32") return;
+      if (!privateKeyPattern.test(parameter)) return;
+
+      context.addIssue({
+        code: "custom",
+        path: ["parameters", index],
+        message: "contract parameter must not contain a private key",
+      });
+    });
+  });
 export type CircleContractExecutionInput = z.input<typeof circleContractExecutionInputSchema>;
 
 export const circleServiceSearchInputSchema = z

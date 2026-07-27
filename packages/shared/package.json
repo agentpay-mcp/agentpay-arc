@@ -17,6 +17,7 @@
     "src/chains.ts",
     "src/circle.ts",
     "src/erc8004.ts",
+    "src/erc8183.ts",
     "src/index.ts",
     "src/invoice.ts",
     "src/mainnet-wallet-setup.ts",
@@ -26,9 +27,9 @@
     "src/payment-tracking.ts",
     "src/tokens.ts",
     "src/wallet-setup.ts",
-    "src/x402.ts",
     "src/x402-bazaar.ts",
-    "src/x402-commerce.ts"
+    "src/x402-commerce.ts",
+    "src/x402.ts"
   ],
   "publishConfig": {
     "access": "public"

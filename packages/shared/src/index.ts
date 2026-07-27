@@ -8,6 +8,7 @@ export * from "./chains.ts";
 export * from "./circle.ts";
 export * from "./celo-attribution.ts";
 export * from "./erc8004.ts";
+export * from "./erc8183.ts";
 export * from "./invoice.ts";
 export * from "./mainnet-wallet-setup.ts";
 export * from "./payment-authorization.ts";
