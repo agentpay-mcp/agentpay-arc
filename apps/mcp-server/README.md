@@ -68,11 +68,24 @@ labeled `agentpay-receipt` proof, and includes `payment-identifier` idempotency
 data when advertised. This bridge is AgentPay-specific, not a universal
 exact-scheme signer.
 
-Production readiness requires `AGENTPAY_ENVIRONMENT=production`,
-`AGENTPAY_HOME_CHAIN_ID=5042002`, `AGENTPAY_ACCOUNT_VERSION=v2`, an HTTPS
-`ARC_TESTNET_RPC_URL`, production-only Supabase aliases, and the pinned `/arc/`
-public routes. A localhost RPC or a mismatched public route is rejected, and
-`/readyz` stays closed until every readiness check agrees.
+Two environment validators currently coexist and disagree.
+
+`parseAgentPayEnv` in `src/runtime/agentpay-runtime.ts` is the startup path used
+by `mcp/http.ts` and `mcp/stdio.ts`. It still validates the inherited Celo
+environment and requires `AGENTPAY_HOME_CHAIN_ID=42220` plus the Celo setup URL
+in production. `validateProductionEnvironment` in
+`src/runtime/production-readiness.ts` expects the Arc environment instead:
+`AGENTPAY_HOME_CHAIN_ID=5042002`, an HTTPS `ARC_TESTNET_RPC_URL`, and the `/arc/`
+public routes.
+
+`.env.example` carries the values that satisfy the startup parser, because a
+config that cannot start is worse than one that is not yet fully migrated.
+`scripts/env-example-runtime.test.ts` enforces this. Reconciling the two
+validators is a runtime change and is tracked separately.
+
+`AGENTPAY_ACCOUNT_VERSION=v2` and production-only Supabase aliases are required
+by both. A localhost RPC or a mismatched public route is rejected, and `/readyz`
+stays closed until every readiness check agrees.
 
 Production stdio is disabled. Setup-web production deployment stays separately
 gated, and all broadcast or external provisioning actions require explicit

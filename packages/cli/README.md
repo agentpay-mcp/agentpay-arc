@@ -59,19 +59,25 @@ normal hosted-user flow.
 The public x402 seller gate is enabled with `AGENTPAY_A2MCP_PAYMENT_ENABLED=true`
 plus pay-to, price, network, and asset values. `/healthz` remains free.
 
+Hosted mode needs no configuration at all, and the Circle Agent Wallet tools run
+on a config-free local MCP surface either way.
+
 Self-hosted staging/local configuration uses:
 
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`;
 - `ARC_TESTNET_RPC_URL`, an HTTPS Arc Testnet RPC endpoint;
+- the inherited Celo runtime keys, which the server still validates at startup;
 - Review & Sign secrets when the setup web flow is enabled.
 
 Optional values include `SETUP_WEB_URL`, `LIFI_API_KEY`, and
-`X402_BAZAAR_FACILITATOR_URL`. See `.env.example` for the full key list.
+`X402_BAZAAR_FACILITATOR_URL`. See `.env.example` for the full key list and for
+which keys belong to the inherited Celo runtime rather than to Arc.
 
-Production readiness requires `AGENTPAY_ENVIRONMENT=production`,
-`AGENTPAY_HOME_CHAIN_ID=5042002`, an HTTPS `ARC_TESTNET_RPC_URL`, the pinned
-`/arc/` public routes, production-only Supabase aliases, and a tracked readiness
-manifest. A localhost RPC or a mismatched public route is rejected.
+The Arc migration is incomplete at the configuration layer: the parser that
+starts the MCP server still requires the inherited Celo environment, while a
+separate Arc readiness gate expects Arc values. Use the values committed in
+`.env.example`; they are covered by a regression test that runs them through the
+real startup parser.
 
 This package is an isolated Arc fork of AgentPay. The separate Celo and OKX
 X Layer deployments are unaffected by it.

@@ -28,7 +28,13 @@ describe("README", () => {
     assert.match(contents, /testnet\.arcscan\.app/);
     assert.match(contents, /0x3600000000000000000000000000000000000000/);
     assert.match(contents, /ARC_TESTNET_RPC_URL/);
-    assert.match(contents, /AGENTPAY_HOME_CHAIN_ID=5042002/);
+
+    // The runtime env layer is not migrated yet. The README must say so instead
+    // of advertising Arc values that make the MCP server refuse to start.
+    assert.match(contents, /parseAgentPayEnv/);
+    assert.match(contents, /still (?:validates|requires).*(?:inherited )?Celo|Celo-shaped/i);
+    assert.match(contents, /42220/);
+    assert.match(contents, /two gates currently disagree|validators currently coexist/i);
 
     // The 18/6 decimal hazard must stay documented.
     assert.match(contents, /6 decimals/i);
@@ -66,7 +72,7 @@ describe("README", () => {
     assert.match(contents, /x402 seller gate/i);
     assert.match(contents, /AGENTPAY_A2MCP_PAYMENT_ENABLED/);
     assert.match(contents, /ARC_TESTNET_RPC_URL/);
-    assert.match(contents, /AGENTPAY_HOME_CHAIN_ID=5042002/);
+    assert.match(contents, /inherited Celo runtime keys|incomplete at the configuration layer/i);
     assert.doesNotMatch(quickStart, /agentpay doctor/i);
     assert.doesNotMatch(quickStart, /agentpay setup-web/i);
     assert.doesNotMatch(quickStart, /config\.json/);

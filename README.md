@@ -136,15 +136,33 @@ npx @agentpay-ai/agentpay-arc install --self-hosted
 Core local values are `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and
 `ARC_TESTNET_RPC_URL`. See `.env.example` for the full key list.
 
-The production readiness gate requires `AGENTPAY_ENVIRONMENT=production`,
-`AGENTPAY_HOME_CHAIN_ID=5042002`, an HTTPS `ARC_TESTNET_RPC_URL`, and the pinned
-public routes below. It rejects a localhost RPC and any public URL that does not
-match them.
+### The hosted runtime environment is still Celo-shaped
+
+The Arc migration is not finished at the configuration layer, and the docs say
+so rather than advertising values that would not start.
+
+`parseAgentPayEnv` in `apps/mcp-server/src/runtime/agentpay-runtime.ts` is what
+actually starts the MCP server, and it still validates the inherited Celo
+environment: `AGENTPAY_HOME_CHAIN_ID` must be a Celo chain ID — `42220` in
+production — and the production setup URL must be the Celo one. Setting those
+keys to Arc values makes the server refuse to start. `.env.example` therefore
+keeps the Celo values, and `scripts/env-example-runtime.test.ts` feeds the
+committed values through that parser so this cannot drift unnoticed.
+
+A separate Arc gate, `validateProductionEnvironment` in
+`apps/mcp-server/src/runtime/production-readiness.ts`, expects the Arc values
+instead: `AGENTPAY_HOME_CHAIN_ID=5042002`, an HTTPS `ARC_TESTNET_RPC_URL`, and
+the `/arc/` public routes below. **The two gates currently disagree**, and
+reconciling them is a runtime change, not a documentation change.
 
 - Authenticated consumer MCP: `https://wallet.agentpay.site/arc/mcp`
 - Public paid MCP: `https://mcp.agentpay.site/arc/mcp`
 - Setup: `https://wallet.agentpay.site/arc/setup`
 - Review: `https://wallet.agentpay.site/arc/review`
+
+The Circle Agent Wallet tools are unaffected by either gate. They run on a
+config-free local MCP surface so that the authenticated Circle CLI session never
+leaves the user's machine.
 
 Self-hosted operators expose the public MCP endpoint with `agentpay serve-http`.
 `/healthz` remains free.
