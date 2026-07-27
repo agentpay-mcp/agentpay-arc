@@ -440,3 +440,104 @@ describe("contract execution inputs match the real adapter schema", () => {
     );
   });
 });
+
+describe("wallet selection", () => {
+  it("refuses when no authenticated Agent Wallet exists", async () => {
+    const { dependencies } = harness({ wallets: [] });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await assert.rejects(handlers.getAgentJob({ jobId: "1" }).then(() =>
+      handlers.createAgentJob({ evaluator: EVALUATOR, expiredAt: FUTURE, description: "x" }),
+    ), /no authenticated circle agent wallet/i);
+  });
+
+  it("requires an explicit wallet when several are authenticated", async () => {
+    const { dependencies } = harness({ wallets: [CLIENT, PROVIDER] });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await assert.rejects(
+      handlers.createAgentJob({ evaluator: EVALUATOR, expiredAt: FUTURE, description: "x" }),
+      /walletAddress is required/i,
+    );
+  });
+
+  it("refuses a wallet that is not authenticated", async () => {
+    const { dependencies } = harness({ wallets: [CLIENT] });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await assert.rejects(
+      handlers.createAgentJob({
+        evaluator: EVALUATOR,
+        expiredAt: FUTURE,
+        description: "x",
+        walletAddress: EVALUATOR,
+      }),
+      /not an authenticated circle agent wallet/i,
+    );
+  });
+});
+
+describe("set_agent_job_budget", () => {
+  it("writes the exact atomic budget and records it", async () => {
+    const { dependencies, calls, saved } = harness();
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.setAgentJobBudget({ jobId: "1", amount: "12.345678" });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.functionSignature, "setBudget(uint256,uint256,bytes)");
+    assert.deepEqual(calls[0]!.parameters, ["1", "12345678", "0x"]);
+    assert.equal(output.status, "SUBMITTED");
+    assert.equal(saved[0]!.budget, "12.345678");
+  });
+
+  it("refuses to change the budget once the job has left Open", async () => {
+    const { dependencies, calls } = harness({ record: job({ state: "Funded" }) });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await assert.rejects(
+      handlers.setAgentJobBudget({ jobId: "1", amount: "1.5" }),
+      /only be set while the job is Open/i,
+    );
+    assert.equal(calls.length, 0);
+  });
+
+  it("refuses to set a budget on an expired job", async () => {
+    const { dependencies, calls } = harness({ record: job({ expiredAt: "1699999999" }) });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await assert.rejects(handlers.setAgentJobBudget({ jobId: "1", amount: "1.5" }), /expired/i);
+    assert.equal(calls.length, 0);
+  });
+});
+
+describe("reject_agent_job", () => {
+  it("lets the client reject while the job is still Open", async () => {
+    const { dependencies, calls, events } = harness({ record: job({ state: "Open" }) });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.rejectAgentJob({ jobId: "1", reason: HASH });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.functionSignature, "reject(uint256,bytes32,bytes)");
+    assert.equal(output.status, "SUBMITTED");
+    assert.equal(events[0]!.toState, "Rejected");
+    assert.equal(events[0]!.reasonHash, HASH);
+  });
+
+  it("records no resulting state when the write outcome is ambiguous", async () => {
+    const { dependencies, events } = harness({
+      record: job({ state: "Open" }),
+      executeContract: async () => {
+        throw new Error("timeout");
+      },
+    });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.rejectAgentJob({ jobId: "1", reason: HASH });
+
+    assert.equal(output.status, "RECONCILIATION_REQUIRED");
+    assert.equal(events[0]!.toState, null, "an ambiguous write must not claim a resulting state");
+    assert.equal(events[0]!.transactionHash, undefined);
+  });
+});
