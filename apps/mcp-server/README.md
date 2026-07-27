@@ -13,8 +13,11 @@ Run locally:
 npm run start --workspace @agentpay-ai/mcp-server-arc
 ```
 
-Core local/staging configuration is `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-and `ARC_TESTNET_RPC_URL`.
+Core local/staging startup values are `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `CELO_RPC_URL`, and `EXECUTOR_PRIVATE_KEY` — the
+keys `parseAgentPayEnv` requires to start this server. `ARC_TESTNET_RPC_URL` is
+required by the separate Arc production readiness gate, not by the local startup
+parser.
 
 Agent Wallet writes run through the safe Circle CLI adapter in
 `src/services/circle-cli.ts`: a fixed `circle` binary, `execFile` with

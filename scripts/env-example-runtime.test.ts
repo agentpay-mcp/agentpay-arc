@@ -48,6 +48,60 @@ function invalidNames(env: Record<string, string>): string[] {
   }
 }
 
+function missingNames(env: Record<string, string>): string[] {
+  try {
+    parseAgentPayEnv(env);
+    return [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = /missing: ([^;)]*)[;)]/.exec(message);
+    if (!match) return [];
+
+    return match[1]
+      .split(", ")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+  }
+}
+
+describe("public docs describe the real startup key set", () => {
+  // Derived from the parser rather than hardcoded, so adding a required key to
+  // parseAgentPayEnv fails this test until the public docs mention it.
+  const requiredKeys = missingNames({});
+
+  it("derives a non-empty required key set", () => {
+    assert.ok(requiredKeys.length > 0, "expected parseAgentPayEnv to report required keys");
+    assert.ok(
+      requiredKeys.includes("CELO_RPC_URL"),
+      "the inherited Celo RPC is still required to start the server",
+    );
+  });
+
+  for (const file of ["README.md", "apps/mcp-server/README.md"]) {
+    it(`${file} names every key required to start the server`, async () => {
+      const contents = await readFile(file, "utf8");
+      const undocumented = requiredKeys.filter((key) => !contents.includes(key));
+
+      assert.deepEqual(
+        undocumented,
+        [],
+        `${file} lists startup configuration but omits required keys: ${undocumented.join(", ")}`,
+      );
+    });
+
+    it(`${file} does not present ARC_TESTNET_RPC_URL as a startup key`, async () => {
+      const contents = await readFile(file, "utf8");
+      if (!contents.includes("ARC_TESTNET_RPC_URL")) return;
+
+      assert.match(
+        contents,
+        /ARC_TESTNET_RPC_URL[\s\S]{0,200}?(?:readiness gate|not by the local startup parser)/,
+        `${file} must attribute ARC_TESTNET_RPC_URL to the Arc readiness gate, not to startup`,
+      );
+    });
+  }
+});
+
 describe(".env.example runtime values", () => {
   it("is accepted by the runtime parser that starts the MCP server", async () => {
     const env = parseEnvExample(await readFile(".env.example", "utf8"));

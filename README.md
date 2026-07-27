@@ -133,8 +133,11 @@ npx @agentpay-ai/agentpay-arc install --self-hosted
 
 ## Configuration
 
-Core local values are `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and
-`ARC_TESTNET_RPC_URL`. See `.env.example` for the full key list.
+Core local/MCP startup values are `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+`CELO_RPC_URL`, and `EXECUTOR_PRIVATE_KEY`. `ARC_TESTNET_RPC_URL` is required by
+the separate Arc production readiness gate, not by the local startup parser.
+
+See `.env.example` for the full key list.
 
 ### The hosted runtime environment is still Celo-shaped
 
