@@ -285,6 +285,8 @@ export type CircleGatewayWithdrawalResult = z.output<typeof circleGatewayWithdra
 
 export const circleBridgeResultSchema = z.object({
   message: z.string().trim().min(1).max(1_024),
+  traceId: z.string().trim().min(1).max(256).optional(),
+  transferId: z.string().trim().min(1).max(256).optional(),
   burnTxHash: z.string().regex(transactionHashPattern),
   forwardTxHash: z.string().regex(transactionHashPattern).optional(),
   fromChain: circleChainSchema,

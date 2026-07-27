@@ -381,6 +381,8 @@ describe("Circle CLI adapter", () => {
         if (command === "bridge transfer") {
           return {
             message: "Bridge complete.",
+            traceId: "trace_123",
+            transferId: "transfer_456",
             burnTxHash: `0x${"e".repeat(64)}`,
             forwardTxHash: `0x${"f".repeat(64)}`,
             fromChain: "ARC-TESTNET",
@@ -415,13 +417,15 @@ describe("Circle CLI adapter", () => {
     });
     await cli.depositGateway({ amount: "0.5", address: ADDRESS });
     await cli.withdrawGateway({ amount: "0.1", address: ADDRESS, recipient: RECIPIENT });
-    await cli.bridge({
+    const bridge = await cli.bridge({
       destination: "ARB-SEPOLIA",
       recipient: RECIPIENT,
       amount: "1",
       address: ADDRESS,
       idempotencyKey,
     });
+    assert.equal(bridge.traceId, "trace_123");
+    assert.equal(bridge.transferId, "transfer_456");
 
     assert.deepEqual(calls, [
       ["wallet", "list", "--chain", "ARC-TESTNET", "--type", "agent"],

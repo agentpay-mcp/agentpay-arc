@@ -5,6 +5,8 @@ export { AGENTPAY_ARC_PUBLIC_URLS } from "@agentpay-ai/shared-arc";
 export * from "./mcp/agentpay-mcp.ts";
 export * from "./mcp/arc-payments.ts";
 export * from "./mcp/arc-agent-payment.ts";
+export * from "./mcp/arc-agent-identity.ts";
+export * from "./mcp/arc-liquidity.ts";
 export * from "./mcp/consumer-auth.ts";
 export {
   startAgentPayHttpServer,
@@ -23,6 +25,10 @@ export * from "./auth/consumer-session-api.ts";
 export * from "./auth/oauth.ts";
 export * from "./auth/oauth-api.ts";
 export * from "./services/lifi.ts";
+export * from "./services/arc-app-kit.ts";
+export * from "./services/arc-erc8004-viem.ts";
+export * from "./services/arc-liquidity-supabase.ts";
+export * from "./services/arc-erc8004-supabase.ts";
 export * from "./services/arc-payments-supabase.ts";
 export * from "./services/chain-executor.ts";
 export * from "./services/payment-authorization.ts";
@@ -38,6 +44,8 @@ export * from "./services/supabase.ts";
 export * from "./services/x402-bazaar.ts";
 export * from "./tools/account-admin.ts";
 export * from "./tools/arc-payments.ts";
+export * from "./tools/arc-agent-identity.ts";
+export * from "./tools/arc-liquidity.ts";
 export * from "./tools/circle-services.ts";
 export * from "./tools/execute-payment.ts";
 export * from "./tools/get-balance.ts";

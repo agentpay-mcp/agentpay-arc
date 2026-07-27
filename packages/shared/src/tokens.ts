@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-export const STABLE_TOKEN_SYMBOLS = ["USDT0", "USDC", "USDT", "USDm"] as const;
+export const STABLE_TOKEN_SYMBOLS = ["USDT0", "USDC", "USDT", "EURC", "USDm"] as const;
 export const CELO_STABLE_TOKEN_SYMBOLS = ["USDC", "USDT", "USDm"] as const;
-export const ARC_STABLE_TOKEN_SYMBOLS = ["USDC"] as const;
-export const DEFAULT_STABLE_TOKEN_SYMBOLS = ARC_STABLE_TOKEN_SYMBOLS;
+export const ARC_STABLE_TOKEN_SYMBOLS = ["USDC", "EURC"] as const;
+export const DEFAULT_STABLE_TOKEN_SYMBOLS = ["USDC"] as const;
 
 export const stableTokenSymbolSchema = z.enum(STABLE_TOKEN_SYMBOLS);
 export const celoStableTokenSymbolSchema = z.enum(CELO_STABLE_TOKEN_SYMBOLS);
@@ -17,6 +17,7 @@ export const STABLE_TOKEN_DECIMALS: Record<StableTokenSymbol, number> = {
   USDT0: 6,
   USDC: 6,
   USDT: 6,
+  EURC: 6,
   USDm: 18,
 };
 
@@ -71,6 +72,11 @@ export const STABLE_TOKENS_BY_CHAIN: Record<number, Partial<Record<StableTokenSy
     USDC: {
       symbol: "USDC",
       address: "0x3600000000000000000000000000000000000000",
+      decimals: 6,
+    },
+    EURC: {
+      symbol: "EURC",
+      address: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
       decimals: 6,
     },
   },
