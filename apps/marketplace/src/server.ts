@@ -3,6 +3,7 @@ import {
   renderCatalogue,
   renderError,
   renderNotFound,
+  renderUnauthorized,
   renderServiceDetail,
   type RenderedActivity,
   type RenderedJob,
@@ -22,7 +23,19 @@ export type MarketplaceActivity = RenderedActivity;
  * The hosted marketplace can display state; it can never change it, and it
  * never holds a credential that could.
  */
+export interface MarketplaceSession {
+  readonly tenantId: string;
+}
+
 export interface MarketplaceDependencies {
+  /**
+   * Resolves a verified server-side session from the request. Returning null
+   * means anonymous. Tenant identity is never taken from a query parameter or
+   * any other caller-supplied value.
+   */
+  readonly sessions: {
+    resolve(request: Request): Promise<MarketplaceSession | null>;
+  };
   readonly services: {
     search(input: { readonly query?: string; readonly category?: string }): Promise<
       readonly MarketplaceService[]
@@ -36,7 +49,7 @@ export interface MarketplaceDependencies {
     listForSeller(sellerAddress: string): Promise<readonly MarketplaceJob[]>;
   };
   readonly activity: {
-    listForTenant(): Promise<readonly MarketplaceActivity[]>;
+    listForTenant(tenantId: string): Promise<readonly MarketplaceActivity[]>;
   };
 }
 
@@ -51,7 +64,9 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'unsafe-inline'",
   "img-src 'none'",
   "connect-src 'none'",
-  "form-action 'none'",
+  // The catalogue renders a same-origin GET filter; 'none' would silently
+  // break it in a real browser while every direct-URL test still passed.
+  "form-action 'self'",
   "frame-ancestors 'none'",
   "base-uri 'none'",
 ].join("; ");
@@ -99,7 +114,14 @@ export function createMarketplaceHandler(dependencies: MarketplaceDependencies) 
       }
 
       if (url.pathname === "/activity") {
-        const entries = await dependencies.activity.listForTenant();
+        // Receipts are tenant data. Without a verified session there is nothing
+        // to scope them to, so the answer is 401 rather than "everyone's".
+        const session = await dependencies.sessions.resolve(request);
+        if (!session) {
+          return htmlResponse(renderUnauthorized(), 401, PRIVATE_CACHE);
+        }
+
+        const entries = await dependencies.activity.listForTenant(session.tenantId);
         return htmlResponse(renderActivity(entries), 200, PRIVATE_CACHE);
       }
 
@@ -108,13 +130,21 @@ export function createMarketplaceHandler(dependencies: MarketplaceDependencies) 
         const service = await dependencies.services.get(id);
         if (!service) return htmlResponse(renderNotFound(), 404, PUBLIC_CACHE);
 
-        // Trust and job lookups are best-effort: a missing ERC-8004 identity is
-        // a fact about the seller, not a failure of the page.
+        // "No identity found" and "we could not reach the identity registry"
+        // are different claims. Collapsing them would let an outage read as a
+        // verified absence, which is the same failure mode as rendering an
+        // unverified seller as trusted.
         const [trust, jobs] = await Promise.all([
           service.sellerAgentId
-            ? dependencies.trust.get(service.sellerAgentId).catch(() => null)
-            : Promise.resolve(null),
-          dependencies.jobs.listForSeller(service.sellerAddress).catch(() => []),
+            ? dependencies.trust
+                .get(service.sellerAgentId)
+                .then((value) => ({ status: "ok" as const, value }))
+                .catch(() => ({ status: "unavailable" as const }))
+            : Promise.resolve({ status: "ok" as const, value: null }),
+          dependencies.jobs
+            .listForSeller(service.sellerAddress)
+            .then((value) => ({ status: "ok" as const, value }))
+            .catch(() => ({ status: "unavailable" as const })),
         ]);
 
         return htmlResponse(renderServiceDetail(service, trust, jobs), 200, PUBLIC_CACHE);

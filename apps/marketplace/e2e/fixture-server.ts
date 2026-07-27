@@ -6,6 +6,14 @@ const TX = `0x${"cd".repeat(32)}`;
 
 /** Deterministic read models so the e2e run never touches a real database. */
 const dependencies: MarketplaceDependencies = {
+  // The fixture treats a header as the session so the e2e run can exercise
+  // both the anonymous and the authenticated path without a real auth stack.
+  sessions: {
+    resolve: async (request) => {
+      const tenant = request.headers.get("x-tenant");
+      return tenant ? { tenantId: tenant } : null;
+    },
+  },
   services: {
     search: async ({ query, category }) =>
       [

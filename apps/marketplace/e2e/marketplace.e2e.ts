@@ -19,6 +19,27 @@ test("filters by search term", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Weather Oracle" })).toHaveCount(0);
 });
 
+test("the search form actually submits from the browser", async ({ page }) => {
+  // Navigating straight to /?q=... passes even when CSP form-action blocks the
+  // form. Only a real submit catches that.
+  await page.goto("/");
+  await page.getByLabel("Search services").fill("translate");
+  await page.getByLabel("Search services").press("Enter");
+
+  await expect(page).toHaveURL(/[?&]q=translate/);
+  await expect(page.getByRole("link", { name: "Translate API" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Weather Oracle" })).toHaveCount(0);
+});
+
+test("the category filter submits from the browser too", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Category").fill("language");
+  await page.getByLabel("Category").press("Enter");
+
+  await expect(page).toHaveURL(/[?&]category=language/);
+  await expect(page.getByRole("link", { name: "Translate API" })).toBeVisible();
+});
+
 test("filters by category", async ({ page }) => {
   await page.goto("/?category=language");
 
@@ -52,7 +73,15 @@ test("the detail page cannot execute a payment", async ({ page }) => {
   await expect(page.locator("button[type=submit]")).toHaveCount(0);
 });
 
-test("activity shows a working Arcscan proof link", async ({ page }) => {
+test("activity refuses an anonymous visitor", async ({ page }) => {
+  await page.goto("/activity");
+
+  await expect(page.getByRole("heading", { name: /Sign in required/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /View proof on Arcscan/i })).toHaveCount(0);
+});
+
+test("activity shows a working Arcscan proof link for a signed-in tenant", async ({ page }) => {
+  await page.setExtraHTTPHeaders({ "x-tenant": "tenant-a" });
   await page.goto("/activity");
 
   const proof = page.getByRole("link", { name: /View proof on Arcscan/i });
@@ -66,6 +95,7 @@ test("serves a strict CSP and no-store on private activity", async ({ page }) =>
 
   const activity = await page.goto("/activity");
   expect(activity?.headers()["cache-control"]).toBe("no-store");
+  expect(catalogue?.headers()["content-security-policy"]).toContain("form-action 'self'");
 });
 
 test("is reachable by keyboard alone", async ({ page }) => {

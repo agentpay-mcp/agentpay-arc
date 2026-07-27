@@ -46,6 +46,12 @@ function deps(overrides: Partial<MarketplaceDependencies> = {}): MarketplaceDepe
         { jobId: "8183", state: "Funded", budget: "25.000000", expiredAt: "4102444800" },
       ],
     },
+    sessions: {
+      resolve: async (request: Request) => {
+        const tenant = request.headers.get("x-tenant");
+        return tenant ? { tenantId: tenant } : null;
+      },
+    },
     activity: {
       listForTenant: async () => [
         {
@@ -62,8 +68,12 @@ function deps(overrides: Partial<MarketplaceDependencies> = {}): MarketplaceDepe
   };
 }
 
-async function get(handler: (request: Request) => Promise<Response>, path: string) {
-  return handler(new Request(`https://marketplace.test${path}`));
+async function get(
+  handler: (request: Request) => Promise<Response>,
+  path: string,
+  headers: Record<string, string> = { "x-tenant": "tenant-a" },
+) {
+  return handler(new Request(`https://marketplace.test${path}`, { headers }));
 }
 
 describe("marketplace security posture", () => {
@@ -74,7 +84,7 @@ describe("marketplace security posture", () => {
     assert.match(csp, /default-src 'none'/);
     assert.match(csp, /script-src 'none'/);
     assert.match(csp, /frame-ancestors 'none'/);
-    assert.match(csp, /form-action 'none'/);
+    assert.match(csp, /form-action 'self'/);
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.equal(response.headers.get("referrer-policy"), "no-referrer");
   });
@@ -295,5 +305,111 @@ describe("accessibility and layout", () => {
 
     assert.match(html, /<a[^>]*href=["']https:\/\/testnet\.arcscan\.app\/tx\/[^"']+["'][^>]*>[^<]*\w/);
     assert.match(html, /rel=["'][^"']*noopener/);
+  });
+});
+
+describe("activity is bound to a verified tenant", () => {
+  it("refuses an anonymous request instead of serving receipts", async () => {
+    const response = await get(createMarketplaceHandler(deps()), "/activity", {});
+    const html = await response.text();
+
+    assert.equal(response.status, 401);
+    assert.doesNotMatch(html, new RegExp(TX), "no receipt may reach an unauthenticated caller");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  });
+
+  it("passes the resolved tenant to the read model and never a caller-supplied one", async () => {
+    const seen: string[] = [];
+    const handler = createMarketplaceHandler(
+      deps({
+        sessions: { resolve: async () => ({ tenantId: "tenant-from-session" }) },
+        activity: {
+          listForTenant: async (tenantId) => {
+            seen.push(tenantId);
+            return [];
+          },
+        },
+      }),
+    );
+
+    await get(handler, "/activity?tenantId=tenant-injected", { "x-tenant": "ignored" });
+
+    assert.deepEqual(seen, ["tenant-from-session"]);
+  });
+
+  it("isolates two tenants", async () => {
+    const byTenant: Record<string, string> = { "tenant-a": "0.010000", "tenant-b": "9.990000" };
+    const handler = createMarketplaceHandler(
+      deps({
+        activity: {
+          listForTenant: async (tenantId) => [
+            {
+              id: `act-${tenantId}`,
+              kind: "PAID_SERVICE",
+              amount: byTenant[tenantId] ?? "0",
+              token: "USDC",
+              transactionHash: TX,
+              occurredAt: "2026-07-27T10:00:00.000Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    const a = await (await get(handler, "/activity", { "x-tenant": "tenant-a" })).text();
+    const b = await (await get(handler, "/activity", { "x-tenant": "tenant-b" })).text();
+
+    assert.match(a, /0\.010000/);
+    assert.doesNotMatch(a, /9\.990000/, "tenant A must never see tenant B's activity");
+    assert.match(b, /9\.990000/);
+    assert.doesNotMatch(b, /0\.010000/);
+  });
+});
+
+describe("the search form can actually submit", () => {
+  it("allows same-origin form submission in the CSP", async () => {
+    const response = await get(createMarketplaceHandler(deps()), "/");
+    const csp = response.headers.get("content-security-policy") ?? "";
+
+    assert.match(csp, /form-action 'self'/, "the rendered GET filter must be submittable");
+    assert.doesNotMatch(csp, /form-action 'none'/);
+  });
+});
+
+describe("a dependency outage is not rendered as confirmed absence", () => {
+  it("says trust is unavailable rather than that no identity exists", async () => {
+    const handler = createMarketplaceHandler(
+      deps({
+        trust: {
+          get: async () => {
+            throw new Error("erc8004 reader timeout");
+          },
+        },
+      }),
+    );
+
+    const html = await (await get(handler, "/services/svc-weather")).text();
+
+    assert.doesNotMatch(html, /No ERC-8004 identity found/i);
+    assert.match(html, /trust data (?:is )?unavailable/i);
+    assert.doesNotMatch(html, /timeout|erc8004 reader/i, "internal errors must not surface");
+  });
+
+  it("says job data is unavailable rather than that there are no jobs", async () => {
+    const handler = createMarketplaceHandler(
+      deps({
+        jobs: {
+          listForSeller: async () => {
+            throw new Error("supabase down");
+          },
+        },
+      }),
+    );
+
+    const html = await (await get(handler, "/services/svc-weather")).text();
+
+    assert.doesNotMatch(html, /no ERC-8183 jobs on record/i);
+    assert.match(html, /job data (?:is )?unavailable/i);
+    assert.doesNotMatch(html, /supabase/i);
   });
 });

@@ -101,6 +101,7 @@ export function renderCatalogue(
 <input id="q" name="q" type="search" value="${escapeHtml(filters.query ?? "")}">
 <label for="category">Category</label>
 <input id="category" name="category" type="text" value="${escapeHtml(filters.category ?? "")}">
+<button type="submit">Filter</button>
 </form>`;
 
   const list =
@@ -120,7 +121,14 @@ ${networkLine(item.price, item.token)}
   return layout("Services", `<h1>Paid services on Arc</h1>\n${search}\n${list}`);
 }
 
-function trustSection(trust: RenderedTrust | null): string {
+export type Loaded<T> = { readonly status: "ok"; readonly value: T } | { readonly status: "unavailable" };
+
+function trustSection(result: Loaded<RenderedTrust | null>): string {
+  if (result.status === "unavailable") {
+    return `<section><h3>Seller trust</h3><p>Trust data is unavailable right now. This is not a statement about the seller.</p></section>`;
+  }
+
+  const trust = result.value;
   if (!trust) {
     return `<section><h3>Seller trust</h3><p>No ERC-8004 identity found for this seller.</p></section>`;
   }
@@ -147,7 +155,12 @@ function trustSection(trust: RenderedTrust | null): string {
 </section>`;
 }
 
-function jobsSection(jobs: readonly RenderedJob[]): string {
+function jobsSection(result: Loaded<readonly RenderedJob[]>): string {
+  if (result.status === "unavailable") {
+    return `<section><h3>Agent jobs</h3><p>Job data is unavailable right now. This is not a statement about the seller.</p></section>`;
+  }
+
+  const jobs = result.value;
   if (jobs.length === 0) {
     return `<section><h3>Agent jobs</h3><p>This seller has no ERC-8183 jobs on record.</p></section>`;
   }
@@ -164,8 +177,8 @@ ${escapeHtml(job.state)}, budget ${escapeHtml(job.budget)} USDC</li>`,
 
 export function renderServiceDetail(
   service: RenderedService,
-  trust: RenderedTrust | null,
-  jobs: readonly RenderedJob[],
+  trust: Loaded<RenderedTrust | null>,
+  jobs: Loaded<readonly RenderedJob[]>,
 ): string {
   // A prompt, not an action. There is no form, no submit control, and no
   // script: the user copies this into their own AgentPay MCP session, where
@@ -218,6 +231,13 @@ export function renderActivity(entries: readonly RenderedActivity[]): string {
 
 export function renderError(message: string): string {
   return layout("Unavailable", `<h1>Marketplace unavailable</h1><p>${escapeHtml(message)}</p>`);
+}
+
+export function renderUnauthorized(): string {
+  return layout(
+    "Sign in required",
+    `<h1>Sign in required</h1><p>Activity receipts are private to your workspace. Sign in to view them.</p>`,
+  );
 }
 
 export function renderNotFound(): string {
