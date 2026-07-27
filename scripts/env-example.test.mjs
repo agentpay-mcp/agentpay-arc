@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 const expectedKeys = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
+  "ARC_TESTNET_RPC_URL",
   "CELO_RPC_URL",
   "CELO_MAINNET_RPC_URL",
   "CELO_MAINNET_RPC_FALLBACK_URL",

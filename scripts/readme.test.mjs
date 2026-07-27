@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 describe("README", () => {
-  it("describes the implemented local AgentPay runtime instead of stale scaffold state", async () => {
+  it("describes the implemented Arc AgentPay runtime instead of stale scaffold state", async () => {
     const contents = await readFile("README.md", "utf8");
     const quickStart = contents.split("## Chat Flow")[0] ?? contents;
 
@@ -12,35 +12,34 @@ describe("README", () => {
     assert.match(contents, /npm run release:smoke/);
     assert.match(contents, /skills\/agentpay\/SKILL\.md/);
     assert.match(contents, /detects the target runtime/i);
-    assert.match(contents, /npx @agentpay-ai\/agentpay-celo install/);
-    assert.match(quickStart, /https:\/\/wallet\.agentpay\.site\/celo\/mcp/);
-    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/celo\/mcp/);
+    assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
+    assert.match(contents, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
+    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/arc\/mcp/);
     assert.match(contents, /normal users do not need Supabase, RPC, executor, deployer, or bytecode config/i);
     assert.match(contents, /install --self-hosted/);
-    assert.match(contents, /Create an AgentPay wallet/i);
-    assert.match(contents, /mainnet or testnet/i);
-    assert.match(contents, /network: "mainnet" \| "testnet"/);
-    assert.match(contents, /AgentPay smart account address/i);
-    assert.match(contents, /Owner.*Executor/s);
     assert.match(contents, /apps\/mcp-server/);
     assert.match(contents, /packages\/cli/);
     assert.match(contents, /agentpay serve-http/);
-    assert.match(contents, /public HTTPS A2MCP|public MCP endpoint/i);
-    assert.match(contents, /Celo x402|x402 seller gate/i);
-    assert.match(contents, /AGENTPAY_A2MCP_PAYMENT_ENABLED/);
-    assert.match(contents, /PAYMENT-REQUIRED/);
-    assert.match(contents, /ERC-8021/);
-    assert.match(contents, /CELO_ATTRIBUTION_TAG/);
-    assert.match(contents, /x402 facilitator settlements.*not tagged|does not tag x402 facilitator settlements/i);
-    assert.match(contents, /ERC-8004 Agent Identity/i);
-    assert.match(contents, /\.well-known\/agent-registration\.json/);
-    assert.match(contents, /ERC-1271/);
-    assert.match(contents, /npm run erc8004 -- verify/);
-    assert.match(contents, /CELO_MAINNET_RPC_FALLBACK_URL/);
-    assert.match(contents, /npm run canary:mainnet/);
-    assert.match(contents, /--execute-mainnet-canary/);
-    assert.match(contents, /application\/json, text\/event-stream/);
-    assert.match(contents, /Never pass signatures or private keys as command-line arguments/i);
+
+    // Arc network identity must stay pinned and verifiable.
+    assert.match(quickStart, /Arc Testnet/i);
+    assert.match(contents, /5042002/);
+    assert.match(contents, /https:\/\/rpc\.testnet\.arc\.network/);
+    assert.match(contents, /testnet\.arcscan\.app/);
+    assert.match(contents, /0x3600000000000000000000000000000000000000/);
+    assert.match(contents, /ARC_TESTNET_RPC_URL/);
+    assert.match(contents, /AGENTPAY_HOME_CHAIN_ID=5042002/);
+
+    // The 18/6 decimal hazard must stay documented.
+    assert.match(contents, /6 decimals/i);
+    assert.match(contents, /18 (?:metadata )?decimals/i);
+    assert.match(contents, /never sums the two views|not sum/i);
+
+    // Balance-is-budget is the authorization model.
+    assert.match(contents, /funded balance is the budget|balance is the budget/i);
+    assert.match(contents, /Circle Agent Wallet/i);
+    assert.match(contents, /exactly once/i);
+
     assert.doesNotMatch(contents, /docs\//);
     assert.doesNotMatch(contents, /AGENTPAY_CONCEPT/);
     assert.doesNotMatch(contents, /product blueprint/i);
@@ -49,29 +48,36 @@ describe("README", () => {
     assert.doesNotMatch(quickStart, /Fill the generated config/i);
   });
 
-  it("presents the npm CLI as a chat-first install flow", async () => {
+  it("presents the npm CLI as a chat-first Arc install flow", async () => {
     const contents = await readFile("packages/cli/README.md", "utf8");
     const quickStart = contents.split("## Commands")[0] ?? contents;
 
-    assert.match(contents, /npx @agentpay-ai\/agentpay-celo install/);
+    assert.match(contents, /^# @agentpay-ai\/agentpay-arc/m);
+    assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
     assert.match(contents, /return to your agent chat/i);
-    assert.match(quickStart, /https:\/\/wallet\.agentpay\.site\/celo\/mcp/);
-    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/celo\/mcp/);
+    assert.match(quickStart, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
+    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/arc\/mcp/);
     assert.match(contents, /No user secrets are required|do not manage Supabase/i);
     assert.match(contents, /install --self-hosted/);
-    assert.match(contents, /create an AgentPay wallet/i);
-    assert.match(contents, /mainnet or testnet/i);
-    assert.match(contents, /network: "mainnet" \| "testnet"/);
-    assert.match(contents, /pay 5 USDT/i);
+    assert.match(contents, /agent wallet/i);
+    assert.match(contents, /Arc Testnet only/i);
+    assert.match(contents, /pay 5 USDC/i);
     assert.match(contents, /agentpay serve-http/);
-    assert.match(contents, /Celo x402|x402 seller gate/i);
+    assert.match(contents, /x402 seller gate/i);
     assert.match(contents, /AGENTPAY_A2MCP_PAYMENT_ENABLED/);
+    assert.match(contents, /ARC_TESTNET_RPC_URL/);
+    assert.match(contents, /AGENTPAY_HOME_CHAIN_ID=5042002/);
     assert.doesNotMatch(quickStart, /agentpay doctor/i);
     assert.doesNotMatch(quickStart, /agentpay setup-web/i);
     assert.doesNotMatch(quickStart, /config\.json/);
+
+    // The published package name must never drift back to the Celo fork source.
+    assert.doesNotMatch(contents, /npx @agentpay-ai\/agentpay-celo install/);
   });
 
-  it("keeps public AgentPay docs aligned to Celo for the standalone hackathon branch", async () => {
+  // This fork inherits Celo lineage. Public docs may reference it, but must
+  // never drift back to the OKX X Layer origin they were forked away from.
+  it("keeps public AgentPay docs free of X Layer origin content", async () => {
     const files = [
       "README.md",
       "packages/cli/README.md",
@@ -125,35 +131,51 @@ describe("README", () => {
     }
   });
 
-  it("keeps the agreed hackathon payment scope visible", async () => {
+  it("keeps the agreed hackathon capability scope visible", async () => {
     const contents = await readFile("README.md", "utf8");
 
-    for (const capability of [
-      /send payments/i,
-      /invoice/i,
-      /x402/i,
-      /batch payout/i,
-      /remittance/i,
-      /agent-to-agent/i,
+    for (const tool of [
+      /setup_agent_wallet/,
+      /get_agent_budget/,
+      /withdraw_agent_budget/,
+      /send_usdc/,
+      /pay_invoice/,
+      /batch_payout/,
+      /list_agent_activity/,
+      /search_paid_services/,
+      /pay_paid_service/,
+      /get_unified_balance/,
+      /bridge_usdc/,
+      /swap_and_pay/,
+      /register_agent_identity/,
+      /get_agent_trust/,
     ]) {
-      assert.match(contents, capability);
+      assert.match(contents, tool, `README must document ${tool.source}`);
     }
   });
 
-  it("documents the verified PUBLIC Celo deployment and onchain evidence", async () => {
+  it("states Arc testnet status honestly and claims no unverified deployment", async () => {
     const contents = await readFile("README.md", "utf8");
 
-    assert.match(contents, /READY\s*\/\s*PUBLIC/);
-    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/celo\/readyz/);
-    assert.match(contents, /https:\/\/wallet\.agentpay\.site\/celo\/readyz/);
-    assert.match(contents, /https:\/\/8004scan\.io\/agents\/celo\/9720/);
-    assert.match(contents, /0xA495Eaff5809Efb32beb6eCd18a48e9469Acf121/i);
-    assert.match(contents, /0x7e1d7834e57f9e16393329ba37a7c5e7a39f6735/i);
-    assert.match(contents, /celo_442daeb34ae2/);
-    assert.match(contents, /0x900a9cfe473ed82ae15b343a9ca9b6a9919542fa84f83be97b3a934d32a1940f/);
-    assert.match(contents, /0x8820bf87809243afdf028949e30c84abd89b06b388a3b32f762e54bce450a716/);
-    assert.match(contents, /0\.01 USDC/);
-    assert.match(contents, /canonical Celo USDC|USDC-only/i);
+    // Arc has no mainnet; the README must say so rather than imply a launch.
+    assert.match(contents, /Arc Testnet only/i);
+    assert.match(contents, /no Arc mainnet|has not launched (?:one|a mainnet)/i);
+
+    // The Celo mainnet deployment belongs to the sibling repository. Its
+    // evidence must never be pasted here and read as Arc evidence.
+    for (const celoEvidence of [
+      /0xA495Eaff5809Efb32beb6eCd18a48e9469Acf121/i,
+      /0x7e1d7834e57f9e16393329ba37a7c5e7a39f6735/i,
+      /celo_442daeb34ae2/,
+      /0x900a9cfe473ed82ae15b343a9ca9b6a9919542fa84f83be97b3a934d32a1940f/,
+      /0x8820bf87809243afdf028949e30c84abd89b06b388a3b32f762e54bce450a716/,
+      /8004scan\.io\/agents\/celo/,
+    ]) {
+      assert.doesNotMatch(contents, celoEvidence, "Celo deployment evidence must not appear in the Arc README");
+    }
+
+    // The fork lineage stays acknowledged so the inherited Celo code is explained.
+    assert.match(contents, /isolated fork|inherited/i);
   });
 
   it("keeps installed agent instructions aligned to the Codex operational workflows", async () => {
@@ -197,9 +219,28 @@ describe("README", () => {
     }
   });
 
+  it("keeps the Arc x402 buyer path documented on the public Arc docs", async () => {
+    for (const file of ["README.md", "packages/cli/README.md"]) {
+      const contents = await readFile(file, "utf8");
+
+      assert.match(contents, /search_paid_services/, `${file} must describe paid-service discovery`);
+      assert.match(contents, /inspect_paid_service/, `${file} must describe quote inspection`);
+      assert.match(contents, /pay_paid_service/, `${file} must describe the buyer execution tool`);
+      assert.match(contents, /circle services pay/, `${file} must name the Agent Wallet buyer command`);
+      assert.match(contents, /Arcscan/i, `${file} must describe onchain proof links`);
+      assert.doesNotMatch(
+        contents,
+        /GatewayClient|BatchEvmScheme/,
+        `${file} must not put the EOA-only buyer SDK in the Agent Wallet path`,
+      );
+    }
+  });
+
+  // Legacy Celo-shaped surfaces that this Arc migration has not rewritten yet.
+  // The central MCP server still registers the Celo owner-signature tool flow,
+  // so these files stay under their original contract until that is migrated.
   it("keeps x402 instructions on the AgentPay receipt-proof retry flow", async () => {
     const files = [
-      "README.md",
       "packages/skill/SKILL.md",
       "apps/mcp-server/README.md",
       "packages/cli/templates/codex/AGENTS.md",
