@@ -6,6 +6,7 @@ import {
   arcAgentJobCreateInputSchema,
   arcAgentJobFundInputSchema,
   arcAgentJobIdSchema,
+  arcAgentJobProofSchema,
   arcAgentJobReadInputSchema,
   arcAgentJobRejectInputSchema,
   arcAgentJobSubmitInputSchema,
@@ -220,12 +221,22 @@ async function submitOnce(
   }
 
   try {
-    const proof = await dependencies.proofReader.proveMutation(transaction.id, {
+    const rawProof = await dependencies.proofReader.proveMutation(transaction.id, {
       // The contract this write actually targeted, not the module's default.
       // fund_agent_job approves against USDC first, so a hardcoded expectation
       // would send the proof reader hunting on the wrong contract.
       contract: input.contract,
       jobId,
+    });
+
+    // The proof reader returns plain strings. Parse the whole shape before any
+    // of it is trusted: the persistence layer constrains the hash to lowercase
+    // and the block number to a non-negative numeric, so a malformed value
+    // would only fail AFTER the onchain mutation had already happened.
+    const proof = arcAgentJobProofSchema.parse({
+      transactionHash: rawProof.transactionHash,
+      blockNumber: rawProof.blockNumber,
+      ...(rawProof.jobId === undefined ? {} : { jobId: rawProof.jobId }),
     });
 
     return {
@@ -245,7 +256,7 @@ async function submitOnce(
       circleTransactionId: transaction.id,
       reconciliationRequired: true,
       reconciliationMessage:
-        "The transaction was submitted but no receipt could be verified. Confirm it on Arcscan before treating the job state as advanced.",
+        "The transaction was submitted but no valid receipt could be verified. Confirm it on Arcscan before treating the job state as advanced.",
     };
   }
 }

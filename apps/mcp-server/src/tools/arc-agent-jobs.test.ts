@@ -37,6 +37,28 @@ function assertAdapterAccepts(input: Record<string, unknown>): void {
   circleContractExecutionInputSchema.parse(input);
 }
 
+/**
+ * Mirrors the constraints in 20260726100000_arc_agent_jobs.sql. A double that
+ * accepts anything cannot surface a write that the real database would reject
+ * after the onchain mutation has already happened.
+ */
+function assertSqlConstraints(row: Record<string, unknown>): void {
+  const check = (field: string, pattern: RegExp) => {
+    const value = row[field];
+    if (value === undefined || value === null) return;
+    if (!pattern.test(String(value))) {
+      throw new Error(`SQL constraint violated: ${field}=${String(value)}`);
+    }
+  };
+
+  check("jobId", /^(?:0|[1-9][0-9]*)$/);
+  check("transactionHash", /^0x[0-9a-f]{64}$/);
+  check("blockNumber", /^(?:0|[1-9][0-9]*)$/);
+  check("deliverableHash", /^0x[0-9a-f]{64}$/);
+  check("reasonHash", /^0x[0-9a-f]{64}$/);
+  check("explorerUrl", /^https:\/\/testnet\.arcscan\.app\/tx\/0x[0-9a-f]{64}$/);
+}
+
 function job(overrides: Partial<ArcAgentJobOnchainRecord> = {}): ArcAgentJobOnchainRecord {
   return {
     id: "1",
@@ -105,9 +127,11 @@ function harness(options: {
     },
     repository: {
       saveJob: async (input) => {
+        assertSqlConstraints(input as unknown as Record<string, unknown>);
         saved.push(input as unknown as Record<string, unknown>);
       },
       appendEvent: async (input) => {
+        assertSqlConstraints(input as unknown as Record<string, unknown>);
         events.push(input as unknown as Record<string, unknown>);
       },
     },
@@ -845,5 +869,67 @@ describe("transaction boundary correctness", () => {
       /budget changed/i,
     );
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("the whole proof shape is validated, not just the job id", () => {
+  it("refuses a malformed transaction hash or block number before persisting", async () => {
+    const { dependencies, saved, events } = harness({
+      proveMutation: () => ({
+        transactionHash: "not-a-hash",
+        blockNumber: "not-a-number",
+        jobId: "1",
+      }),
+    });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.createAgentJob({
+      provider: PROVIDER,
+      evaluator: EVALUATOR,
+      expiredAt: FUTURE,
+      description: "Ship",
+    });
+
+    assert.equal(output.status, "RECONCILIATION_REQUIRED");
+    assert.equal(saved.length, 0, "a malformed proof must not reach persistence");
+    assert.equal(events.length, 0);
+  });
+
+  it("refuses an uppercase transaction hash the database would reject", async () => {
+    const { dependencies, saved } = harness({
+      record: job({ state: "Submitted" }),
+      wallets: [EVALUATOR],
+      proveMutation: () => ({
+        transactionHash: `0x${"CD".repeat(32)}`,
+        blockNumber: "42",
+      }),
+    });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.completeAgentJob({
+      jobId: "1",
+      reason: HASH,
+      walletAddress: EVALUATOR,
+    });
+
+    assert.equal(output.status, "RECONCILIATION_REQUIRED");
+    assert.equal(saved.length, 0);
+  });
+
+  it("refuses a negative block number", async () => {
+    const { dependencies, saved } = harness({
+      proveMutation: () => ({ transactionHash: TX_HASH, blockNumber: "-1", jobId: "1" }),
+    });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    const output = await handlers.createAgentJob({
+      provider: PROVIDER,
+      evaluator: EVALUATOR,
+      expiredAt: FUTURE,
+      description: "Ship",
+    });
+
+    assert.equal(output.status, "RECONCILIATION_REQUIRED");
+    assert.equal(saved.length, 0);
   });
 });

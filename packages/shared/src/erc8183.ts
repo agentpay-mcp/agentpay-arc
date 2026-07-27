@@ -107,6 +107,10 @@ export const ARC_ERC8183_MINIMUM_EXPIRY_SECONDS = 300;
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 const UINT256_MAX = (1n << 256n) - 1n;
 
+/** Shared so every guard uses the same notion of "safe to pass to BigInt". */
+const CANONICAL_UINT_PATTERN = /^(?:0|[1-9]\d*)$/;
+
+
 /**
  * Roles as the DEPLOYED reference implementation enforces them, not as the
  * EIP's illustrative flow narrates them. The prose example shows
@@ -174,7 +178,24 @@ export const arcAgentJobIdSchema = z
   .regex(/^(?:0|[1-9]\d*)$/, "Expected a canonical uint256 job id")
   // Guarded: zod still runs this refinement after a failed regex, and a bare
   // BigInt() on non-numeric text throws instead of returning a parse failure.
-  .refine((value) => !/^(?:0|[1-9]\d*)$/.test(value) || BigInt(value) <= UINT256_MAX, "Job id exceeds uint256");
+  .refine((value) => !CANONICAL_UINT_PATTERN.test(value) || BigInt(value) <= UINT256_MAX, "Job id exceeds uint256");
+
+/**
+ * A verified receipt. `proveMutation` returns plain strings, so the whole shape
+ * is parsed before any of it is trusted: the persistence layer constrains the
+ * hash to lowercase and the block number to a non-negative numeric, and a
+ * malformed value would only fail AFTER the onchain mutation.
+ */
+export const arcAgentJobProofSchema = z
+  .object({
+    transactionHash: z.string().trim().regex(/^0x[0-9a-f]{64}$/, "Expected a canonical lowercase transaction hash"),
+    blockNumber: z
+      .string()
+      .trim()
+      .regex(CANONICAL_UINT_PATTERN, "Expected a canonical non-negative block number"),
+    jobId: arcAgentJobIdSchema.optional(),
+  })
+  .strict();
 
 /**
  * Lowercase only. The persistence layer constrains these columns to
@@ -211,7 +232,7 @@ const expiredAtSchema = z
   .trim()
   .regex(/^(?:0|[1-9]\d*)$/, "Expected a unix timestamp in seconds")
   .refine(
-    (value) => !/^(?:0|[1-9]\d*)$/.test(value) || BigInt(value) <= UINT256_MAX,
+    (value) => !CANONICAL_UINT_PATTERN.test(value) || BigInt(value) <= UINT256_MAX,
     "Expiry exceeds uint256",
   );
 
@@ -234,7 +255,13 @@ export const arcAgentJobCreateInputSchema = z
     // The deployed contract reverts with ExpiryTooShort unless
     // expiredAt > block.timestamp + 5 minutes. Rejecting locally keeps a
     // guaranteed revert from ever reaching the wallet.
-    (input) => BigInt(input.expiredAt) > BigInt(Math.floor(Date.now() / 1000) + ARC_ERC8183_MINIMUM_EXPIRY_SECONDS),
+    //
+    // Guarded: this object-level refine runs even when expiredAtSchema already
+    // failed, so an unguarded BigInt() here would throw instead of returning a
+    // parse failure. Guarding the field schema alone was not enough.
+    (input) =>
+      !CANONICAL_UINT_PATTERN.test(input.expiredAt) ||
+      BigInt(input.expiredAt) > BigInt(Math.floor(Date.now() / 1000) + ARC_ERC8183_MINIMUM_EXPIRY_SECONDS),
     {
       message: "Expiry must be more than 5 minutes in the future",
       path: ["expiredAt"],

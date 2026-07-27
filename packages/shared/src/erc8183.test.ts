@@ -237,6 +237,17 @@ describe("ERC-8183 input schemas", () => {
     assert.doesNotThrow(() => arcAgentJobRejectInputSchema.parse({ jobId: "1", reason: HASH }));
   });
 
+  it("fails rather than throws on malformed expiry through the FULL create schema", () => {
+    // Guarding expiredAtSchema alone is not enough: the object-level refine
+    // runs its own BigInt() on the raw input.
+    const base = { provider: PROVIDER, evaluator: EVALUATOR, description: "Ship" };
+
+    for (const bad of ["not-a-uint256", "1e3", "0x1", "", " "]) {
+      const result = arcAgentJobCreateInputSchema.safeParse({ ...base, expiredAt: bad });
+      assert.equal(result.success, false, `${bad} must fail, not throw`);
+    }
+  });
+
   it("fails rather than throws on non-numeric text", () => {
     // zod runs refinements after a failed regex, so an unguarded BigInt() here
     // would throw instead of returning a parse failure.
