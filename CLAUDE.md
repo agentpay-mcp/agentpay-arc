@@ -110,10 +110,12 @@ native USDC gas     18 metadata decimals
 CCTP/Gateway domain 26
 ```
 
-> **Known divergence:** `packages/shared/src/chains.ts` currently pins
-> `https://rpc.testnet.arc.io`. Both hosts answer and both return chain
-> `5042002`, but Arc's docs list `rpc.testnet.arc.network` as the canonical
-> ("New RPC URL") endpoint. Treat `arc.io` as an undocumented alias.
+> **Canonical RPC decided 27 Jul 2026:** `https://rpc.testnet.arc.network` — the
+> current Primary (Circle) endpoint in Arc's RPC endpoints and Connect to Arc
+> docs. `packages/shared/src/chains.ts` still pins the inherited
+> `https://rpc.testnet.arc.io`; both hosts answer and both return chain
+> `5042002`, so nothing is broken. Aligning `chains.ts` is integrator-owned work
+> tracked separately — do not change it opportunistically.
 
 ### The 18/6 decimal trap
 
