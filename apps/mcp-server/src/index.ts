@@ -7,6 +7,8 @@ export * from "./mcp/arc-payments.ts";
 export * from "./mcp/arc-agent-payment.ts";
 export * from "./mcp/arc-agent-identity.ts";
 export * from "./mcp/arc-liquidity.ts";
+export * from "./mcp/arc-agent-jobs.ts";
+export * from "./tools/arc-agent-jobs.ts";
 export * from "./mcp/consumer-auth.ts";
 export {
   startAgentPayHttpServer,

@@ -42,6 +42,11 @@ export interface ArcAgentJobReader {
   evaluatorFeeBasisPoints(): Promise<number>;
   /** Atomic units of the six-decimal USDC ERC-20 interface. */
   usdcAllowance(owner: string, spender: string): Promise<string>;
+  /**
+   * `createJob` reverts HookNotWhitelisted for an unlisted hook. Verified on
+   * chain that the zero address IS whitelisted, so the default path is safe.
+   */
+  isHookWhitelisted(hook: string): Promise<boolean>;
 }
 
 export interface ArcAgentJobProofReader {
@@ -297,8 +302,17 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
     async createAgentJob(rawInput: unknown): Promise<ArcAgentJobMutationOutput> {
       const input = arcAgentJobCreateInputSchema.parse(rawInput);
       const wallet = await selectWallet(dependencies.circleCli, input.walletAddress);
+      const hook = input.hook ?? ZERO_ADDRESS;
 
-      const output = await submitOnce(dependencies, "CREATE", {
+      // A non-whitelisted hook is a known revert. Refuse before spending a
+      // wallet mutation on a call that cannot succeed.
+      if (!(await dependencies.reader.isHookWhitelisted(hook))) {
+        throw new Error(
+          `Hook ${hook} is not whitelisted by the ERC-8183 contract; createJob would revert HookNotWhitelisted.`,
+        );
+      }
+
+      const submitted = await submitOnce(dependencies, "CREATE", {
         contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
         address: wallet,
         functionSignature: "createJob(address,address,uint256,string,address)",
@@ -307,18 +321,31 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
           input.evaluator,
           input.expiredAt,
           input.description,
-          input.hook ?? ZERO_ADDRESS,
+          hook,
         ],
       } as ContractExecutionInput);
 
-      // The id exists only in the JobCreated event. Without a proven one there
-      // is no row we can honestly write: an empty id violates the schema, and
-      // inventing one would let a retry create a duplicate job on chain.
+      // The id exists only in JobCreated. A receipt that verifies without
+      // decoding it is still not a usable create: both SQL tables require a
+      // numeric job_id, so persisting "" would throw AFTER the onchain
+      // mutation, hide the reconciliation response, and invite a duplicate
+      // retry. Downgrade to reconciliation instead.
+      const output: ArcAgentJobMutationOutput =
+        submitted.status === "SUBMITTED" && !submitted.jobId
+          ? {
+              ...submitted,
+              status: "RECONCILIATION_REQUIRED",
+              reconciliationRequired: true,
+              reconciliationMessage:
+                "The create transaction was verified but its JobCreated id could not be decoded. Recover the job id from Arcscan before retrying; retrying blind would create a second job.",
+            }
+          : submitted;
+
       if (output.status === "SUBMITTED" && output.jobId) {
         await dependencies.repository.saveJob({
           jobId: output.jobId,
           description: input.description,
-          hook: input.hook ?? ZERO_ADDRESS,
+          hook,
           client: wallet,
           provider: input.provider,
           evaluator: input.evaluator,
@@ -330,18 +357,23 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
         });
       }
 
-      await audit({
-        jobId: output.jobId ?? "",
+      // Only audit a create once its numeric id is known. An unresolved create
+      // is surfaced through the returned reconciliation message, never through
+      // an event row the repository cannot accept.
+      if (output.jobId) {
+        await audit({
+        jobId: output.jobId,
         action: "CREATE",
         fromState: null,
-        toState: output.status === "SUBMITTED" && output.jobId ? "Open" : null,
+        toState: output.status === "SUBMITTED" ? "Open" : null,
         actor: wallet,
         circleTransactionId: output.circleTransactionId,
         transactionHash: output.transactionHash,
         blockNumber: output.blockNumber,
         explorerUrl: output.explorerUrl,
         status: output.status,
-      });
+        });
+      }
 
       return output;
     },
@@ -588,7 +620,8 @@ const walletProperty = {
 } as const;
 
 const jobIdProperty = { type: "string", pattern: "^(?:0|[1-9][0-9]*)$" } as const;
-const hashProperty = { type: "string", pattern: "^0x[0-9a-fA-F]{64}$" } as const;
+// Lowercase only: the shared schema and the SQL constraint both reject mixed case.
+const hashProperty = { type: "string", pattern: "^0x[0-9a-f]{64}$" } as const;
 const addressProperty = { type: "string", pattern: "^0x[0-9a-fA-F]{40}$" } as const;
 
 function objectSchema(
@@ -611,7 +644,10 @@ export const createAgentJobTool = {
       description: { type: "string", minLength: 1, maxLength: 2_048 },
       hook: addressProperty,
     },
-    ["evaluator", "expiredAt", "description"],
+    // provider is required: this surface has no setProvider, so a job without
+    // one can never be funded. Advertising it as optional would tell clients an
+    // input is valid that the handler always rejects.
+    ["provider", "evaluator", "expiredAt", "description"],
   ),
 } as const;
 
