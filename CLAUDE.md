@@ -110,12 +110,13 @@ native USDC gas     18 metadata decimals
 CCTP/Gateway domain 26
 ```
 
-> **Canonical RPC decided 27 Jul 2026:** `https://rpc.testnet.arc.network` — the
-> current Primary (Circle) endpoint in Arc's RPC endpoints and Connect to Arc
-> docs. `packages/shared/src/chains.ts` still pins the inherited
-> `https://rpc.testnet.arc.io`; both hosts answer and both return chain
-> `5042002`, so nothing is broken. Aligning `chains.ts` is integrator-owned work
-> tracked separately — do not change it opportunistically.
+> **Project RPC selection confirmed 27 Jul 2026:**
+> `https://rpc.testnet.arc.network`. It matches this repository's public
+> configuration, Arc's Connect to Arc guide, and the pinned Viem chain
+> definition. Arc's dedicated RPC endpoints page currently lists
+> `https://rpc.testnet.arc.io` instead; both hosts answer with chain `5042002`.
+> Treat `arc.io` as a supported alternative, while keeping AgentPay metadata
+> consistent on `arc.network`.
 
 ### The 18/6 decimal trap
 

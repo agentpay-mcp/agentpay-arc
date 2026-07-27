@@ -86,8 +86,8 @@ export const ARC_NETWORKS = {
     circleChain: "ARC-TESTNET",
     name: "Arc Testnet",
     nativeCurrency: { symbol: "USDC", decimals: 18 },
-    rpcUrl: "https://rpc.testnet.arc.io",
-    websocketUrl: "wss://rpc.testnet.arc.io",
+    rpcUrl: "https://rpc.testnet.arc.network",
+    websocketUrl: "wss://rpc.testnet.arc.network",
     explorerUrl: "https://testnet.arcscan.app",
   },
 } as const;
