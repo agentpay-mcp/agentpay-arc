@@ -73,6 +73,14 @@ test("the detail page cannot execute a payment", async ({ page }) => {
   await expect(page.locator("button[type=submit]")).toHaveCount(0);
 });
 
+test("activity refuses a forged tenant header", async ({ page }) => {
+  await page.setExtraHTTPHeaders({ "x-tenant": "tenant-a" });
+  await page.goto("/activity");
+
+  await expect(page.getByRole("heading", { name: /Sign in required/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /View proof on Arcscan/i })).toHaveCount(0);
+});
+
 test("activity refuses an anonymous visitor", async ({ page }) => {
   await page.goto("/activity");
 
@@ -81,7 +89,7 @@ test("activity refuses an anonymous visitor", async ({ page }) => {
 });
 
 test("activity shows a working Arcscan proof link for a signed-in tenant", async ({ page }) => {
-  await page.setExtraHTTPHeaders({ "x-tenant": "tenant-a" });
+  await page.setExtraHTTPHeaders({ authorization: "Bearer e2e-tenant-a" });
   await page.goto("/activity");
 
   const proof = page.getByRole("link", { name: /View proof on Arcscan/i });

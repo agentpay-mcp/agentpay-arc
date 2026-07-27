@@ -29,10 +29,23 @@ export function startMarketplaceServer(
   const server = createServer((incoming, outgoing) => {
     let request: Request;
 
+    const target = incoming.url ?? "/";
+
+    // Only origin-form targets. `new URL(target, origin)` happily accepts an
+    // absolute-form target, which lets a raw client replace the configured
+    // origin: `GET http://evil.example/activity` reached the handler with
+    // request.url set to the attacker's origin. Authority-form (`//host/path`)
+    // does the same through protocol-relative resolution.
+    if (!target.startsWith("/") || target.startsWith("//")) {
+      outgoing.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+      outgoing.end("Bad request.");
+      return;
+    }
+
     try {
       // Construction is synchronous, so it must be inside the guard: a promise
       // catch further down would never see it.
-      request = new Request(new URL(incoming.url ?? "/", origin), {
+      request = new Request(new URL(target, origin), {
         method: incoming.method ?? "GET",
         headers: forwardableHeaders(incoming.headers),
       });
@@ -58,14 +71,21 @@ export function startMarketplaceServer(
 }
 
 /**
- * Session resolution needs the credential headers, so they are forwarded --
- * but only the ones a session can legitimately live in, and never the Host
- * header we deliberately ignore.
+ * Only headers that carry a credential the caller cannot mint.
+ *
+ * `x-tenant` was forwarded here once. That was the whole bug: it names a tenant
+ * without proving anything, so any raw client could ask for another tenant's
+ * receipts and get them. A tenant must be *derived* from a verified credential,
+ * never *asserted* by the caller. If a trusted proxy ever needs to inject one,
+ * it has to strip the client copy first and be configured explicitly -- not
+ * inherited by default here.
  */
+const FORWARDED_CREDENTIAL_HEADERS = ["authorization", "cookie"] as const;
+
 function forwardableHeaders(source: NodeJS.Dict<string | string[]>): Headers {
   const headers = new Headers();
 
-  for (const name of ["authorization", "cookie", "x-tenant"]) {
+  for (const name of FORWARDED_CREDENTIAL_HEADERS) {
     const value = source[name];
     if (typeof value === "string") headers.set(name, value);
   }

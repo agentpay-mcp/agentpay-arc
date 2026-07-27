@@ -47,9 +47,12 @@ function deps(overrides: Partial<MarketplaceDependencies> = {}): MarketplaceDepe
       ],
     },
     sessions: {
+      // A credential the caller cannot mint. Naming a tenant is not a session.
       resolve: async (request: Request) => {
-        const tenant = request.headers.get("x-tenant");
-        return tenant ? { tenantId: tenant } : null;
+        const token = request.headers.get("authorization");
+        if (token === "Bearer tenant-a-token") return { tenantId: "tenant-a" };
+        if (token === "Bearer tenant-b-token") return { tenantId: "tenant-b" };
+        return null;
       },
     },
     activity: {
@@ -71,7 +74,7 @@ function deps(overrides: Partial<MarketplaceDependencies> = {}): MarketplaceDepe
 async function get(
   handler: (request: Request) => Promise<Response>,
   path: string,
-  headers: Record<string, string> = { "x-tenant": "tenant-a" },
+  headers: Record<string, string> = { authorization: "Bearer tenant-a-token" },
 ) {
   return handler(new Request(`https://marketplace.test${path}`, { headers }));
 }
@@ -332,7 +335,7 @@ describe("activity is bound to a verified tenant", () => {
       }),
     );
 
-    await get(handler, "/activity?tenantId=tenant-injected", { "x-tenant": "ignored" });
+    await get(handler, "/activity?tenantId=tenant-injected", { authorization: "Bearer tenant-a-token" });
 
     assert.deepEqual(seen, ["tenant-from-session"]);
   });
@@ -356,8 +359,8 @@ describe("activity is bound to a verified tenant", () => {
       }),
     );
 
-    const a = await (await get(handler, "/activity", { "x-tenant": "tenant-a" })).text();
-    const b = await (await get(handler, "/activity", { "x-tenant": "tenant-b" })).text();
+    const a = await (await get(handler, "/activity", { authorization: "Bearer tenant-a-token" })).text();
+    const b = await (await get(handler, "/activity", { authorization: "Bearer tenant-b-token" })).text();
 
     assert.match(a, /0\.010000/);
     assert.doesNotMatch(a, /9\.990000/, "tenant A must never see tenant B's activity");

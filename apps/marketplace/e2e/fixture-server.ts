@@ -8,11 +8,13 @@ const TX = `0x${"cd".repeat(32)}`;
 const dependencies: MarketplaceDependencies = {
   // The fixture treats a header as the session so the e2e run can exercise
   // both the anonymous and the authenticated path without a real auth stack.
+  // A bearer credential, not a header that merely names a tenant: the listener
+  // deliberately refuses to forward anything of the latter kind.
   sessions: {
-    resolve: async (request) => {
-      const tenant = request.headers.get("x-tenant");
-      return tenant ? { tenantId: tenant } : null;
-    },
+    resolve: async (request) =>
+      request.headers.get("authorization") === "Bearer e2e-tenant-a"
+        ? { tenantId: "tenant-a" }
+        : null,
   },
   services: {
     search: async ({ query, category }) =>
