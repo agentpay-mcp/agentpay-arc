@@ -111,33 +111,86 @@ describe("ERC-8183 lifecycle transitions", () => {
 describe("ERC-8183 role enforcement", () => {
   const job = { client: CLIENT, provider: PROVIDER, evaluator: EVALUATOR } as const;
 
-  it("binds each action to the role the specification requires", () => {
-    assert.doesNotThrow(() => assertArcAgentJobRole("fund", job, CLIENT));
-    assert.doesNotThrow(() => assertArcAgentJobRole("submit", job, PROVIDER));
-    assert.doesNotThrow(() => assertArcAgentJobRole("complete", job, EVALUATOR));
-    assert.doesNotThrow(() => assertArcAgentJobRole("setBudget", job, PROVIDER));
-    assert.doesNotThrow(() => assertArcAgentJobRole("setBudget", job, CLIENT));
+  it("binds each action to the role the deployed contract requires", () => {
+    assert.doesNotThrow(() => assertArcAgentJobRole("fund", job, CLIENT, "Open"));
+    assert.doesNotThrow(() => assertArcAgentJobRole("submit", job, PROVIDER, "Funded"));
+    assert.doesNotThrow(() => assertArcAgentJobRole("complete", job, EVALUATOR, "Submitted"));
+  });
+
+  it("allows only the provider to set a budget, as the deployed contract enforces", () => {
+    // The EIP's prose flow narrates "Client -> setBudget", but the reference
+    // implementation reverts unless msg.sender == job.provider.
+    assert.doesNotThrow(() => assertArcAgentJobRole("setBudget", job, PROVIDER, "Open"));
+    assert.throws(() => assertArcAgentJobRole("setBudget", job, CLIENT, "Open"), /provider/i);
+    assert.throws(() => assertArcAgentJobRole("setBudget", job, EVALUATOR, "Open"), /provider/i);
+  });
+
+  it("makes reject state-sensitive exactly as the deployed contract does", () => {
+    // Open -> client only. Funded/Submitted -> evaluator only.
+    assert.doesNotThrow(() => assertArcAgentJobRole("reject", job, CLIENT, "Open"));
+    assert.throws(() => assertArcAgentJobRole("reject", job, EVALUATOR, "Open"), /client/i);
+
+    for (const state of ["Funded", "Submitted"] as const) {
+      assert.doesNotThrow(() => assertArcAgentJobRole("reject", job, EVALUATOR, state));
+      assert.throws(
+        () => assertArcAgentJobRole("reject", job, CLIENT, state),
+        /evaluator/i,
+        `client must not reject a ${state} job -- it reverts on chain`,
+      );
+    }
   });
 
   it("refuses an action from the wrong role", () => {
-    assert.throws(() => assertArcAgentJobRole("fund", job, PROVIDER), /client/i);
-    assert.throws(() => assertArcAgentJobRole("submit", job, CLIENT), /provider/i);
-    assert.throws(() => assertArcAgentJobRole("complete", job, PROVIDER), /evaluator/i);
+    assert.throws(() => assertArcAgentJobRole("fund", job, PROVIDER, "Open"), /client/i);
+    assert.throws(() => assertArcAgentJobRole("submit", job, CLIENT, "Funded"), /provider/i);
+    assert.throws(() => assertArcAgentJobRole("complete", job, PROVIDER, "Submitted"), /evaluator/i);
   });
 
   it("compares addresses case-insensitively without mutating canonical output", () => {
-    assert.doesNotThrow(() => assertArcAgentJobRole("fund", job, CLIENT.toUpperCase().replace("0X", "0x")));
+    assert.doesNotThrow(() =>
+      assertArcAgentJobRole("fund", job, CLIENT.toUpperCase().replace("0X", "0x"), "Open"),
+    );
   });
 
   it("never treats the zero address as a role holder", () => {
     const unassigned = { client: CLIENT, provider: ZERO, evaluator: EVALUATOR } as const;
-    assert.throws(() => assertArcAgentJobRole("submit", unassigned, ZERO), /zero address/i);
+    assert.throws(() => assertArcAgentJobRole("submit", unassigned, ZERO, "Funded"), /zero address/i);
   });
 });
 
 describe("ERC-8183 input schemas", () => {
+  it("requires an expiry past the deployed 5-minute floor", () => {
+    const base = { provider: PROVIDER, evaluator: EVALUATOR, description: "Ship" };
+    const now = Math.floor(Date.now() / 1000);
+
+    // The contract reverts ExpiryTooShort at or below now + 5 minutes.
+    assert.throws(
+      () => arcAgentJobCreateInputSchema.parse({ ...base, expiredAt: String(now + 240) }),
+      /5 minutes/i,
+    );
+    assert.doesNotThrow(() =>
+      arcAgentJobCreateInputSchema.parse({ ...base, expiredAt: String(now + 3_600) }),
+    );
+  });
+
+  it("requires a provider, because this tool surface has no setProvider", () => {
+    assert.throws(
+      () =>
+        arcAgentJobCreateInputSchema.parse({
+          evaluator: EVALUATOR,
+          expiredAt: FUTURE,
+          description: "Ship",
+        }),
+      /provider/i,
+    );
+  });
+
+  it("rejects an uppercase bytes32 hash the database would refuse", () => {
+    assert.throws(() => arcErc8183Bytes32Schema.parse(`0x${"AB".repeat(32)}`), /lowercase/i);
+  });
+
   it("requires a future expiry, a non-zero evaluator, and a bounded description", () => {
-    const base = { evaluator: EVALUATOR, expiredAt: FUTURE, description: "Ship the report" };
+    const base = { provider: PROVIDER, evaluator: EVALUATOR, expiredAt: FUTURE, description: "Ship the report" };
 
     assert.doesNotThrow(() => arcAgentJobCreateInputSchema.parse(base));
     assert.throws(() => arcAgentJobCreateInputSchema.parse({ ...base, evaluator: ZERO }), /evaluator/i);
@@ -148,11 +201,11 @@ describe("ERC-8183 input schemas", () => {
     );
   });
 
-  it("accepts an optional provider at creation but rejects the zero address", () => {
+  it("rejects a zero-address provider", () => {
     const base = { evaluator: EVALUATOR, expiredAt: FUTURE, description: "Ship" };
 
     assert.equal(arcAgentJobCreateInputSchema.parse({ ...base, provider: PROVIDER }).provider, PROVIDER);
-    assert.throws(() => arcAgentJobCreateInputSchema.parse({ ...base, provider: ZERO }), /provider/i);
+    assert.throws(() => arcAgentJobCreateInputSchema.parse({ ...base, provider: ZERO }), /provider|zero/i);
   });
 
   it("enforces exact six-decimal USDC budgets", () => {

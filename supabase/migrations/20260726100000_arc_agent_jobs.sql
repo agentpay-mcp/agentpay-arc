@@ -14,6 +14,10 @@ create table if not exists public.arc_agent_jobs (
   client_address text not null check (client_address ~ '^0x[0-9a-fA-F]{40}$'),
   provider_address text not null check (provider_address ~ '^0x[0-9a-fA-F]{40}$'),
   evaluator_address text not null check (evaluator_address ~ '^0x[0-9a-fA-F]{40}$'),
+  -- Needed by the Task 9 marketplace read model, which cannot re-read the chain.
+  description text not null check (length(description) between 1 and 2048),
+  hook_address text not null default '0x0000000000000000000000000000000000000000'
+    check (hook_address ~ '^0x[0-9a-fA-F]{40}$'),
   budget_atomic numeric(78, 0) not null default 0 check (budget_atomic >= 0),
   expired_at timestamptz not null,
   state text not null check (
@@ -27,11 +31,9 @@ create table if not exists public.arc_agent_jobs (
   check (updated_at >= created_at),
   -- The evaluator is mandatory at creation and can never be the zero address.
   check (evaluator_address <> '0x0000000000000000000000000000000000000000'),
-  -- A provider must be assigned before escrow can be funded.
-  check (
-    state = 'Open'
-    or provider_address <> '0x0000000000000000000000000000000000000000'
-  ),
+  -- A provider is required at creation: this tool surface exposes no
+  -- setProvider, so a job without one could never be funded.
+  check (provider_address <> '0x0000000000000000000000000000000000000000'),
   -- Escrow past Open must carry a budget.
   check (state = 'Open' or budget_atomic > 0),
   -- A deliverable only exists once the provider has submitted.

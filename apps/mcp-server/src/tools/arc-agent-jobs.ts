@@ -45,14 +45,25 @@ export interface ArcAgentJobReader {
 }
 
 export interface ArcAgentJobProofReader {
+  /**
+   * Resolves only when a receipt is verified. For a create, `jobId` carries the
+   * id decoded from the `JobCreated` event — the only place it exists, since
+   * `createJob` assigns it on chain.
+   */
   proveMutation(
     transactionId: string,
     expectation: { readonly contract: string; readonly jobId?: string },
-  ): Promise<{ readonly transactionHash: string; readonly blockNumber: string }>;
+  ): Promise<{
+    readonly transactionHash: string;
+    readonly blockNumber: string;
+    readonly jobId?: string;
+  }>;
 }
 
 export interface ArcAgentJobRecord {
   readonly jobId: string;
+  readonly description: string;
+  readonly hook: string;
   readonly client: string;
   readonly provider: string;
   readonly evaluator: string;
@@ -147,9 +158,28 @@ async function selectWallet(circleCli: CircleCli, requested?: string): Promise<s
 }
 
 /**
- * Runs a mutating Circle CLI command exactly once. A thrown error means the
- * outcome is unknown, not that it failed — the command may already be on chain.
- * We never retry and never infer failure; we hand back a reconciliation state.
+ * Errors that prove the command never reached the chain. The adapter validates
+ * arguments and session state before it spawns anything, so these are definite
+ * failures — reporting them as ambiguous would send the user to Arcscan to look
+ * for a transaction that cannot exist.
+ */
+const DEFINITE_NO_SUBMISSION_CODES = new Set(["INVALID_ARGUMENTS", "AUTH_REQUIRED", "TERMS_REQUIRED"]);
+
+function errorCodeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * Runs a mutating Circle CLI command exactly once, then proves it landed.
+ *
+ * Three outcomes, deliberately distinct:
+ *  - the adapter refused before submitting  -> throw, nothing happened
+ *  - submitted and proven                   -> SUBMITTED, safe to advance state
+ *  - submitted but unproven, or unknown     -> RECONCILIATION_REQUIRED
+ *
+ * A missing proof is NOT success. Without a verified receipt we cannot say the
+ * transaction landed, so durable state must not advance on it.
  */
 async function submitOnce(
   dependencies: ArcAgentJobDependencies,
@@ -160,7 +190,9 @@ async function submitOnce(
   let transaction;
   try {
     transaction = await dependencies.circleCli.executeContract(input);
-  } catch {
+  } catch (error) {
+    if (DEFINITE_NO_SUBMISSION_CODES.has(errorCodeOf(error) ?? "")) throw error;
+
     return {
       status: "RECONCILIATION_REQUIRED",
       operation,
@@ -171,27 +203,32 @@ async function submitOnce(
     };
   }
 
-  let proof: { transactionHash: string; blockNumber: string } | undefined;
   try {
-    proof = await dependencies.proofReader.proveMutation(transaction.id, {
+    const proof = await dependencies.proofReader.proveMutation(transaction.id, {
       contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
       jobId,
     });
+
+    return {
+      status: "SUBMITTED",
+      operation,
+      jobId: proof.jobId ?? jobId,
+      circleTransactionId: transaction.id,
+      transactionHash: proof.transactionHash,
+      blockNumber: proof.blockNumber,
+      explorerUrl: explorerUrl(proof.transactionHash),
+    };
   } catch {
-    proof = undefined;
+    return {
+      status: "RECONCILIATION_REQUIRED",
+      operation,
+      jobId,
+      circleTransactionId: transaction.id,
+      reconciliationRequired: true,
+      reconciliationMessage:
+        "The transaction was submitted but no receipt could be verified. Confirm it on Arcscan before treating the job state as advanced.",
+    };
   }
-
-  const transactionHash = proof?.transactionHash ?? transaction.txHash;
-
-  return {
-    status: "SUBMITTED",
-    operation,
-    jobId,
-    circleTransactionId: transaction.id,
-    transactionHash,
-    blockNumber: proof?.blockNumber,
-    explorerUrl: transactionHash ? explorerUrl(transactionHash) : undefined,
-  };
 }
 
 async function assertArcUsdcEscrow(dependencies: ArcAgentJobDependencies): Promise<string> {
@@ -226,7 +263,7 @@ async function loadJobForWrite(
     );
   }
 
-  assertArcAgentJobRole(action, job, wallet);
+  assertArcAgentJobRole(action, job, wallet, job.state);
   return job;
 }
 
@@ -237,6 +274,8 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
   ): Promise<void> => {
     await dependencies.repository.saveJob({
       jobId: job.id,
+      description: job.description,
+      hook: job.hook,
       client: job.client,
       provider: job.provider,
       evaluator: job.evaluator,
@@ -264,7 +303,7 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
         address: wallet,
         functionSignature: "createJob(address,address,uint256,string,address)",
         parameters: [
-          input.provider ?? ZERO_ADDRESS,
+          input.provider,
           input.evaluator,
           input.expiredAt,
           input.description,
@@ -272,25 +311,30 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
         ],
       } as ContractExecutionInput);
 
-      await dependencies.repository.saveJob({
-        // The job id is assigned on chain; it is recovered from the JobCreated
-        // event during reconciliation rather than guessed here.
-        jobId: output.jobId ?? "",
-        client: wallet,
-        provider: input.provider ?? ZERO_ADDRESS,
-        evaluator: input.evaluator,
-        budget: "0",
-        expiredAt: input.expiredAt,
-        state: "Open",
-        contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
-        chainId: ARC_TESTNET.chainId,
-      });
+      // The id exists only in the JobCreated event. Without a proven one there
+      // is no row we can honestly write: an empty id violates the schema, and
+      // inventing one would let a retry create a duplicate job on chain.
+      if (output.status === "SUBMITTED" && output.jobId) {
+        await dependencies.repository.saveJob({
+          jobId: output.jobId,
+          description: input.description,
+          hook: input.hook ?? ZERO_ADDRESS,
+          client: wallet,
+          provider: input.provider,
+          evaluator: input.evaluator,
+          budget: "0",
+          expiredAt: input.expiredAt,
+          state: "Open",
+          contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+          chainId: ARC_TESTNET.chainId,
+        });
+      }
 
       await audit({
         jobId: output.jobId ?? "",
         action: "CREATE",
         fromState: null,
-        toState: "Open",
+        toState: output.status === "SUBMITTED" && output.jobId ? "Open" : null,
         actor: wallet,
         circleTransactionId: output.circleTransactionId,
         transactionHash: output.transactionHash,
@@ -313,7 +357,7 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
       if (isArcAgentJobExpired(job.expiredAt, dependencies.now())) {
         throw new Error(`ERC-8183 job ${input.jobId} expired at ${job.expiredAt}.`);
       }
-      assertArcAgentJobRole("setBudget", job, wallet);
+      assertArcAgentJobRole("setBudget", job, wallet, job.state);
 
       const output = await submitOnce(
         dependencies,
@@ -327,12 +371,12 @@ export function createArcAgentJobHandlers(dependencies: ArcAgentJobDependencies)
         input.jobId,
       );
 
-      await record({ ...job, budget: input.amount }, job.state);
+      if (output.status === "SUBMITTED") await record({ ...job, budget: input.amount }, job.state);
       await audit({
         jobId: input.jobId,
         action: "SET_BUDGET",
         fromState: job.state,
-        toState: job.state,
+        toState: output.status === "SUBMITTED" ? job.state : null,
         actor: wallet,
         circleTransactionId: output.circleTransactionId,
         transactionHash: output.transactionHash,

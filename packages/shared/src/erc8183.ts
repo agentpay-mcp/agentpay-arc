@@ -101,25 +101,36 @@ export interface ArcAgentJobParticipants {
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/** The deployed contract reverts ExpiryTooShort at or below this margin. */
+export const ARC_ERC8183_MINIMUM_EXPIRY_SECONDS = 300;
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 const UINT256_MAX = (1n << 256n) - 1n;
 
 /**
- * Roles per ERC-8183. `setBudget` is deliberately shared: the client proposes or
- * accepts a budget and the provider may set it while the job is still Open.
- * `reject` is shared because the client may reject while Open and the evaluator
- * may reject while Funded or Submitted; the caller must additionally pass the
- * state check.
+ * Roles as the DEPLOYED reference implementation enforces them, not as the
+ * EIP's illustrative flow narrates them. The prose example shows
+ * "Client -> setBudget", but the reference implementation reverts unless
+ * `msg.sender == job.provider`. Deployed behaviour wins.
+ *
+ * `reject` is state-sensitive on chain:
+ *   Open              -> client only
+ *   Funded, Submitted -> evaluator only
+ *   otherwise         -> WrongStatus
+ *
+ * A role table that ignores state would accept calls that are certain to
+ * revert, so callers must pass the job's current state.
  */
-const ACTION_ROLES: Readonly<Record<ArcAgentJobAction, readonly (keyof ArcAgentJobParticipants)[]>> =
-  Object.freeze({
-    setProvider: ["client"],
-    setBudget: ["client", "provider"],
-    fund: ["client"],
-    submit: ["provider"],
-    complete: ["evaluator"],
-    reject: ["client", "evaluator"],
-  });
+type RoleResolver = (state: ArcAgentJobState) => readonly (keyof ArcAgentJobParticipants)[];
+
+const ACTION_ROLES: Readonly<Record<ArcAgentJobAction, RoleResolver>> = Object.freeze({
+  setProvider: () => ["client"],
+  setBudget: () => ["provider"],
+  fund: () => ["client"],
+  submit: () => ["provider"],
+  complete: () => ["evaluator"],
+  reject: (state: ArcAgentJobState) => (state === "Open" ? ["client"] : ["evaluator"]),
+} satisfies Record<ArcAgentJobAction, RoleResolver>);
 
 function normalizeAddress(address: string): string {
   return address.trim().toLowerCase();
@@ -129,6 +140,7 @@ export function assertArcAgentJobRole(
   action: ArcAgentJobAction,
   participants: ArcAgentJobParticipants,
   caller: string,
+  state: ArcAgentJobState,
 ): void {
   const normalizedCaller = normalizeAddress(caller);
 
@@ -139,7 +151,7 @@ export function assertArcAgentJobRole(
     throw new Error("The zero address can never hold an ERC-8183 job role.");
   }
 
-  const roles = ACTION_ROLES[action];
+  const roles = ACTION_ROLES[action](state);
   const matched = roles.some((role) => {
     const holder = normalizeAddress(participants[role]);
     return holder !== ZERO_ADDRESS && holder === normalizedCaller;
@@ -147,7 +159,7 @@ export function assertArcAgentJobRole(
 
   if (!matched) {
     throw new Error(
-      `ERC-8183 action ${action} requires the ${roles.join(" or ")} role; caller ${caller} holds neither.`,
+      `ERC-8183 action ${action} on a ${state} job requires the ${roles.join(" or ")} role; caller ${caller} does not hold it.`,
     );
   }
 }
@@ -162,10 +174,15 @@ export const arcAgentJobIdSchema = z
   .regex(/^(?:0|[1-9]\d*)$/, "Expected a canonical uint256 job id")
   .refine((value) => BigInt(value) <= UINT256_MAX, "Job id exceeds uint256");
 
+/**
+ * Lowercase only. The persistence layer constrains these columns to
+ * `^0x[0-9a-f]{64}$`, so accepting mixed case here would let a write pass
+ * validation and then fail at the database.
+ */
 export const arcErc8183Bytes32Schema = z
   .string()
   .trim()
-  .regex(/^0x[a-fA-F0-9]{64}$/, "Expected a canonical bytes32 hash");
+  .regex(/^0x[0-9a-f]{64}$/, "Expected a canonical lowercase bytes32 hash");
 
 const arcAddressSchema = z
   .string()
@@ -196,7 +213,12 @@ const expiredAtSchema = z
 export const arcAgentJobCreateInputSchema = z
   .object({
     walletAddress: arcAddressSchema.optional(),
-    provider: arcAddressSchema.optional(),
+    /**
+     * Required, not optional. This seven-tool surface exposes no `setProvider`,
+     * so a job created without one can never be funded — a dead end in the
+     * product rather than a state the user can recover from.
+     */
+    provider: arcAddressSchema,
     evaluator: arcAddressSchema,
     expiredAt: expiredAtSchema,
     description: z.string().trim().min(1).max(2_048, "Description must be at most 2048 characters"),
@@ -204,8 +226,14 @@ export const arcAgentJobCreateInputSchema = z
   })
   .strict()
   .refine(
-    (input) => BigInt(input.expiredAt) > BigInt(Math.floor(Date.now() / 1000)),
-    { message: "Expiry must be in the future", path: ["expiredAt"] },
+    // The deployed contract reverts with ExpiryTooShort unless
+    // expiredAt > block.timestamp + 5 minutes. Rejecting locally keeps a
+    // guaranteed revert from ever reaching the wallet.
+    (input) => BigInt(input.expiredAt) > BigInt(Math.floor(Date.now() / 1000) + ARC_ERC8183_MINIMUM_EXPIRY_SECONDS),
+    {
+      message: "Expiry must be more than 5 minutes in the future",
+      path: ["expiredAt"],
+    },
   );
 
 export const arcAgentJobBudgetInputSchema = z

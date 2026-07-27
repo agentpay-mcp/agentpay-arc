@@ -75,9 +75,16 @@ describe("Arc ERC-8183 agent jobs migration", () => {
       "evaluator must never be the zero address",
     );
     assert.ok(
-      sql.includes("or provider_address <> '0x0000000000000000000000000000000000000000'"),
-      "a provider must be assigned before the job leaves Open",
+      sql.includes("check (provider_address <> '0x0000000000000000000000000000000000000000')"),
+      "a provider is required at creation because there is no setProvider tool",
     );
+  });
+
+  it("stores the fields the Task 9 read model needs", async () => {
+    const sql = (await readFile(path, "utf8")).replace(/\s+/g, " ").toLowerCase();
+
+    assert.ok(sql.includes("description text not null"), "marketplace cannot re-read the chain");
+    assert.ok(sql.includes("hook_address text not null"), "hook must survive for the read model");
   });
 
   it("indexes the access paths the tools actually use", async () => {

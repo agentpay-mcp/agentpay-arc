@@ -15,6 +15,7 @@
     "src/index.ts",
     "src/mcp/agentpay-mcp.ts",
     "src/mcp/arc-agent-identity.ts",
+    "src/mcp/arc-agent-jobs.ts",
     "src/mcp/arc-agent-payment.ts",
     "src/mcp/arc-liquidity.ts",
     "src/mcp/arc-payments.ts",
