@@ -1,0 +1,32 @@
+{
+  "name": "@agentpay-ai/marketplace-arc",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "README.md",
+    "playwright.config.ts",
+    "src/index.ts",
+    "src/page.ts",
+    "src/server.ts",
+    "src/start.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "tsx src/start.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:e2e": "playwright test --config playwright.config.ts",
+    "typecheck": "tsc -p ../../tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentpay-ai/shared-arc": "0.1.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}
