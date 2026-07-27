@@ -62,22 +62,26 @@ plus pay-to, price, network, and asset values. `/healthz` remains free.
 Hosted mode needs no configuration at all, and the Circle Agent Wallet tools run
 on a config-free local MCP surface either way.
 
-Self-hosted staging/local configuration uses:
+`install --self-hosted` and `doctor` require the inherited Celo config surface,
+not an Arc one. `requiredConfigKeys` in `src/index.ts` is:
 
-- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`;
-- `ARC_TESTNET_RPC_URL`, an HTTPS Arc Testnet RPC endpoint;
-- the inherited Celo runtime keys, which the server still validates at startup;
-- Review & Sign secrets when the setup web flow is enabled.
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `CELO_RPC_URL`
+- `EXECUTOR_PRIVATE_KEY`
 
-Optional values include `SETUP_WEB_URL`, `LIFI_API_KEY`, and
-`X402_BAZAAR_FACILITATOR_URL`. See `.env.example` for the full key list and for
-which keys belong to the inherited Celo runtime rather than to Arc.
+Plus Review & Sign secrets when the setup web flow is enabled. Optional values
+include `SETUP_WEB_URL`, `LIFI_API_KEY`, and `X402_BAZAAR_FACILITATOR_URL`.
+
+`ARC_TESTNET_RPC_URL` is **not** read by this CLI. It is required by the MCP
+server's Arc readiness gate, so `.env.example` carries it, but `doctor` will not
+ask for it and will not report it missing.
 
 The Arc migration is incomplete at the configuration layer: the parser that
-starts the MCP server still requires the inherited Celo environment, while a
-separate Arc readiness gate expects Arc values. Use the values committed in
-`.env.example`; they are covered by a regression test that runs them through the
-real startup parser.
+starts the MCP server, this CLI's generator, and `doctor` all still require the
+inherited Celo environment, while a separate Arc readiness gate expects Arc
+values. Use the values committed in `.env.example`; they are covered by a
+regression test that runs them through the real startup parser.
 
 This package is an isolated Arc fork of AgentPay. The separate Celo and OKX
 X Layer deployments are unaffected by it.
