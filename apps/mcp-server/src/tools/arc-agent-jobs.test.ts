@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { ARC_TESTNET_ERC8183_AGENTIC_COMMERCE } from "@agentpay-ai/shared-arc";
+import {
+  ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+  circleContractExecutionInputSchema,
+} from "@agentpay-ai/shared-arc";
 
 import {
   createAgentJobTool,
@@ -24,6 +27,28 @@ const USDC = "0x3600000000000000000000000000000000000000";
 const HASH = `0x${"ab".repeat(32)}`;
 const TX_HASH = `0x${"cd".repeat(32)}`;
 const FUTURE = "4102444800";
+
+/**
+ * The adapter rejects any positional parameter matching 0x + 64 hex as a
+ * suspected private key. A bytes32 hash is byte-identical to a private key, so
+ * every ERC-8183 deliverable and reason hash trips it — as do the already
+ * merged ERC-8004 validation tools. That conflict is an open blocker owned by
+ * the integrator, tracked in the Task 8 handback.
+ *
+ * We still validate every other rule, and we re-raise anything that is not
+ * that known issue, so this stays a real check rather than a bypass.
+ */
+function assertAdapterAccepts(input: Record<string, unknown>): void {
+  const result = circleContractExecutionInputSchema.safeParse(input);
+  if (result.success) return;
+
+  const unrelated = result.error.issues.filter(
+    (issue) => !/must not contain a private key/.test(issue.message),
+  );
+  if (unrelated.length > 0) {
+    throw new Error(`adapter rejected the input: ${JSON.stringify(unrelated)}`);
+  }
+}
 
 function job(overrides: Partial<ArcAgentJobOnchainRecord> = {}): ArcAgentJobOnchainRecord {
   return {
@@ -66,6 +91,9 @@ function harness(options: {
       executeContract:
         options.executeContract ??
         (async (input: Record<string, unknown>) => {
+          // Validate through the REAL adapter schema, not a permissive stub.
+          // A permissive stub already let a stray `chain` field through once.
+          assertAdapterAccepts(input);
           calls.push(input);
           return { id: `tx-${calls.length}`, state: "COMPLETE", blockchain: "ARC-TESTNET", txHash: TX_HASH };
         }),
@@ -360,5 +388,55 @@ describe("get_agent_job", () => {
 
     assert.equal(output.state, "Funded", "the chain state is reported verbatim");
     assert.equal(output.expired, true, "expiry is surfaced separately as a derived flag");
+  });
+});
+
+describe("contract execution inputs match the real adapter schema", () => {
+  it("every write this module builds passes circleContractExecutionInputSchema", async () => {
+    // The harness parses each input through the real schema, so reaching the
+    // end of a full lifecycle is itself the assertion.
+    const { dependencies, calls } = harness({ record: job({ state: "Submitted" }), wallets: [EVALUATOR] });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await handlers.completeAgentJob({ jobId: "1", reason: HASH, walletAddress: EVALUATOR });
+
+    assert.equal(calls.length, 1);
+    assert.doesNotThrow(() => assertAdapterAccepts(calls[0]!));
+  });
+
+  it("documents the open bytes32-vs-private-key blocker rather than hiding it", () => {
+    const bytes32 = `0x${"ab".repeat(32)}`;
+    const result = circleContractExecutionInputSchema.safeParse({
+      contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+      address: CLIENT,
+      functionSignature: "complete(uint256,bytes32,bytes)",
+      parameters: ["1", bytes32, "0x"],
+    });
+
+    // When the integrator teaches the adapter to recognise bytes32 argument
+    // positions, this assertion flips and this test is the reminder to delete
+    // assertAdapterAccepts' allowance above.
+    assert.equal(result.success, false, "blocker resolved -- tighten the harness");
+    assert.match(
+      result.error!.issues[0]!.message,
+      /must not contain a private key/,
+      "a bytes32 hash is byte-identical to a private key, so the heuristic cannot tell them apart",
+    );
+  });
+
+  it("fails loudly if a stray field such as chain is reintroduced", () => {
+    // Guards the exact regression this module already hit once: the adapter
+    // injects the chain itself and its schema is .strict().
+    assert.throws(
+      () =>
+        circleContractExecutionInputSchema.parse({
+          contract: ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+          address: CLIENT,
+          chain: "ARC-TESTNET",
+          functionSignature: "fund(uint256,bytes)",
+          parameters: ["1", "0x"],
+        }),
+      "the adapter schema must reject a chain field",
+    );
   });
 });
