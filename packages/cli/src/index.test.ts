@@ -19,15 +19,57 @@ const cliFixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const v2TestBytecode = `0x${AGENT_PAY_ACCOUNT_V2_REQUIRED_SELECTORS.map((selector) => selector.slice(2)).join("")}`;
 
 describe("parseCliArgs", () => {
-  it("parses install runtime, output directory, and force flag", () => {
+  it("parses install runtime, output directory, and force flag without default hosted mcpUrl", () => {
     assert.deepEqual(parseCliArgs(["install", "--runtime", "codex", "--output-dir", "/tmp/agentpay", "--force"]), {
       command: "install",
       runtime: "codex",
       outputDir: "/tmp/agentpay",
       force: true,
       selfHosted: false,
-      mcpUrl: "https://wallet.agentpay.site/arc/mcp",
+      mcpUrl: undefined,
     });
+  });
+
+  it("parses explicit secure --mcp-url for hosted mode", () => {
+    assert.deepEqual(
+      parseCliArgs(["install", "--runtime", "codex", "--mcp-url", "https://mcp.example/mcp"]),
+      {
+        command: "install",
+        runtime: "codex",
+        outputDir: `${process.env.HOME}/.agentpay`,
+        force: false,
+        selfHosted: false,
+        mcpUrl: "https://mcp.example/mcp",
+      },
+    );
+  });
+
+  it("parses loopback HTTP --mcp-url for local development", () => {
+    assert.deepEqual(
+      parseCliArgs(["install", "--runtime", "generic", "--mcp-url", "http://localhost:3001/mcp"]),
+      {
+        command: "install",
+        runtime: "generic",
+        outputDir: `${process.env.HOME}/.agentpay`,
+        force: false,
+        selfHosted: false,
+        mcpUrl: "http://localhost:3001/mcp",
+      },
+    );
+  });
+
+  it("rejects insecure remote HTTP --mcp-url", () => {
+    assert.throws(
+      () => parseCliArgs(["install", "--mcp-url", "http://wallet.agentpay.site/arc/mcp"]),
+      /insecure remote mcp url/i,
+    );
+  });
+
+  it("rejects invalid --mcp-url formats", () => {
+    assert.throws(
+      () => parseCliArgs(["install", "--mcp-url", "not-a-url"]),
+      /invalid mcp url/i,
+    );
   });
 
   it("parses self-hosted install mode", () => {
@@ -75,7 +117,7 @@ describe("parseCliArgs", () => {
 });
 
 describe("installAgentPay", () => {
-  it("writes config and runtime templates into the output directory", async () => {
+  it("writes local-first config and runtime templates into the output directory by default", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "agentpay-cli-"));
 
     try {
@@ -100,15 +142,12 @@ describe("installAgentPay", () => {
       assert.match(skill, /withdraw_agent_budget/);
       assert.match(skill, /login, Terms, and OTP remain manual/i);
       assert.match(skillMetadata, /display_name: AgentPay/);
-      assert.deepEqual(mcpConfig.mcpServers.agentpay, {
-        url: "https://wallet.agentpay.site/arc/mcp",
-      });
+      assert.equal(mcpConfig.mcpServers.agentpay, undefined);
       assert.deepEqual(mcpConfig.mcpServers["agentpay-wallet"], {
         command: "npx",
         args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
       });
       assert.match(instructions, /return to the agent chat/i);
-      assert.match(instructions, /consumer AgentPay MCP/i);
       assert.doesNotMatch(instructions, /fills? the generated config/i);
       assert.match(instructions, /prepare_wallet_creation/);
       assert.match(instructions, /check_wallet_creation/);
@@ -120,6 +159,49 @@ describe("installAgentPay", () => {
         join(outputDir, "skills", "agentpay", "SKILL.md"),
         join(outputDir, "skills", "agentpay", "agents", "openai.yaml"),
       ].sort());
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("installs remote MCP alongside agentpay-wallet when explicit secure mcpUrl is supplied", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "agentpay-cli-mcp-url-"));
+
+    try {
+      await installAgentPay({
+        runtime: "codex",
+        outputDir,
+        packageRoot: process.cwd(),
+        mcpUrl: "https://wallet.agentpay.site/arc/mcp",
+      });
+
+      const mcpConfig = JSON.parse(await readFile(join(outputDir, "runtimes", "codex", "mcp.json"), "utf8"));
+      assert.deepEqual(mcpConfig.mcpServers.agentpay, {
+        url: "https://wallet.agentpay.site/arc/mcp",
+      });
+      assert.deepEqual(mcpConfig.mcpServers["agentpay-wallet"], {
+        command: "npx",
+        args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
+      });
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects insecure remote mcpUrl in installAgentPay", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "agentpay-cli-insecure-"));
+
+    try {
+      await assert.rejects(
+        () =>
+          installAgentPay({
+            runtime: "generic",
+            outputDir,
+            packageRoot: process.cwd(),
+            mcpUrl: "http://remote.example/mcp",
+          }),
+        /insecure remote mcp url/i,
+      );
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }
@@ -205,7 +287,6 @@ describe("installAgentPay", () => {
         assert.match(instructions, /check_wallet_creation/, runtime);
         assert.match(instructions, /get_agent_wallet[\s\S]*get_balance|get_balance[\s\S]*get_agent_wallet/, runtime);
         assert.match(instructions, /Never use raw wallet balances, exchange balances, or generic RPC balance/i, runtime);
-        assert.match(instructions, /consumer AgentPay MCP/i, runtime);
         assert.match(instructions, /doctor.*self-hosted|self-hosted.*doctor/i, runtime);
         assert.match(instructions, /setup-web.*self-hosted|self-hosted.*setup-web/i, runtime);
         assert.doesNotMatch(instructions, /fills? the generated config/i, runtime);
@@ -226,7 +307,7 @@ describe("installAgentPay", () => {
     }
   });
 
-  it("registers hosted AgentPay MCP in native Hermes config", async () => {
+  it("registers local-first AgentPay MCP in native Hermes config by default", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "agentpay-cli-hermes-"));
     const outputDir = join(tempDir, "install");
     const hermesConfigPath = join(tempDir, ".hermes", "config.yaml");
@@ -257,8 +338,7 @@ describe("installAgentPay", () => {
 
       assert.match(config, /mcp_servers:/);
       assert.match(config, /roblox_studio:/);
-      assert.match(config, /agentpay:/);
-      assert.match(config, /url: "https:\/\/wallet\.agentpay\.site\/arc\/mcp"/);
+      assert.doesNotMatch(config, /agentpay:/);
       assert.match(config, /agentpay-wallet:/);
       assert.match(config, /agent-wallet-mcp/);
       assert.match(config, /enabled: true/);
@@ -268,7 +348,7 @@ describe("installAgentPay", () => {
     }
   });
 
-  it("registers hosted AgentPay MCP in native Claude Desktop config", async () => {
+  it("registers local-first AgentPay MCP in native Claude Desktop config by default", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "agentpay-cli-claude-"));
     const outputDir = join(tempDir, "install");
     const claudeDesktopConfigPath = join(tempDir, "Claude", "claude_desktop_config.json");
@@ -304,7 +384,7 @@ describe("installAgentPay", () => {
 
       assert.deepEqual(config.preferences, { theme: "dark" });
       assert.deepEqual(config.mcpServers.existing, { url: "https://example.com/mcp" });
-      assert.deepEqual(config.mcpServers.agentpay, { url: "https://wallet.agentpay.site/arc/mcp" });
+      assert.equal(config.mcpServers.agentpay, undefined);
       assert.deepEqual(config.mcpServers["agentpay-wallet"], {
         command: "npx",
         args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
@@ -315,7 +395,7 @@ describe("installAgentPay", () => {
     }
   });
 
-  it("registers hosted AgentPay MCP in native Cursor config", async () => {
+  it("registers local-first AgentPay MCP in native Cursor config by default", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "agentpay-cli-cursor-"));
     const outputDir = join(tempDir, "install");
     const cursorMcpConfigPath = join(tempDir, ".cursor", "mcp.json");
@@ -351,7 +431,7 @@ describe("installAgentPay", () => {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-filesystem"],
       });
-      assert.deepEqual(config.mcpServers.agentpay, { url: "https://wallet.agentpay.site/arc/mcp" });
+      assert.equal(config.mcpServers.agentpay, undefined);
       assert.deepEqual(config.mcpServers["agentpay-wallet"], {
         command: "npx",
         args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
@@ -409,8 +489,10 @@ describe("installAgentPay", () => {
 
       const mcpConfig = JSON.parse(await readFile(join(outputDir, "runtimes", "generic", "mcp.json"), "utf8"));
 
-      assert.deepEqual(mcpConfig.mcpServers.agentpay, {
-        url: "https://wallet.agentpay.site/arc/mcp",
+      assert.equal(mcpConfig.mcpServers.agentpay, undefined);
+      assert.deepEqual(mcpConfig.mcpServers["agentpay-wallet"], {
+        command: "npx",
+        args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
       });
       assert.ok(result.writtenFiles.includes(join(outputDir, "runtimes", "generic", "instructions.md")));
     } finally {

@@ -169,7 +169,7 @@ describe("publishable AgentPay package manifests", () => {
     assert.doesNotMatch(wrapper, /\["--import", "tsx"/);
   });
 
-  it("defaults installed MCP templates to hosted tools plus the local Agent Wallet", async () => {
+  it("defaults installed MCP templates to local-first Agent Wallet", async () => {
     const templatePaths = [
       "packages/cli/templates/codex/mcp.json",
       "packages/cli/templates/cursor/mcp.json",
@@ -181,9 +181,7 @@ describe("publishable AgentPay package manifests", () => {
     for (const templatePath of templatePaths) {
       const template = JSON.parse(await readFile(templatePath, "utf8"));
 
-      assert.deepEqual(template.mcpServers.agentpay, {
-        url: "https://wallet.agentpay.site/arc/mcp",
-      });
+      assert.equal(template.mcpServers.agentpay, undefined);
       assert.deepEqual(template.mcpServers["agentpay-wallet"], {
         command: "npx",
         args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
@@ -191,7 +189,7 @@ describe("publishable AgentPay package manifests", () => {
     }
   });
 
-  it("keeps bundled runtime instructions on the Arc package and public routes", async () => {
+  it("keeps bundled runtime instructions on the Arc package and local-first truth", async () => {
     const instructionPaths = [
       "packages/cli/templates/codex/AGENTS.md",
       "packages/cli/templates/cursor/rules.md",
@@ -204,7 +202,7 @@ describe("publishable AgentPay package manifests", () => {
       const instructions = await readFile(instructionPath, "utf8");
 
       assert.match(instructions, /@agentpay-ai\/agentpay-arc/);
-      assert.match(instructions, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
+      assert.match(instructions, /agentpay-wallet/);
       assert.doesNotMatch(instructions, /@agentpay-ai\/agentpay-celo|agentpay\.site\/celo\/mcp/);
     }
   });

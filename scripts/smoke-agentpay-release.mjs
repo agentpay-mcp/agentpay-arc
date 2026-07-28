@@ -24,66 +24,89 @@ async function main() {
   const cursorHomeEnv = createHomeEnv(cursorHomeDir);
   const hermesHomeEnv = createHomeEnv(hermesHomeDir);
 
-  try {
-    const tarballs = packagePaths.map((packagePath) =>
-      packPackage({
-        rootDir,
-        packagePath,
-        packDir,
-      }),
-    );
+    const mcpUrlInstallDir = await mkdtemp(join(tmpdir(), "agentpay-release-mcp-url-"));
 
-    run(npmCommand, ["init", "-y"], { cwd: appDir, quiet: true });
-    await mkdir(join(appDir, ".codex"));
-    run(npmCommand, ["install", "--ignore-scripts", ...tarballs], { cwd: appDir, quiet: true });
-    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--output-dir", installDir], { cwd: appDir });
-    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--self-hosted", "--output-dir", selfHostedInstallDir], {
-      cwd: appDir,
-    });
-    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "claude", "--output-dir", claudeInstallDir], {
-      cwd: appDir,
-      env: claudeHomeEnv,
-    });
-    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "cursor", "--output-dir", cursorInstallDir], {
-      cwd: appDir,
-      env: cursorHomeEnv,
-    });
-    run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "hermes", "--output-dir", hermesInstallDir], {
-      cwd: appDir,
-      env: hermesHomeEnv,
-    });
-    run(npxCommand, ["@agentpay-ai/agentpay-arc", "doctor"], {
-      cwd: appDir,
-      env: {
-        AGENTPAY_CONFIG: join(selfHostedInstallDir, "config.json"),
-        SUPABASE_URL: "https://agentpay.supabase.co",
-        SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
-        CELO_RPC_URL: "https://rpc.example",
-        EXECUTOR_PRIVATE_KEY: `0x${"1".repeat(64)}`,
-        SETUP_DEPLOYER_PRIVATE_KEY: `0x${"2".repeat(64)}`,
-      },
-    });
+    try {
+      const tarballs = packagePaths.map((packagePath) =>
+        packPackage({
+          rootDir,
+          packagePath,
+          packDir,
+        }),
+      );
 
-    await access(join(installDir, "runtimes", "codex", "AGENTS.md"));
-    await access(join(installDir, "runtimes", "codex", "mcp.json"));
-    await access(join(installDir, "skills", "agentpay", "SKILL.md"));
-    await access(join(installDir, "skills", "agentpay", "agents", "openai.yaml"));
-    const mcpConfig = JSON.parse(await readFile(join(installDir, "runtimes", "codex", "mcp.json"), "utf8"));
-    if (mcpConfig.mcpServers?.agentpay?.url !== "https://wallet.agentpay.site/arc/mcp") {
-      throw new Error("Default AgentPay install did not use the hosted MCP URL.");
-    }
-    const claudeConfig = JSON.parse(await readFile(getClaudeDesktopConfigPath(claudeHomeEnv), "utf8"));
-    if (claudeConfig.mcpServers?.agentpay?.url !== "https://wallet.agentpay.site/arc/mcp") {
-      throw new Error("Claude install did not register the hosted AgentPay MCP URL.");
-    }
-    const cursorConfig = JSON.parse(await readFile(join(cursorHomeDir, ".cursor", "mcp.json"), "utf8"));
-    if (cursorConfig.mcpServers?.agentpay?.url !== "https://wallet.agentpay.site/arc/mcp") {
-      throw new Error("Cursor install did not register the hosted AgentPay MCP URL.");
-    }
-    const hermesConfig = await readFile(join(hermesHomeDir, ".hermes", "config.yaml"), "utf8");
-    if (!/agentpay:[\s\S]*url: "https:\/\/wallet\.agentpay\.site\/arc\/mcp"/.test(hermesConfig)) {
-      throw new Error("Hermes install did not register the hosted AgentPay MCP URL.");
-    }
+      run(npmCommand, ["init", "-y"], { cwd: appDir, quiet: true });
+      await mkdir(join(appDir, ".codex"));
+      run(npmCommand, ["install", "--ignore-scripts", ...tarballs], { cwd: appDir, quiet: true });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--output-dir", installDir], { cwd: appDir });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--mcp-url", "https://wallet.agentpay.site/arc/mcp", "--output-dir", mcpUrlInstallDir], { cwd: appDir });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--self-hosted", "--output-dir", selfHostedInstallDir], {
+        cwd: appDir,
+      });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "claude", "--output-dir", claudeInstallDir], {
+        cwd: appDir,
+        env: claudeHomeEnv,
+      });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "cursor", "--output-dir", cursorInstallDir], {
+        cwd: appDir,
+        env: cursorHomeEnv,
+      });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--runtime", "hermes", "--output-dir", hermesInstallDir], {
+        cwd: appDir,
+        env: hermesHomeEnv,
+      });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "doctor"], {
+        cwd: appDir,
+        env: {
+          AGENTPAY_CONFIG: join(selfHostedInstallDir, "config.json"),
+          SUPABASE_URL: "https://agentpay.supabase.co",
+          SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
+          CELO_RPC_URL: "https://rpc.example",
+          EXECUTOR_PRIVATE_KEY: `0x${"1".repeat(64)}`,
+          SETUP_DEPLOYER_PRIVATE_KEY: `0x${"2".repeat(64)}`,
+        },
+      });
+
+      await access(join(installDir, "runtimes", "codex", "AGENTS.md"));
+      await access(join(installDir, "runtimes", "codex", "mcp.json"));
+      await access(join(installDir, "skills", "agentpay", "SKILL.md"));
+      await access(join(installDir, "skills", "agentpay", "agents", "openai.yaml"));
+      const mcpConfig = JSON.parse(await readFile(join(installDir, "runtimes", "codex", "mcp.json"), "utf8"));
+      if (mcpConfig.mcpServers?.agentpay !== undefined) {
+        throw new Error("Default AgentPay install configured a hosted MCP URL when none was requested.");
+      }
+      if (mcpConfig.mcpServers?.["agentpay-wallet"]?.command !== "npx") {
+        throw new Error("Default AgentPay install did not configure the local agentpay-wallet MCP.");
+      }
+
+      const mcpUrlConfig = JSON.parse(await readFile(join(mcpUrlInstallDir, "runtimes", "codex", "mcp.json"), "utf8"));
+      if (mcpUrlConfig.mcpServers?.agentpay?.url !== "https://wallet.agentpay.site/arc/mcp") {
+        throw new Error("Explicit --mcp-url install did not configure the requested hosted MCP URL.");
+      }
+
+      const claudeConfig = JSON.parse(await readFile(getClaudeDesktopConfigPath(claudeHomeEnv), "utf8"));
+      if (claudeConfig.mcpServers?.agentpay !== undefined) {
+        throw new Error("Default Claude install registered a hosted AgentPay MCP URL.");
+      }
+      if (claudeConfig.mcpServers?.["agentpay-wallet"]?.command !== "npx") {
+        throw new Error("Claude install did not register the local agentpay-wallet MCP.");
+      }
+
+      const cursorConfig = JSON.parse(await readFile(join(cursorHomeDir, ".cursor", "mcp.json"), "utf8"));
+      if (cursorConfig.mcpServers?.agentpay !== undefined) {
+        throw new Error("Default Cursor install registered a hosted AgentPay MCP URL.");
+      }
+      if (cursorConfig.mcpServers?.["agentpay-wallet"]?.command !== "npx") {
+        throw new Error("Cursor install did not register the local agentpay-wallet MCP.");
+      }
+
+      const hermesConfig = await readFile(join(hermesHomeDir, ".hermes", "config.yaml"), "utf8");
+      if (/agentpay:\s*url:/i.test(hermesConfig)) {
+        throw new Error("Default Hermes install registered a hosted AgentPay MCP URL.");
+      }
+      if (!/agentpay-wallet:[\s\S]*agent-wallet-mcp/.test(hermesConfig)) {
+        throw new Error("Hermes install did not register the local agentpay-wallet MCP.");
+      }
     const packagedBytecode = await readFile(join(selfHostedInstallDir, "AgentPayAccount.bin"), "utf8");
     for (const selector of ["9cc1e242", "7b3f2401", "83e988c1", "7882731c"]) {
       if (!packagedBytecode.toLowerCase().includes(selector)) {
@@ -96,6 +119,7 @@ async function main() {
     await rm(packDir, { recursive: true, force: true });
     await rm(appDir, { recursive: true, force: true });
     await rm(installDir, { recursive: true, force: true });
+    await rm(mcpUrlInstallDir, { recursive: true, force: true });
     await rm(selfHostedInstallDir, { recursive: true, force: true });
     await rm(claudeHomeDir, { recursive: true, force: true });
     await rm(claudeInstallDir, { recursive: true, force: true });

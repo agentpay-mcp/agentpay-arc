@@ -93,7 +93,7 @@ export type AgentPayCliCommand =
       outputDir: string;
       force: boolean;
       selfHosted: boolean;
-      mcpUrl: string;
+      mcpUrl?: string;
     }
   | { command: "mcp" }
   | { command: "agent-wallet-mcp" }
@@ -182,13 +182,16 @@ export function parseCliArgs(args: string[]): AgentPayCliCommand {
   }
 
   if (command === "install") {
+    const rawMcpUrl = readOption(rest, "--mcp-url");
+    const mcpUrl = rawMcpUrl ? validateMcpUrl(rawMcpUrl) : undefined;
+
     return {
       command: "install",
       runtime: parseRuntime(readOption(rest, "--runtime") ?? "generic"),
       outputDir: expandHome(readOption(rest, "--output-dir") ?? "~/.agentpay"),
       force: rest.includes("--force"),
       selfHosted: rest.includes("--self-hosted"),
-      mcpUrl: readOption(rest, "--mcp-url") ?? DEFAULT_HOSTED_MCP_URL,
+      mcpUrl,
     };
   }
 
@@ -276,6 +279,10 @@ export async function runAgentPayCli(
 }
 
 export async function installAgentPay(options: InstallAgentPayOptions): Promise<InstallAgentPayResult> {
+  if (options.mcpUrl) {
+    validateMcpUrl(options.mcpUrl);
+  }
+
   const packageRoot = options.packageRoot ?? findPackageRoot();
   const cliRoot = resolveCliPackageRoot(packageRoot);
   const skillRoot = resolveAgentPaySkillRoot(packageRoot);
@@ -314,7 +321,7 @@ export async function installAgentPay(options: InstallAgentPayOptions): Promise<
       from: isMcpConfigTemplateFile(fileName) ? undefined : join(templateDir, fileName),
       to: join(runtimeDir, fileName),
       contents: isMcpConfigTemplateFile(fileName)
-        ? `${JSON.stringify(createAgentPayMcpConfig({ selfHosted, mcpUrl: options.mcpUrl ?? DEFAULT_HOSTED_MCP_URL }), null, 2)}\n`
+        ? `${JSON.stringify(createAgentPayMcpConfig({ selfHosted, mcpUrl: options.mcpUrl }), null, 2)}\n`
         : undefined,
     })),
   ];
@@ -339,7 +346,7 @@ export async function installAgentPay(options: InstallAgentPayOptions): Promise<
   if (options.installNativeRuntimeConfig !== false) {
     const mcpConfig = createAgentPayMcpConfig({
       selfHosted,
-      mcpUrl: options.mcpUrl ?? DEFAULT_HOSTED_MCP_URL,
+      mcpUrl: options.mcpUrl,
     });
     const mcpServers = mcpConfig.mcpServers as Record<string, Record<string, unknown>>;
     const nativeConfigPath = getNativeRuntimeConfigPath(options);
@@ -548,6 +555,25 @@ async function canReadFile(path: string): Promise<boolean> {
   }
 }
 
+function validateMcpUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid MCP URL: ${value}`);
+  }
+
+  if (url.protocol === "https:") {
+    return value;
+  }
+
+  if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) {
+    return value;
+  }
+
+  throw new Error(`Insecure remote MCP URL: ${value}. Remote MCP URLs must use HTTPS.`);
+}
+
 function isHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -640,7 +666,7 @@ function isMcpConfigTemplateFile(fileName: string): boolean {
   return fileName === "mcp.json" || fileName === "claude_desktop_config.json";
 }
 
-function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl: string }): Record<string, unknown> {
+function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl?: string }): Record<string, unknown> {
   return {
     mcpServers: {
       ...(options.selfHosted
@@ -653,11 +679,13 @@ function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl: string 
               },
             },
           }
-        : {
+        : options.mcpUrl
+        ? {
             agentpay: {
               url: options.mcpUrl,
             },
-          }),
+          }
+        : {}),
       "agentpay-wallet": {
         command: "npx",
         args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
@@ -924,7 +952,7 @@ function createHelpText(): string {
     "AgentPay",
     "",
     "Commands:",
-    "  agentpay install [--runtime <codex|claude|cursor|generic|hermes>] [--output-dir ~/.agentpay] [--force]",
+    "  agentpay install [--runtime <codex|claude|cursor|generic|hermes>] [--output-dir ~/.agentpay] [--mcp-url <url>] [--force]",
     "  agentpay install --self-hosted [--runtime <codex|claude|cursor|generic|hermes>] [--output-dir ~/.agentpay] [--force]",
     "  agentpay doctor",
     "  agentpay setup-web",
