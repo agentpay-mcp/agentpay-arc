@@ -86,6 +86,8 @@ function job(overrides: Partial<ArcAgentJobOnchainRecord> = {}): ArcAgentJobOnch
 interface Harness {
   readonly dependencies: ArcAgentJobDependencies;
   readonly calls: Array<Record<string, unknown>>;
+  readonly proofTransactions: Array<Record<string, unknown>>;
+  readonly proofJobIds: Array<string | undefined>;
   readonly proofTargets: string[];
   readonly saved: Array<Record<string, unknown>>;
   readonly events: Array<Record<string, unknown>>;
@@ -101,6 +103,8 @@ function harness(options: {
   readonly hookWhitelisted?: boolean;
 } = {}): Harness {
   const calls: Array<Record<string, unknown>> = [];
+  const proofTransactions: Array<Record<string, unknown>> = [];
+  const proofJobIds: Array<string | undefined> = [];
   const proofTargets: string[] = [];
   const saved: Array<Record<string, unknown>> = [];
   const events: Array<Record<string, unknown>> = [];
@@ -129,7 +133,9 @@ function harness(options: {
       isHookWhitelisted: async () => options.hookWhitelisted ?? true,
     },
     proofReader: {
-      proveMutation: async (_transactionId: string, expectation: { contract: string }) => {
+      proveMutation: async (transaction, expectation) => {
+        proofTransactions.push(transaction);
+        proofJobIds.push(expectation.jobId);
         proofTargets.push(expectation.contract);
         return options.proveMutation?.() ?? { transactionHash: TX_HASH, blockNumber: "42", jobId: "1" };
       },
@@ -147,7 +153,7 @@ function harness(options: {
     now: () => 1_700_000_000,
   };
 
-  return { dependencies, calls, proofTargets, saved, events };
+  return { dependencies, calls, proofTransactions, proofJobIds, proofTargets, saved, events };
 }
 
 describe("Arc agent job tool definitions", () => {
@@ -810,13 +816,32 @@ describe("transaction boundary correctness", () => {
     // The approval targets USDC, the fund targets AgenticCommerce. A proof
     // reader that honours expectation.contract would otherwise hunt for the
     // approval on the wrong contract and stall every fresh funding attempt.
-    const { dependencies, calls, proofTargets } = harness();
+    const { dependencies, calls, proofJobIds, proofTargets } = harness();
     const handlers = createArcAgentJobHandlers(dependencies);
 
     await handlers.fundAgentJob({ jobId: "1", expectedBudget: "25.000000" });
 
     assert.deepEqual(calls.map((call) => call.contract), [USDC, ARC_TESTNET_ERC8183_AGENTIC_COMMERCE]);
     assert.deepEqual(proofTargets, [USDC, ARC_TESTNET_ERC8183_AGENTIC_COMMERCE]);
+    assert.deepEqual(
+      proofJobIds,
+      [undefined, "1"],
+      "a USDC Approval log cannot prove an ERC-8183 job id",
+    );
+  });
+
+  it("passes the complete Circle transaction result to receipt proofing", async () => {
+    const { dependencies, proofTransactions } = harness({ record: job({ state: "Submitted" }), wallets: [EVALUATOR] });
+    const handlers = createArcAgentJobHandlers(dependencies);
+
+    await handlers.completeAgentJob({ jobId: "1", reason: HASH, walletAddress: EVALUATOR });
+
+    assert.deepEqual(proofTransactions, [{
+      id: "tx-1",
+      state: "COMPLETE",
+      blockchain: "ARC-TESTNET",
+      txHash: TX_HASH,
+    }]);
   });
 
   it("keeps the approval proof visible instead of returning only the fund proof", async () => {

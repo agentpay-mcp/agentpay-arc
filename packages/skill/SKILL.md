@@ -1,13 +1,16 @@
 ---
 name: agentpay
-description: Use AgentPay Arc MCP tools to set up, fund, inspect, and withdraw a local Circle Agent Wallet whose funded USDC balance is the agent's autonomous budget.
+description: Use AgentPay Arc's complete local MCP surface for autonomous wallet, payment, commerce, liquidity, identity, validation, reputation, and ERC-8183 job workflows on Arc Testnet.
 ---
 
 # AgentPay
 
 AgentPay Arc is a local MCP payment plugin for autonomous USDC spending from an authenticated Circle Agent Wallet on Arc Testnet.
 
-Use this skill when the user asks to set up or fund an Agent Wallet, inspect its autonomous budget, or withdraw funds. Additional Arc payment, x402, liquidity, identity, job, marketplace, and compliance tools are introduced by later AgentPay Arc implementation phases.
+Use this skill for the complete implemented product: wallet and budget,
+payments and receipts, x402 commerce, Unified Balance/bridge/swap, ERC-8004
+identity/reputation/validation, ERC-8183 escrow jobs, and marketplace activity.
+Use AgentPay Arc MCP tools for each of these workflows.
 
 ## Scope
 
@@ -23,7 +26,13 @@ npx @agentpay-ai/agentpay-arc install
 
 The install command only installs/configures the MCP plugin and instructions. It must not create a wallet, deploy a smart account, sign messages, approve payments, or move funds.
 
-The default install keeps the hosted consumer MCP for inherited tools and adds a config-free local `agentpay-wallet` MCP for the four Circle Agent Wallet tools. Circle Agent Wallet commands must run through that local surface because the authenticated Circle CLI session stays on the user's machine. Hosted AgentPay surfaces must not receive Circle OTPs, session credentials, wallet secrets, or mutation authority.
+The default install keeps the hosted consumer MCP for inherited tools and adds a
+config-free local `agentpay-wallet` MCP with 31 local Arc MCP tools. Circle Agent
+Wallet commands must run through that local surface because the authenticated
+Circle CLI session stays on the user's machine. Its process-owned durable state
+is stored at `~/.agentpay/arc-state.json` with owner-only permissions; tools
+never accept a tenant ID. Hosted AgentPay surfaces must not receive Circle OTPs,
+session credentials, wallet secrets, or mutation authority.
 
 After installation, ask the user to reload or reconnect the agent runtime if needed. Then return to the agent chat and continue with wallet creation or payment using AgentPay MCP tools.
 
@@ -67,12 +76,22 @@ npx @agentpay-ai/agentpay-arc install
 
 ## Available MCP Tools
 
-Expected AgentPay tools:
+The 31 local Arc MCP tools are:
 
 - `setup_agent_wallet`: check the local Circle Agent Wallet testnet session and return `LOGIN_REQUIRED`, `TERMS_REQUIRED`, `WALLET_REQUIRED`, or `READY`. Login, Terms, and OTP remain manual local-terminal actions.
 - `get_agent_budget`: return canonical Arc onchain USDC plus confirmed Gateway USDC without summing Arc's native 18-decimal and ERC-20 six-decimal views of the same onchain balance.
 - `fund_agent_wallet`: request Arc Testnet faucet funding for the selected Agent Wallet. This is a real mutation and must never be retried blindly.
 - `withdraw_agent_budget`: withdraw from the onchain wallet to an explicit recipient, or from confirmed Gateway balance back to the selected wallet or an explicit recipient.
+- Payments: `send_usdc`, `create_payment_request`, `pay_invoice`, `batch_payout`, `list_agent_activity`, `get_payment_receipt`.
+- Paid services: `search_paid_services`, `inspect_paid_service`, `pay_paid_service`.
+- Liquidity: `get_unified_balance`, `fund_from_any_chain`, `bridge_usdc`, `swap_tokens`, `swap_and_pay`.
+- ERC-8004: `register_agent_identity`, `get_agent_identity`, `give_agent_feedback`, `request_agent_validation`, `respond_agent_validation`, `get_agent_trust`.
+- ERC-8183: `create_agent_job`, `set_agent_job_budget`, `fund_agent_job`, `submit_agent_deliverable`, `complete_agent_job`, `reject_agent_job`, `get_agent_job`.
+
+The following names belong to the inherited hosted Celo smart-account surface.
+They remain available for compatibility but do not authorize local Arc Agent
+Wallet spending:
+
 - `prepare_wallet_creation`: start wallet setup. A legacy `PENDING` response includes a setup intent and signing link; a production `SETUP_REQUIRED` response includes the hosted `setupUrl`.
 - `check_wallet_creation`: check whether a legacy `PENDING` setup intent has completed and return the AgentPay smart account address.
 - `get_agent_wallet`: return owner, executor, smart account address, home chain, and status.
@@ -102,7 +121,8 @@ The Circle Agent Wallet tools in this skill support only `ARC-TESTNET`. Do not a
 
 Arc's native 18-decimal USDC metadata and six-decimal ERC-20 application interface represent the same underlying onchain balance. Never sum those two views. Confirmed Gateway balance is separate deposited value and can be shown as a separate budget component.
 
-The inherited owner-signed smart-account tools below are legacy context while the remaining Arc phases are implemented. They do not define authorization for Circle Agent Wallet spending.
+The inherited owner-signed smart-account tools below are Celo compatibility
+context. They do not define authorization for Circle Agent Wallet spending.
 
 ## Circle Agent Wallet Setup Workflow
 
@@ -140,28 +160,86 @@ Never use raw wallet balances, exchange balances, or generic RPC balance as the 
 
 ## Invoice Workflow
 
-When the user asks to pay an invoice:
+For a local Arc payment request:
 
-1. Call `parse_invoice_payment` with the copied invoice text.
-2. Show the parsed recipient, amount, token, destination chain, source token, and purpose.
-3. Ask the user to confirm the parsed fields match the invoice.
-4. Continue with the normal payment workflow using the full parsed `paymentInput`, including its `paymentType`.
+1. Call `create_payment_request` with a UUID-v4 request ID and idempotency key,
+   exact recipient, six-decimal USDC amount, purpose, and expiry.
+2. Give the payer the returned immutable request fields.
+3. Call `pay_invoice` only with the exact bound fields. A changed recipient,
+   amount, chain, token, purpose, expired request, or replay conflict must stop.
+4. Return its receipt and use `get_payment_receipt` for Arcscan proof.
 
-Do not infer missing invoice fields from vague prose. Ask the user for a complete invoice or the missing field.
+`parse_invoice_payment` belongs to the inherited hosted Celo flow. Do not route a
+local Arc Agent Wallet invoice through that owner-signature path.
 
 ## Batch Payout Workflow
 
-Treat a batch payout as a bounded collection of independent AgentPay payment intents. Validate the complete recipient list first, reject duplicates or malformed rows, show the total source exposure, then call `prepare_payment` once per recipient. Each prepared intent needs its own immutable owner signature, execution, status tracking, and audit events; never reuse one signature or approval for another recipient. Stop and report partial progress if any item fails.
+Validate the complete recipient list, reject duplicates or malformed rows, show
+the total USDC exposure, then call `batch_payout` once with a UUID-v4 `batchId`
+and idempotency key. Report each item result and partial progress. Never rerun a
+failed or ambiguous batch with a new key to hide its existing state.
 
 ## Remittance Workflow
 
-For remittance or swap-and-pay requests, confirm the Celo source network, source token, destination chain/token, recipient, minimum acceptable output, and purpose. Call `quote_payment_route`, show fees, route target, calldata hash, native value, and minimum output, then follow the normal payment workflow. Cross-chain routing is optional; same-chain Celo remittance stays direct when possible.
+Use `get_unified_balance` for confirmed Arc and Gateway USDC. Use
+`fund_from_any_chain` to return a source-wallet action plan without signing for
+that wallet. Use `bridge_usdc` or `swap_tokens` only with explicit destination,
+recipient, protected minimum receive, slippage, and idempotency key.
+`swap_and_pay` may execute the payment leg only after Viem verifies that the
+actual mined swap receive meets the payment minimum.
 
 ## Agent-to-Agent Workflow
 
-For an agent-to-agent payment, resolve the receiving agent's verified payment address and show it to the owner as the recipient. Use the normal `prepare_payment` flow and include the receiving agent identifier in the purpose when supplied. Agent identity metadata never replaces address verification or the owner's exact EIP-712 signature.
+Resolve and show the receiving agent's verified payment address, check
+`get_agent_budget`, then call `send_usdc` with a UUID-v4 idempotency key and a
+purpose naming the receiving agent. Agent identity metadata never replaces
+address verification. A replay must return the same receipt; a
+`RECONCILIATION_REQUIRED` response must not be retried.
 
-## x402 Workflow
+## Arc Paid-Service Workflow
+
+1. Call `search_paid_services`, then let the user choose a service.
+2. Call `inspect_paid_service` and preserve the exact request/quote binding.
+3. Call `pay_paid_service` once with its UUID-v4 idempotency key, buyer/seller
+   agent IDs, selected wallet, original request, and inspected quote.
+4. Stop if the quote expires or drifts. Return only the bounded service response
+   and the verified Arc payment proof.
+
+The hosted seller endpoint is read-only with respect to the local wallet and
+uses its own x402 settlement adapter.
+
+## ERC-8004 Workflow
+
+Use `register_agent_identity` and then `get_agent_identity` to verify the
+onchain owner/wallet binding. Use `give_agent_feedback` for reputation, and
+`request_agent_validation` / `respond_agent_validation` for validation
+credentials. Return `get_agent_trust` results as unavailable when registry reads
+fail; never present an outage as verified absence.
+
+## ERC-8183 Job Workflow
+
+Use `create_agent_job` with an explicit provider, evaluator, future expiry, and
+zero hook unless a hook is verified whitelisted. Read `get_agent_job` before
+each lifecycle write. Follow the role and state sequence:
+`create_agent_job` → `set_agent_job_budget` → `fund_agent_job` →
+`submit_agent_deliverable` → `complete_agent_job` or `reject_agent_job`.
+
+The deployed escrow uses Arc USDC and an upgradeable ERC-1967 proxy. AgentPay
+verifies the proxy implementation, transaction target, decoded function input,
+receipt, and job ID before advancing durable state. The deployed
+`fund(uint256,bytes)` function has no atomic expected-budget argument, so
+funding retains a documented read/write race and must never be described as
+race-free.
+
+## Marketplace Workflow
+
+The Agent Marketplace is a read-only UI for service discovery, seller trust,
+ERC-8183 jobs, and session-scoped activity. It must never receive the local
+Circle CLI session. Anonymous catalogue pages are allowed; `/activity` requires
+a verified server-side session and never accepts tenant identity from a query
+parameter or header.
+
+## Inherited Celo x402 Workflow
 
 If the user asks for a paid x402/API service but does not provide a URL, call `search_x402_services` first. Show the Bazaar candidates, ask the user to choose one, collect required parameters, then call `prepare_x402_service_request`. Use the returned `paymentRequired` and `request` with the normal x402 flow below.
 

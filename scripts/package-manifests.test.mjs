@@ -223,6 +223,12 @@ describe("publishable AgentPay package manifests", () => {
     assert.ok(manifest.files.includes("src/services/arc-payments-supabase.ts"));
     assert.ok(manifest.files.includes("src/mcp/arc-agent-payment.ts"));
     assert.ok(manifest.files.includes("src/tools/circle-services.ts"));
+    assert.ok(manifest.files.includes("src/runtime/arc-agent-wallet-runtime.ts"));
+    assert.ok(manifest.files.includes("src/runtime/default-arc-agent-wallet-runtime.ts"));
+    assert.ok(manifest.files.includes("src/services/arc-agent-jobs-viem.ts"));
+    assert.ok(manifest.files.includes("src/services/arc-local-state.ts"));
+    assert.ok(manifest.files.includes("src/services/arc-local-state-schema.ts"));
+    assert.ok(manifest.files.includes("src/services/arc-swap-settlement-viem.ts"));
     await access("apps/mcp-server/src/mcp/http.ts");
     await access("apps/mcp-server/src/mcp/celo-agent-payment.ts");
     await access("apps/mcp-server/src/runtime/paid-execution-canary-ledger.ts");
@@ -233,6 +239,12 @@ describe("publishable AgentPay package manifests", () => {
     await access("apps/mcp-server/src/mcp/arc-payments.ts");
     await access("apps/mcp-server/src/services/arc-payments-supabase.ts");
     await access("apps/mcp-server/src/mcp/arc-agent-payment.ts");
+    await access("apps/mcp-server/src/runtime/arc-agent-wallet-runtime.ts");
+    await access("apps/mcp-server/src/runtime/default-arc-agent-wallet-runtime.ts");
+    await access("apps/mcp-server/src/services/arc-agent-jobs-viem.ts");
+    await access("apps/mcp-server/src/services/arc-local-state.ts");
+    await access("apps/mcp-server/src/services/arc-local-state-schema.ts");
+    await access("apps/mcp-server/src/services/arc-swap-settlement-viem.ts");
     await access("apps/mcp-server/src/tools/circle-services.ts");
 
     const sharedManifest = await readPackageJson("packages/shared");

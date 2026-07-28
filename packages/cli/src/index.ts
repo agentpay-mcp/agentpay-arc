@@ -10,11 +10,11 @@ import {
   AGENTPAY_ARC_PUBLIC_URLS,
   startAgentPayHttpServer,
   startAgentPayMcpServer,
-  startCircleAgentWalletMcpServer,
+  startArcAgentWalletMcpServer,
   type AgentPayHttpServer,
   type StartAgentPayHttpServerOptions,
   type StartAgentPayMcpServerOptions,
-  type StartCircleAgentWalletMcpServerOptions,
+  type StartArcAgentWalletMcpServerOptions,
 } from "@agentpay-ai/mcp-server-arc";
 import {
   createSetupWebDependencies,
@@ -127,7 +127,7 @@ export interface RunAgentPayCliDependencies {
   stderr?: (message: string) => void;
   startMcpServer?: (options: StartAgentPayMcpServerOptions) => Promise<void>;
   startAgentWalletMcpServer?: (
-    options?: StartCircleAgentWalletMcpServerOptions,
+    options?: StartArcAgentWalletMcpServerOptions,
   ) => Promise<void>;
   startHttpServer?: (options: StartAgentPayHttpServerOptions) => Promise<AgentPayHttpServer>;
   startSetupWebServer?: (
@@ -223,7 +223,7 @@ export async function runAgentPayCli(
     if (command.command === "agent-wallet-mcp") {
       await (
         dependencies.startAgentWalletMcpServer ??
-        startCircleAgentWalletMcpServer
+        startArcAgentWalletMcpServer
       )();
       return 0;
     }
@@ -657,11 +657,11 @@ function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl: string 
             agentpay: {
               url: options.mcpUrl,
             },
-            "agentpay-wallet": {
-              command: "npx",
-              args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
-            },
           }),
+      "agentpay-wallet": {
+        command: "npx",
+        args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
+      },
     },
   };
 }

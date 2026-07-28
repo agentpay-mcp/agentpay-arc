@@ -103,6 +103,10 @@ function fakeCircle(overrides: Partial<CircleCli> = {}): CircleCli {
   } as CircleCli;
 }
 
+function encodeProof(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64");
+}
+
 function memoryRepository(): ArcAgentCommerceRepository & {
   read(): ArcAgentCommerceReceipt | null;
 } {
@@ -197,6 +201,68 @@ describe("Circle paid service buyer tools", () => {
     assert.equal(result.receipt.sellerAgentId, SELLER);
     assert.equal(result.receipt.proof?.network, ARC_TESTNET_CAIP2);
     assert.doesNotMatch(JSON.stringify(repository.read()), /signature|credential/i);
+  });
+
+  it("requires a decodable Arc payer and transaction proof before marking settlement", async () => {
+    const request = { url: URL, method: "GET" as const, headers: {} };
+    const quote = createArcPaidServiceQuoteBinding({
+      request,
+      amountAtomic: "1250000",
+      seller: SELLER_ADDRESS,
+      inspectedAt: NOW.toISOString(),
+      expiresAt: new Date(NOW.getTime() + 300_000).toISOString(),
+    });
+    const invalidReceipts: readonly (string | undefined)[] = [
+      undefined,
+      "x".repeat(16_385),
+      "not-base64-json",
+      Buffer.from("null").toString("base64"),
+      encodeProof({ network: "eip155:1", transaction: `0x${"a".repeat(64)}`, payer: WALLET }),
+      encodeProof({ network: ARC_TESTNET_CAIP2, payer: WALLET }),
+      encodeProof({ network: ARC_TESTNET_CAIP2, transaction: "0x1234", payer: WALLET }),
+      encodeProof({
+        network: ARC_TESTNET_CAIP2,
+        transaction: `0x${"a".repeat(64)}`,
+        payer: "not-an-address",
+      }),
+      encodeProof({
+        network: ARC_TESTNET_CAIP2,
+        transaction: `0x${"a".repeat(64)}`,
+        payer: SELLER_ADDRESS,
+      }),
+    ];
+
+    for (const receipt of invalidReceipts) {
+      const repository = memoryRepository();
+      const pay = createPayPaidServiceHandler({
+        circleCli: fakeCircle({
+          payService: async () => ({
+            response: { report: "paid content without verifiable proof" },
+            payment: {
+              amount: "1.25",
+              chain: "ARC-TESTNET",
+              scheme: "exact",
+              seller: SELLER_ADDRESS,
+              ...(receipt === undefined ? {} : { receipt }),
+            },
+          }),
+        }),
+        commerce: repository,
+        clock: () => NOW,
+      });
+
+      const result = await pay({
+        idempotencyKey: IDEMPOTENCY_KEY,
+        buyerAgentId: BUYER,
+        sellerAgentId: SELLER,
+        request,
+        inspectedQuote: quote,
+      });
+
+      assert.equal(result.receipt.status, "RECONCILIATION_REQUIRED");
+      assert.equal(result.receipt.proof, undefined);
+      assert.equal(repository.read()?.status, "RECONCILIATION_REQUIRED");
+    }
   });
 
   it("screens the seller after its atomic claim and before paying for a service", async () => {

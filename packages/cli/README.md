@@ -35,7 +35,9 @@ payment time after the Arc wallet exists.
 AgentPay covers agent wallet setup and funding, direct USDC sends, invoice
 payments and payment requests, x402 service purchases, batch payouts, unified
 balance and bridge/swap routes, agent-to-agent payments, and ERC-8004 identity
-and reputation.
+and reputation/validation, ERC-8183 escrow jobs, a read-only marketplace, and
+durable compliance evidence. The local `agentpay-wallet` process registers all
+31 Arc MCP tools for the 19 approved hackathon features.
 
 For x402 discovery without a URL, the agent uses `search_paid_services` and
 `inspect_paid_service`, then `pay_paid_service` executes the buyer path through
@@ -46,6 +48,7 @@ For x402 discovery without a URL, the agent uses `search_paid_services` and
 ```bash
 agentpay install
 agentpay install --self-hosted
+agentpay agent-wallet-mcp
 agentpay mcp
 agentpay serve-http
 agentpay setup-web
@@ -60,7 +63,9 @@ The public x402 seller gate is enabled with `AGENTPAY_A2MCP_PAYMENT_ENABLED=true
 plus pay-to, price, network, and asset values. `/healthz` remains free.
 
 Hosted mode needs no configuration at all, and the Circle Agent Wallet tools run
-on a config-free local MCP surface either way.
+on a config-free local MCP surface either way. That surface stores process-owned
+operation state at `~/.agentpay/arc-state.json` with owner-only permissions and
+does not accept caller-supplied tenant authority.
 
 `install --self-hosted` and `doctor` require the inherited Celo config surface,
 not an Arc one. `requiredConfigKeys` in `src/index.ts` is:

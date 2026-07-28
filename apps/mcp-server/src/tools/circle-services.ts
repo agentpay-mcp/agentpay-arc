@@ -542,23 +542,35 @@ function extractProof(
   },
   wallet: string,
 ): ArcPaidServiceProof {
-  let decoded: unknown;
-  if (payment.receipt && Buffer.byteLength(payment.receipt, "utf8") <= 16_384) {
-    try {
-      decoded = JSON.parse(Buffer.from(payment.receipt, "base64").toString("utf8"));
-    } catch {
-      decoded = undefined;
-    }
+  if (!payment.receipt || Buffer.byteLength(payment.receipt, "utf8") > 16_384) {
+    throw new Error("Circle paid-service settlement proof is unavailable.");
   }
-  const candidate = typeof decoded === "object" && decoded !== null
-    ? decoded as Record<string, unknown>
-    : {};
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(payment.receipt, "base64").toString("utf8"));
+  } catch {
+    throw new Error("Circle paid-service settlement proof is invalid.");
+  }
+  if (typeof decoded !== "object" || decoded === null) {
+    throw new Error("Circle paid-service settlement proof is invalid.");
+  }
+  const candidate = decoded as Record<string, unknown>;
+  if (
+    candidate.network !== ARC_TESTNET_CAIP2
+    || typeof candidate.transaction !== "string"
+    || !/^0x[a-fA-F0-9]{64}$/.test(candidate.transaction)
+    || typeof candidate.payer !== "string"
+    || !circleAddressSchema.safeParse(candidate.payer).success
+    || candidate.payer.toLowerCase() !== wallet.toLowerCase()
+  ) {
+    throw new Error("Circle paid-service settlement proof is incomplete.");
+  }
   return parseArcPaidServiceProof({
-    network: candidate.network ?? ARC_TESTNET_CAIP2,
+    network: candidate.network,
     scheme: payment.scheme,
     seller: payment.seller,
     transaction: candidate.transaction,
-    payer: candidate.payer ?? wallet,
+    payer: candidate.payer,
   });
 }
 

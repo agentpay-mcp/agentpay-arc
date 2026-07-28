@@ -27,6 +27,26 @@ import {
 } from "@agentpay-ai/shared-arc";
 
 import type { AgentPayRuntime } from "../runtime/agentpay-runtime.ts";
+import {
+  registerArcAgentIdentityMcpTools,
+  type ArcAgentIdentityMcpDependencies,
+} from "./arc-agent-identity.ts";
+import {
+  registerArcAgentJobMcpTools,
+  type ArcAgentJobMcpDependencies,
+} from "./arc-agent-jobs.ts";
+import {
+  registerArcAgentPaymentMcpTools,
+  type ArcAgentPaymentMcpDependencies,
+} from "./arc-agent-payment.ts";
+import {
+  registerArcLiquidityMcpTools,
+  type ArcLiquidityMcpDependencies,
+} from "./arc-liquidity.ts";
+import {
+  registerArcPaymentMcpTools,
+  type ArcPaymentMcpDependencies,
+} from "./arc-payments.ts";
 import { prepareAccountAdminTransactionTool } from "../tools/account-admin.ts";
 import {
   fundAgentWalletTool,
@@ -81,6 +101,14 @@ export type CircleAgentWalletMcpRuntime = Pick<
   "setupAgentWallet" | "getAgentBudget" | "fundAgentWallet" | "withdrawAgentBudget"
 >;
 
+export type ArcAgentWalletMcpRuntime =
+  & CircleAgentWalletMcpRuntime
+  & ArcPaymentMcpDependencies
+  & ArcAgentPaymentMcpDependencies
+  & ArcLiquidityMcpDependencies
+  & ArcAgentIdentityMcpDependencies
+  & ArcAgentJobMcpDependencies;
+
 export function registerCircleAgentWalletMcpTools(
   server: AgentPayMcpServer,
   runtime: CircleAgentWalletMcpRuntime,
@@ -124,6 +152,24 @@ export function registerCircleAgentWalletMcpTools(
     },
     async (input) => toMcpResult(await runtime.withdrawAgentBudget(input)),
   );
+}
+
+/**
+ * Registers the complete Arc Agent Wallet product surface on the local MCP
+ * process. This function is deliberately separate from
+ * `registerAgentPayMcpTools`: hosted consumer/public runtimes must never gain
+ * access to the user's local Circle CLI session.
+ */
+export function registerArcAgentWalletMcpTools(
+  server: AgentPayMcpServer,
+  runtime: ArcAgentWalletMcpRuntime,
+): void {
+  registerCircleAgentWalletMcpTools(server, runtime);
+  registerArcPaymentMcpTools(server, runtime);
+  registerArcAgentPaymentMcpTools(server, runtime);
+  registerArcLiquidityMcpTools(server, runtime);
+  registerArcAgentIdentityMcpTools(server, runtime);
+  registerArcAgentJobMcpTools(server, runtime);
 }
 
 export function registerAgentPayMcpTools(

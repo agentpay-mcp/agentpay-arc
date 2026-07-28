@@ -57,6 +57,13 @@ OTP, and wallet credentials stay on the user's machine and are never sent to a
 hosted service. Mutating commands execute exactly once and are never blindly
 retried.
 
+## 19 Approved Features
+
+The hackathon product exposes 31 local Arc MCP tools across all 19 approved
+features. The local process composes the reviewed wallet, payment, commerce,
+liquidity, ERC-8004, and ERC-8183 adapters; the marketplace and x402 seller
+remain read-only/hosted surfaces beside it.
+
 ## Arc Tools
 
 Wallet and budget:
@@ -90,6 +97,17 @@ ERC-8004 identity, reputation, and validation:
 register_agent_identity   get_agent_identity   get_agent_trust
 give_agent_feedback   request_agent_validation   respond_agent_validation
 ```
+
+ERC-8183 escrow jobs:
+
+```text
+create_agent_job   set_agent_job_budget   fund_agent_job
+submit_agent_deliverable   complete_agent_job   reject_agent_job   get_agent_job
+```
+
+The separate Agent Marketplace UI lists paid services, verified trust data,
+ERC-8183 seller jobs, and session-scoped activity without receiving local wallet
+mutation authority.
 
 The buyer path uses `circle services pay` through the Circle CLI adapter,
 because the Agent Wallet is a smart contract account and cannot be driven by an
@@ -133,9 +151,11 @@ npx @agentpay-ai/agentpay-arc install --self-hosted
 
 ## Configuration
 
-Core local/MCP startup values are `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-`CELO_RPC_URL`, and `EXECUTOR_PRIVATE_KEY`. `ARC_TESTNET_RPC_URL` is required by
-the separate Arc production readiness gate, not by the local startup parser.
+The normal local `agent-wallet-mcp` needs no environment variables. The
+operator-hosted inherited MCP startup still requires `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `CELO_RPC_URL`, and `EXECUTOR_PRIVATE_KEY`.
+`ARC_TESTNET_RPC_URL` is required by the separate Arc production readiness gate,
+not by the local startup parser.
 
 See `.env.example` for the full key list.
 
@@ -164,8 +184,11 @@ reconciling them is a runtime change, not a documentation change.
 - Review: `https://wallet.agentpay.site/arc/review`
 
 The Circle Agent Wallet tools are unaffected by either gate. They run on a
-config-free local MCP surface so that the authenticated Circle CLI session never
-leaves the user's machine.
+config-free local MCP surface with process-owned durable state at
+`~/.agentpay/arc-state.json` (created with owner-only file permissions), so the
+authenticated Circle CLI session never leaves the user's machine. This local
+surface now carries all 31 Arc tools; it does not accept a tenant ID or hosted
+credential from tool input.
 
 Self-hosted operators expose the public MCP endpoint with `agentpay serve-http`.
 `/healthz` remains free.
@@ -192,6 +215,7 @@ enforces:
 
 ```bash
 npm install
+npm run demo:local
 npm test
 npm run typecheck
 npm run build

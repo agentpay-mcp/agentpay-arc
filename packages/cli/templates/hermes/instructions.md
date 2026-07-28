@@ -16,11 +16,13 @@ AgentPay Arc's primary flow is the local Circle Agent Wallet on Arc Testnet. The
 
 These Circle Agent Wallet tools support only `ARC-TESTNET`. Do not ask the user to choose mainnet versus testnet for them, and never describe Arc Testnet activity as Arc mainnet. Call `setup_agent_wallet` to check the local session; it returns `LOGIN_REQUIRED`, `TERMS_REQUIRED`, `WALLET_REQUIRED`, or `READY`. Call `fund_agent_wallet` to request Arc Testnet USDC, `get_agent_budget` to report the available autonomous budget, and `withdraw_agent_budget` to return remaining funds to the user.
 
+The config-free local `agentpay-wallet` now exposes the complete 31-tool Arc surface: `send_usdc`, invoice/payment-request, batch payout, activity/receipt, paid-service discovery and purchase, Unified Balance/bridge/swap, ERC-8004 identity/reputation/validation, and ERC-8183 job lifecycle tools. Its process-owned durable state stays local and no tool accepts caller-supplied tenant authority. Use the read-only Agent Marketplace for service, trust, job, and authenticated activity views.
+
 When reporting the budget, never sum Arc's native 18-decimal USDC view and its 6-decimal ERC-20 view of the same onchain balance, and keep confirmed Gateway funds separate from pending deposits. Never use raw wallet balances, exchange balances, or generic RPC balance as the Agent Wallet budget; use only `get_agent_budget`.
 
 Circle login, Terms acceptance, and email OTP are manual actions the user performs in their own terminal. Never automate them, and never ask the user to paste an OTP, private key, seed phrase, or Circle session into chat. Never claim the wallet is ready until `setup_agent_wallet` returns `READY`.
 
-The owner-signed smart-account tools described below are inherited legacy context while the remaining Arc phases are implemented. They do not define authorization for Circle Agent Wallet spending.
+The owner-signed smart-account tools described below are inherited Celo compatibility context. They do not define authorization for Circle Agent Wallet spending.
 
 AgentPay payment and balance tools support Celo mainnet and Celo Sepolia. Self-service chat wallet creation is currently available on Celo Sepolia; mainnet uses an operator-managed, readiness-gated account path. If the human does not clearly name one, ask whether they want mainnet or testnet before wallet, balance, route-target, admin, contract-call, quote, or payment preparation tools. Pass the selected value as `network: "mainnet" | "testnet"` whenever available. Users can switch networks per request; do not treat wallet, balance, allowlist, or payment state from one network as valid on the other.
 

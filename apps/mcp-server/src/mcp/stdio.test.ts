@@ -5,10 +5,13 @@ import type { AgentPayRuntime } from "../runtime/agentpay-runtime.ts";
 import type { AgentPayMcpServer } from "./agentpay-mcp.ts";
 import {
   createAgentPayMcpServer,
+  createArcAgentWalletMcpServer,
   createCircleAgentWalletMcpServer,
   startAgentPayMcpServer,
+  startArcAgentWalletMcpServer,
   startCircleAgentWalletMcpServer,
 } from "./stdio.ts";
+import type { ArcAgentWalletMcpRuntime } from "./agentpay-mcp.ts";
 
 class FakeSdkServer implements AgentPayMcpServer {
   public registeredToolNames: string[] = [];
@@ -61,6 +64,49 @@ describe("createAgentPayMcpServer", () => {
       "fund_agent_wallet",
       "withdraw_agent_budget",
     ]);
+  });
+
+  it("creates the complete local Arc Agent Wallet surface without legacy hosted tools", () => {
+    const runtime = createArcWalletRuntime();
+    const server = createArcAgentWalletMcpServer(
+      runtime,
+      () => new FakeSdkServer(),
+    );
+
+    assert.deepEqual(server.registeredToolNames, [
+      "setup_agent_wallet",
+      "get_agent_budget",
+      "fund_agent_wallet",
+      "withdraw_agent_budget",
+      "send_usdc",
+      "create_payment_request",
+      "pay_invoice",
+      "batch_payout",
+      "list_agent_activity",
+      "get_payment_receipt",
+      "search_paid_services",
+      "inspect_paid_service",
+      "pay_paid_service",
+      "get_unified_balance",
+      "fund_from_any_chain",
+      "bridge_usdc",
+      "swap_tokens",
+      "swap_and_pay",
+      "register_agent_identity",
+      "get_agent_identity",
+      "give_agent_feedback",
+      "request_agent_validation",
+      "respond_agent_validation",
+      "get_agent_trust",
+      "create_agent_job",
+      "set_agent_job_budget",
+      "fund_agent_job",
+      "submit_agent_deliverable",
+      "complete_agent_job",
+      "reject_agent_job",
+      "get_agent_job",
+    ]);
+    assert.equal(server.registeredToolNames.includes("prepare_payment"), false);
   });
 });
 
@@ -154,6 +200,31 @@ describe("startAgentPayMcpServer", () => {
 
     assert.deepEqual(connectedTransports, [transport]);
   });
+
+  it("starts the complete local Arc Agent Wallet server without runtime env", async () => {
+    const transport = { kind: "arc-wallet-stdio" };
+    const connectedTransports: unknown[] = [];
+    const runtime = createArcWalletRuntime();
+
+    await startArcAgentWalletMcpServer({
+      createRuntime() {
+        return runtime;
+      },
+      createServer(createdRuntime) {
+        assert.equal(createdRuntime, runtime);
+        return {
+          async connect(createdTransport: unknown) {
+            connectedTransports.push(createdTransport);
+          },
+        };
+      },
+      createTransport() {
+        return transport;
+      },
+    });
+
+    assert.deepEqual(connectedTransports, [transport]);
+  });
 });
 
 function createCircleWalletRuntime() {
@@ -171,6 +242,16 @@ function createCircleWalletRuntime() {
       throw new Error("withdrawAgentBudget was not expected.");
     },
   };
+}
+
+function createArcWalletRuntime(): ArcAgentWalletMcpRuntime {
+  return new Proxy(createCircleWalletRuntime() as unknown as ArcAgentWalletMcpRuntime, {
+    get(target, property, receiver) {
+      const existing = Reflect.get(target, property, receiver);
+      if (existing !== undefined) return existing;
+      return async () => ({ ok: true });
+    },
+  });
 }
 
 function createRuntime(): AgentPayRuntime {
