@@ -1,6 +1,19 @@
 -- Migration: 20260729020000_arc_hosted_identity.sql
 -- Description: Arc-only hosted identity, tenant mapping, autonomy consent, and private Circle wallet bindings schema.
 
+create schema if not exists auth;
+
+create table if not exists auth.users (
+  id uuid primary key default gen_random_uuid(),
+  email text,
+  created_at timestamptz default now()
+);
+
+create or replace function auth.uid() returns uuid language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$;
+
+
 create table if not exists public.arc_hosted_accounts (
   auth_user_id uuid primary key references auth.users(id) on delete cascade,
   tenant_id uuid not null unique references public.tenants(id) on delete cascade,
