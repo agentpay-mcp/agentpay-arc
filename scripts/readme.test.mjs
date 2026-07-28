@@ -61,8 +61,8 @@ describe("README", () => {
     assert.match(contents, /^# @agentpay-ai\/agentpay-arc/m);
     assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
     assert.match(contents, /return to your agent chat/i);
-    assert.match(quickStart, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
-    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/arc\/mcp/);
+    assert.match(contents, /--mcp-url/);
+    assert.match(contents, /agentpay-wallet/);
     assert.match(contents, /No user secrets are required|do not manage Supabase/i);
     assert.match(contents, /install --self-hosted/);
     assert.match(contents, /agent wallet/i);
