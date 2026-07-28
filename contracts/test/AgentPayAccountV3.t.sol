@@ -47,9 +47,8 @@ contract AgentPayAccountV3Test is Test {
         tokens[0] = address(token);
         address[] memory routes = new address[](0);
 
-        bytes memory data = abi.encodeCall(
-            AgentPayAccountV3.initialize, (admin, owner, executor, upgrader, tokens, routes)
-        );
+        bytes memory data =
+            abi.encodeCall(AgentPayAccountV3.initialize, (admin, owner, executor, upgrader, tokens, routes));
         account = AgentPayAccountV3(payable(address(new ERC1967Proxy(address(implementation), data))));
 
         token.mint(address(account), 1_000e6);
@@ -151,11 +150,7 @@ contract AgentPayAccountV3Test is Test {
     function test_domainSeparatorBindsToProxyNotImplementation() public view {
         bytes32 expected = keccak256(
             abi.encode(
-                account.EIP712_DOMAIN_TYPEHASH(),
-                keccak256("AgentPay"),
-                keccak256("1"),
-                block.chainid,
-                address(account)
+                account.EIP712_DOMAIN_TYPEHASH(), keccak256("AgentPay"), keccak256("1"), block.chainid, address(account)
             )
         );
         assertEq(account.domainSeparator(), expected);
@@ -191,8 +186,7 @@ contract AgentPayAccountV3Test is Test {
 
         vm.expectRevert();
         new ERC1967Proxy(
-            address(fresh),
-            abi.encodeCall(AgentPayAccountV3.initialize, (admin, owner, owner, upgrader, empty, empty))
+            address(fresh), abi.encodeCall(AgentPayAccountV3.initialize, (admin, owner, owner, upgrader, empty, empty))
         );
     }
 

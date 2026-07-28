@@ -84,6 +84,9 @@ contract AgentPayAccountV3 is Initializable, AccessControlUpgradeable, UUPSUpgra
     error TokenNotAllowed(address token);
     error UpgradeToZeroAddress();
     error ZeroAddress();
+    error RoleHolderMustBeEOA(bytes32 role, address account);
+    error ConflictingRole(bytes32 role, address account);
+    error AdminCannotBeOwner();
 
     event AuthorizedDirectPaymentExecuted(
         bytes32 indexed intentIdHash,
@@ -189,6 +192,9 @@ contract AgentPayAccountV3 is Initializable, AccessControlUpgradeable, UUPSUpgra
         }
         if (initialOwner.code.length != 0) revert OwnerMustBeEOA();
         if (initialOwner == initialExecutor) revert ExecutorCannotBeOwner();
+        // The default admin can grant any role, so letting it also be the owner
+        // silently collapses every separation below into one key.
+        if (defaultAdmin == initialOwner) revert AdminCannotBeOwner();
 
         __AccessControl_init();
 
@@ -215,6 +221,32 @@ contract AgentPayAccountV3 is Initializable, AccessControlUpgradeable, UUPSUpgra
     }
 
     receive() external payable {}
+
+    /// @dev Enforces the separations this contract documents, on every grant
+    ///      rather than only at initialization. Without this, DEFAULT_ADMIN_ROLE
+    ///      could hand OWNER_ROLE to a contract, or give one address both
+    ///      OWNER_ROLE and UPGRADER_ROLE, making the stated split advisory.
+    ///
+    ///      What this does NOT do: constrain DEFAULT_ADMIN_ROLE itself. An admin
+    ///      can still rotate role holders, so DEFAULT_ADMIN_ROLE remains fully
+    ///      trusted by design. Give it to a timelock or multisig, never to the
+    ///      same key that operates the account.
+    function _grantRole(bytes32 role, address account) internal override returns (bool) {
+        if (role == OWNER_ROLE) {
+            if (account.code.length != 0) revert RoleHolderMustBeEOA(role, account);
+            if (hasRole(UPGRADER_ROLE, account) || hasRole(EXECUTOR_ROLE, account)) {
+                revert ConflictingRole(role, account);
+            }
+        }
+        if (role == UPGRADER_ROLE && hasRole(OWNER_ROLE, account)) {
+            revert ConflictingRole(role, account);
+        }
+        if (role == EXECUTOR_ROLE && hasRole(OWNER_ROLE, account)) {
+            revert ConflictingRole(role, account);
+        }
+
+        return super._grantRole(role, account);
+    }
 
     /// @dev Only UPGRADER_ROLE may replace the implementation. Deliberately not
     ///      OWNER_ROLE: moving funds and replacing the code that governs how
