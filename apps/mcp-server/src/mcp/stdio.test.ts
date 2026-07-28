@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+
 import type { AgentPayRuntime } from "../runtime/agentpay-runtime.ts";
 import type { AgentPayMcpServer } from "./agentpay-mcp.ts";
 import {
@@ -107,6 +111,112 @@ describe("createAgentPayMcpServer", () => {
       "get_agent_job",
     ]);
     assert.equal(server.registeredToolNames.includes("prepare_payment"), false);
+  });
+
+  it("completes a real SDK handshake and advertises all local Arc tools", async () => {
+    const server = createArcAgentWalletMcpServer(createArcWalletRuntime());
+    const client = new Client({
+      name: "agentpay-arc-wallet-integration-test",
+      version: "1.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const response = await client.listTools();
+      const toolNames = response.tools.map((tool) => tool.name);
+
+      assert.equal(response.tools.length, 31);
+      assert.equal(toolNames.includes("setup_agent_wallet"), true);
+      assert.equal(toolNames.includes("send_usdc"), true);
+      assert.equal(toolNames.includes("withdraw_agent_budget"), true);
+      assert.equal(toolNames.includes("prepare_payment"), false);
+
+      const sendUsdc = response.tools.find((tool) => tool.name === "send_usdc");
+      assert.deepEqual(sendUsdc?.inputSchema.required, [
+        "idempotencyKey",
+        "recipient",
+        "amount",
+        "purpose",
+      ]);
+      assert.equal(
+        (
+          sendUsdc?.inputSchema.properties?.recipient as
+            | { pattern?: string }
+            | undefined
+        )?.pattern,
+        "^0x[a-fA-F0-9]{40}$",
+      );
+      const invalidResult = CallToolResultSchema.parse(
+        await client.callTool({
+          name: "send_usdc",
+          arguments: {
+            amount: "1",
+          },
+        }),
+      );
+      assert.equal(invalidResult.isError, true);
+      assert.match(
+        invalidResult.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("\n"),
+        /invalid arguments/i,
+      );
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("preserves the hosted server's existing Zod schemas on the real SDK", async () => {
+    const server = createAgentPayMcpServer(createRuntime());
+    const client = new Client({
+      name: "agentpay-hosted-schema-integration-test",
+      version: "1.0.0",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const response = await client.listTools();
+      const prepareWalletCreation = response.tools.find(
+        (tool) => tool.name === "prepare_wallet_creation",
+      );
+      const setupAgentWallet = response.tools.find(
+        (tool) => tool.name === "setup_agent_wallet",
+      );
+
+      assert.equal(response.tools.length, 23);
+      assert.equal(prepareWalletCreation?.inputSchema.required, undefined);
+      assert.equal(
+        (
+          prepareWalletCreation?.inputSchema.properties?.ownerAddress as
+            | { pattern?: string }
+            | undefined
+        )?.pattern,
+        "^0x[a-fA-F0-9]{40}$",
+      );
+      assert.equal(
+        (
+          setupAgentWallet?.inputSchema.properties?.walletAddress as
+            | { pattern?: string }
+            | undefined
+        )?.pattern,
+        "^0x[a-fA-F0-9]{40}$",
+      );
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });
 

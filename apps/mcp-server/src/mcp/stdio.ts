@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
 import {
   createAgentPayRuntime,
@@ -161,19 +163,66 @@ export async function startArcAgentWalletMcpServer(
 }
 
 function createSdkMcpServer(): ConnectableAgentPayMcpServer {
-  const server = new McpServer({
-    name: "agentpay",
-    version: "0.1.1",
-  });
-
-  return server as unknown as ConnectableAgentPayMcpServer;
+  return createSchemaCompatibleSdkMcpServer("agentpay");
 }
 
 function createCircleWalletSdkMcpServer(): ConnectableAgentPayMcpServer {
-  const server = new McpServer({
-    name: "agentpay-wallet",
+  return createSchemaCompatibleSdkMcpServer("agentpay-wallet");
+}
+
+function createSchemaCompatibleSdkMcpServer(
+  name: string,
+): ConnectableAgentPayMcpServer {
+  const sdkServer = new McpServer({
+    name,
     version: "0.1.1",
   });
 
-  return server as unknown as ConnectableAgentPayMcpServer;
+  return {
+    registerTool(toolName, metadata, handler) {
+      sdkServer.registerTool(
+        toolName,
+        {
+          ...(typeof metadata.title === "string"
+            ? { title: metadata.title }
+            : {}),
+          ...(typeof metadata.description === "string"
+            ? { description: metadata.description }
+            : {}),
+          inputSchema: normalizeMcpInputSchema(metadata.inputSchema),
+        },
+        async (input: unknown) => (await handler(input)) as CallToolResult,
+      );
+    },
+    async connect(transport) {
+      await sdkServer.connect(
+        transport as Parameters<McpServer["connect"]>[0],
+      );
+    },
+    async close() {
+      await sdkServer.close();
+    },
+  };
+}
+
+function normalizeMcpInputSchema(inputSchema: unknown) {
+  if (inputSchema === undefined || inputSchema instanceof z.ZodType) {
+    return inputSchema;
+  }
+  if (isZodRawShape(inputSchema)) {
+    return inputSchema;
+  }
+  return z.fromJSONSchema(
+    inputSchema as Parameters<typeof z.fromJSONSchema>[0],
+  );
+}
+
+function isZodRawShape(
+  value: unknown,
+): value is Record<string, z.ZodType> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const fields = Object.values(value);
+  return fields.length === 0 || fields.every((field) => field instanceof z.ZodType);
 }
