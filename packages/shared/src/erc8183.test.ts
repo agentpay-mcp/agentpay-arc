@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
+  ARC_TESTNET_ERC8183_AGENTIC_COMMERCE_IMPLEMENTATION,
   ARC_ERC8183_JOB_STATES,
+  ERC1967_IMPLEMENTATION_SLOT,
   arcAgentJobBudgetInputSchema,
   arcAgentJobCreateInputSchema,
   arcAgentJobFundInputSchema,
@@ -33,6 +35,17 @@ describe("ERC-8183 contract metadata", () => {
     assert.equal(
       ARC_TESTNET_ERC8183_AGENTIC_COMMERCE,
       "0x0747EEf0706327138c69792bF28Cd525089e4583",
+    );
+  });
+
+  it("pins the reverified ERC-1967 implementation metadata", () => {
+    assert.equal(
+      ERC1967_IMPLEMENTATION_SLOT,
+      "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+    );
+    assert.equal(
+      ARC_TESTNET_ERC8183_AGENTIC_COMMERCE_IMPLEMENTATION,
+      "0xa316fd02827242d537f84730f8a37d0ba5fd351a",
     );
   });
 

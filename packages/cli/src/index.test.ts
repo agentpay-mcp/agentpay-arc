@@ -90,7 +90,10 @@ describe("installAgentPay", () => {
       const skill = await readFile(join(outputDir, "skills", "agentpay", "SKILL.md"), "utf8");
       const skillMetadata = await readFile(join(outputDir, "skills", "agentpay", "agents", "openai.yaml"), "utf8");
 
-      assert.match(skill, /funded USDC balance is the agent's autonomous budget/i);
+      assert.match(
+        skill,
+        /user grants autonomous authority by funding the Agent Wallet/i,
+      );
       assert.match(skill, /setup_agent_wallet/);
       assert.match(skill, /get_agent_budget/);
       assert.match(skill, /fund_agent_wallet/);
@@ -159,6 +162,10 @@ describe("installAgentPay", () => {
       assert.deepEqual(mcpConfig.mcpServers.agentpay.args, ["-y", "@agentpay-ai/agentpay-arc", "mcp"]);
       assert.deepEqual(mcpConfig.mcpServers.agentpay.env, {
         AGENTPAY_CONFIG: "~/.agentpay/config.json",
+      });
+      assert.deepEqual(mcpConfig.mcpServers["agentpay-wallet"], {
+        command: "npx",
+        args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
       });
       assert.ok(result.writtenFiles.includes(join(outputDir, "config.json")));
       assert.ok(result.writtenFiles.includes(bytecodePath));

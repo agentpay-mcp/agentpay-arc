@@ -15,6 +15,7 @@ import {
   isArcAgentJobExpired,
   parseUsdcAtomic,
   type ArcAgentJobState,
+  type CircleTransactionResult,
 } from "@agentpay-ai/shared-arc";
 
 import type { CircleCli } from "../services/circle-cli.ts";
@@ -58,8 +59,13 @@ export interface ArcAgentJobProofReader {
    * `createJob` assigns it on chain.
    */
   proveMutation(
-    transactionId: string,
-    expectation: { readonly contract: string; readonly jobId?: string },
+    transaction: CircleTransactionResult,
+    expectation: {
+      readonly contract: string;
+      readonly jobId?: string;
+      readonly functionSignature: string;
+      readonly parameters: readonly string[];
+    },
   ): Promise<{
     readonly transactionHash: string;
     readonly blockNumber: string;
@@ -221,12 +227,19 @@ async function submitOnce(
   }
 
   try {
-    const rawProof = await dependencies.proofReader.proveMutation(transaction.id, {
+    const rawProof = await dependencies.proofReader.proveMutation(transaction, {
       // The contract this write actually targeted, not the module's default.
       // fund_agent_job approves against USDC first, so a hardcoded expectation
       // would send the proof reader hunting on the wrong contract.
       contract: input.contract,
-      jobId,
+      // A USDC Approval event has no ERC-8183 job id. Bind the id only when
+      // proving a log emitted by AgenticCommerce itself.
+      ...(jobId !== undefined
+          && sameAddress(input.contract, ARC_TESTNET_ERC8183_AGENTIC_COMMERCE)
+        ? { jobId }
+        : {}),
+      functionSignature: input.functionSignature,
+      parameters: input.parameters ?? [],
     });
 
     // The proof reader returns plain strings. Parse the whole shape before any

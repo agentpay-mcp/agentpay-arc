@@ -155,9 +155,34 @@ describe("README", () => {
       /swap_and_pay/,
       /register_agent_identity/,
       /get_agent_trust/,
+      /request_agent_validation/,
+      /respond_agent_validation/,
+      /create_agent_job/,
+      /set_agent_job_budget/,
+      /fund_agent_job/,
+      /submit_agent_deliverable/,
+      /complete_agent_job/,
+      /reject_agent_job/,
+      /get_agent_job/,
     ]) {
       assert.match(contents, tool, `README must document ${tool.source}`);
     }
+    assert.match(contents, /19 approved features/i);
+    assert.match(contents, /npm run demo:local/);
+  });
+
+  it("keeps the installed skill aligned with the complete local Arc surface", async () => {
+    const contents = await readFile("packages/skill/SKILL.md", "utf8");
+
+    assert.match(contents, /31 local Arc MCP tools/i);
+    assert.match(contents, /process-owned|local.*durable state/i);
+    assert.match(contents, /ERC-8183/i);
+    assert.match(contents, /marketplace/i);
+    assert.doesNotMatch(
+      contents,
+      /Additional Arc payment, x402, liquidity, identity, job, marketplace, and compliance tools are introduced by later/i,
+    );
+    assert.doesNotMatch(contents, /four Circle Agent Wallet tools/i);
   });
 
   it("states Arc testnet status honestly and claims no unverified deployment", async () => {

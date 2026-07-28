@@ -25,6 +25,14 @@ import { z } from "zod";
 export const ARC_TESTNET_ERC8183_AGENTIC_COMMERCE =
   "0x0747EEf0706327138c69792bF28Cd525089e4583" as const;
 
+/** Standard ERC-1967 implementation slot used to resolve upgradeable proxies. */
+export const ERC1967_IMPLEMENTATION_SLOT =
+  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc" as const;
+
+/** Reverified from the proxy implementation slot on Arc Testnet, 28 July 2026. */
+export const ARC_TESTNET_ERC8183_AGENTIC_COMMERCE_IMPLEMENTATION =
+  "0xa316fd02827242d537f84730f8a37d0ba5fd351a" as const;
+
 export const erc8183AgenticCommerceAbi = Object.freeze([
   "function createJob(address provider,address evaluator,uint256 expiredAt,string description,address hook) returns (uint256)",
   "function setProvider(uint256 jobId,address provider)",

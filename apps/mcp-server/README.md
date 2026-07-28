@@ -5,15 +5,20 @@ It supports Circle Agent Wallet setup and funding, autonomous budget reads and
 withdrawal, direct USDC sends, invoice payments and payment requests, batch
 payouts, x402 paid-service discovery and purchase, unified balance and
 bridge/swap routes, ERC-8004 identity and reputation, activity receipts with
-Arcscan proofs, and audit events.
+Arcscan proofs, ERC-8183 escrow jobs, and audit events.
 
-Run locally:
+Run the complete config-free local Arc Agent Wallet surface:
 
 ```bash
-npm run start --workspace @agentpay-ai/mcp-server-arc
+npx @agentpay-ai/agentpay-arc agent-wallet-mcp
 ```
 
-Core local/staging startup values are `SUPABASE_URL`,
+It registers 31 local Arc tools and persists process-owned operation state at
+`~/.agentpay/arc-state.json` with owner-only permissions. It accepts no tenant
+ID and no hosted credential. Circle login, Terms, and OTP remain manual.
+
+The package workspace `npm run start` command starts the inherited operator MCP.
+Its local/staging startup values are `SUPABASE_URL`,
 `SUPABASE_SERVICE_ROLE_KEY`, `CELO_RPC_URL`, and `EXECUTOR_PRIVATE_KEY` — the
 keys `parseAgentPayEnv` requires to start this server. `ARC_TESTNET_RPC_URL` is
 required by the separate Arc production readiness gate, not by the local startup
@@ -56,9 +61,9 @@ exactly once against the exact inspected quote. A quote that changed between
 inspection and execution stops the payment. Payment signatures are never
 persisted or returned.
 
-The inherited Celo owner-signature tools remain registered as legacy context
-while the remaining Arc phases are implemented. They do not define
-authorization for Circle Agent Wallet spending.
+The inherited Celo owner-signature tools remain registered as compatibility
+context on their separate operator surface. They do not define authorization
+for Circle Agent Wallet spending.
 
 That legacy path keeps its own x402 flow: search Bazaar with
 `search_x402_services`, prepare a result with `prepare_x402_service_request`

@@ -7,6 +7,7 @@ import {
   type AgentPayRuntime,
   type AgentPayRuntimeConfig,
 } from "../runtime/agentpay-runtime.ts";
+import { createDefaultArcAgentWalletRuntime } from "../runtime/default-arc-agent-wallet-runtime.ts";
 import { createCircleCli } from "../services/circle-cli.ts";
 import {
   createFundAgentWalletHandler,
@@ -17,8 +18,10 @@ import {
 import {
   type AgentPayMcpRegistrationOptions,
   type AgentPayMcpServer,
+  type ArcAgentWalletMcpRuntime,
   type CircleAgentWalletMcpRuntime,
   registerAgentPayMcpTools,
+  registerArcAgentWalletMcpTools,
   registerCircleAgentWalletMcpTools,
 } from "./agentpay-mcp.ts";
 
@@ -41,6 +44,12 @@ export interface StartAgentPayMcpServerOptions {
 export interface StartCircleAgentWalletMcpServerOptions {
   createRuntime?: () => CircleAgentWalletMcpRuntime;
   createServer?: (runtime: CircleAgentWalletMcpRuntime) => AgentPayMcpConnection;
+  createTransport?: () => unknown;
+}
+
+export interface StartArcAgentWalletMcpServerOptions {
+  createRuntime?: () => ArcAgentWalletMcpRuntime;
+  createServer?: (runtime: ArcAgentWalletMcpRuntime) => AgentPayMcpConnection;
   createTransport?: () => unknown;
 }
 
@@ -103,6 +112,22 @@ export function createCircleAgentWalletMcpServer<TServer extends AgentPayMcpServ
   return server;
 }
 
+export function createArcAgentWalletMcpServer(
+  runtime: ArcAgentWalletMcpRuntime,
+): ConnectableAgentPayMcpServer;
+export function createArcAgentWalletMcpServer<TServer extends AgentPayMcpServer>(
+  runtime: ArcAgentWalletMcpRuntime,
+  createServer: () => TServer,
+): TServer;
+export function createArcAgentWalletMcpServer<TServer extends AgentPayMcpServer>(
+  runtime: ArcAgentWalletMcpRuntime,
+  createServer: () => TServer = createCircleWalletSdkMcpServer as unknown as () => TServer,
+): TServer | ConnectableAgentPayMcpServer {
+  const server = createServer();
+  registerArcAgentWalletMcpTools(server, runtime);
+  return server;
+}
+
 export async function startCircleAgentWalletMcpServer(
   options: StartCircleAgentWalletMcpServerOptions = {},
 ): Promise<void> {
@@ -112,6 +137,22 @@ export async function startCircleAgentWalletMcpServer(
   const server = options.createServer
     ? options.createServer(runtime)
     : createCircleAgentWalletMcpServer(runtime, createCircleWalletSdkMcpServer);
+  const transport = options.createTransport
+    ? options.createTransport()
+    : new StdioServerTransport();
+
+  await server.connect(transport);
+}
+
+export async function startArcAgentWalletMcpServer(
+  options: StartArcAgentWalletMcpServerOptions = {},
+): Promise<void> {
+  const runtime = options.createRuntime
+    ? options.createRuntime()
+    : createDefaultArcAgentWalletRuntime();
+  const server = options.createServer
+    ? options.createServer(runtime)
+    : createArcAgentWalletMcpServer(runtime, createCircleWalletSdkMcpServer);
   const transport = options.createTransport
     ? options.createTransport()
     : new StdioServerTransport();
