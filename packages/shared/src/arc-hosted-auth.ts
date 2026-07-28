@@ -11,6 +11,13 @@ export const ArcEvmAddressSchema = z
   .regex(/^0x[0-9a-fA-F]{40}$/, "Must be a valid 40-character 0x EVM hex address")
   .transform((val) => val.toLowerCase());
 
+export const ArcOptionalEvmAddressSchema = z
+  .string()
+  .trim()
+  .regex(/^0x[0-9a-fA-F]{40}$/, "Must be a valid 40-character 0x EVM hex address")
+  .transform((val) => val.toLowerCase())
+  .optional();
+
 export const ArcHostedAccountStatusSchema = z.enum(["ACTIVE", "PAUSED", "CLOSED"]);
 export type ArcHostedAccountStatus = z.infer<typeof ArcHostedAccountStatusSchema>;
 
@@ -38,7 +45,7 @@ export const ArcHostedAccountSchema = z.object({
   accountStatus: ArcHostedAccountStatusSchema,
   consentVersion: z.literal(ARC_AUTONOMY_CONSENT_VERSION),
   consentTimestamp: z.string().datetime(),
-  walletAddress: ArcEvmAddressSchema,
+  walletAddress: ArcOptionalEvmAddressSchema,
   walletStatus: ArcWalletProvisioningStateSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
