@@ -26,7 +26,6 @@ import {AgentPayAccountV3} from "./AgentPayAccountV3.sol";
 ///      are upgradeable individually through their own UPGRADER_ROLE.
 contract AgentPayAccountV3ProxyFactory is AccessControl {
     error ZeroAddress();
-    error ImplementationMustBeContract();
     error ImplementationNotUUPS();
     error AccountAlreadyDeployed(address account);
     error AuthorizationExpired(uint256 deadline);
@@ -50,7 +49,8 @@ contract AgentPayAccountV3ProxyFactory is AccessControl {
     bytes32 private constant _VERSION_HASH = keccak256("1");
     uint256 private constant _SECP256K1_N_HALF = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
-    /// @notice The pinned AgentPayAccountV3 implementation every proxy points at.
+    /// @notice The AgentPayAccountV3 implementation this factory deployed and
+    ///         every proxy it creates points at.
     /// @dev Immutable is correct here: this contract is deployed directly rather
     ///      than behind a proxy, so the value is read from its own bytecode.
     address public immutable implementation;
@@ -66,27 +66,31 @@ contract AgentPayAccountV3ProxyFactory is AccessControl {
         address[] allowedRouteTargets;
     }
 
-    constructor(address defaultAdmin, address initialDeployer, address accountImplementation) {
-        if (defaultAdmin == address(0) || initialDeployer == address(0) || accountImplementation == address(0)) {
-            revert ZeroAddress();
-        }
-        if (accountImplementation.code.length == 0) revert ImplementationMustBeContract();
+    /// @dev The implementation is deployed here rather than accepted as an
+    ///      argument. Validating a supplied address could only ever prove slot
+    ///      compatibility: a contract returning the right ERC-1822 UUID behind a
+    ///      fallback passes every external check while swallowing the
+    ///      initialization delegatecall and producing an account with no roles
+    ///      and no payment behaviour -- or with hostile payment behaviour.
+    ///
+    ///      A pinned runtime code hash would also work, but it is a constant
+    ///      someone has to keep correct across compiler settings. Deploying it
+    ///      removes the input entirely: there is nothing to misconfigure and
+    ///      nothing to verify, because the factory is the origin of the code.
+    ///      The ERC-1822 assertion below is kept as a build-time canary in case
+    ///      a future edit stops AgentPayAccountV3 being UUPS at all.
+    constructor(address defaultAdmin, address initialDeployer) {
+        if (defaultAdmin == address(0) || initialDeployer == address(0)) revert ZeroAddress();
 
-        // Code length alone accepts anything, including a fallback-only contract
-        // that would swallow the initialization delegatecall and leave a proxy
-        // with no roles and no payment behaviour. ERC-1822 is the interface a
-        // UUPS implementation must answer, so ask it.
-        // Low-level rather than try/catch: a fallback-only contract returns
-        // success with empty returndata, and the ABI decode failure that follows
-        // a `try` is not caught by its `catch`. Checking the length ourselves is
-        // the only form that actually rejects it.
+        address deployedImplementation = address(new AgentPayAccountV3());
+
         (bool ok, bytes memory returned) =
-            accountImplementation.staticcall(abi.encodeCall(IERC1822Proxiable.proxiableUUID, ()));
+            deployedImplementation.staticcall(abi.encodeCall(IERC1822Proxiable.proxiableUUID, ()));
         if (!ok || returned.length != 32 || abi.decode(returned, (bytes32)) != ERC1967Utils.IMPLEMENTATION_SLOT) {
             revert ImplementationNotUUPS();
         }
 
-        implementation = accountImplementation;
+        implementation = deployedImplementation;
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(DEPLOYER_ROLE, initialDeployer);
     }

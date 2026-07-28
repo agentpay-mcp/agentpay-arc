@@ -7,6 +7,8 @@ import {AgentPayAccountV3} from "../src/AgentPayAccountV3.sol";
 import {AgentPayAccountV3ProxyFactory} from "../src/AgentPayAccountV3ProxyFactory.sol";
 import {MockStablecoin} from "../src/MockStablecoin.sol";
 
+bytes32 constant ERC1967_IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
 contract AgentPayAccountV3ProxyFactoryTest is Test {
     AgentPayAccountV3ProxyFactory internal factory;
     AgentPayAccountV3 internal implementation;
@@ -61,8 +63,8 @@ contract AgentPayAccountV3ProxyFactoryTest is Test {
 
     function setUp() public {
         token = new MockStablecoin("Mock USD", "mUSD", 6, address(this));
-        implementation = new AgentPayAccountV3();
-        factory = new AgentPayAccountV3ProxyFactory(admin, deployer, address(implementation));
+        factory = new AgentPayAccountV3ProxyFactory(admin, deployer);
+        implementation = AgentPayAccountV3(payable(factory.implementation()));
         tokens.push(address(token));
         deadline = block.timestamp + 1 hours;
     }
@@ -124,12 +126,12 @@ contract AgentPayAccountV3ProxyFactoryTest is Test {
         factory.deployAccount(bytes32("salt-5"), init, deadline, auth);
     }
 
-    function test_constructorRejectsZeroAddressesAndNonContractImplementation() public {
+    function test_constructorRejectsZeroAddresses() public {
         vm.expectRevert(AgentPayAccountV3ProxyFactory.ZeroAddress.selector);
-        new AgentPayAccountV3ProxyFactory(address(0), deployer, address(implementation));
+        new AgentPayAccountV3ProxyFactory(address(0), deployer);
 
-        vm.expectRevert(AgentPayAccountV3ProxyFactory.ImplementationMustBeContract.selector);
-        new AgentPayAccountV3ProxyFactory(admin, deployer, address(0xC0FFEE));
+        vm.expectRevert(AgentPayAccountV3ProxyFactory.ZeroAddress.selector);
+        new AgentPayAccountV3ProxyFactory(admin, address(0));
     }
 
     function test_everyAccountSharesThePinnedImplementation() public {
@@ -203,25 +205,66 @@ contract AgentPayAccountV3ProxyFactoryTest is Test {
         factory.deployAccount(salt, init, deadline, strangerSig);
     }
 
-    function test_rejectsANonUUPSImplementation() public {
-        // Code length alone accepted a fallback-only contract, and the proxy's
-        // initialization delegatecall silently succeeded against it.
-        AcceptAllImplementation rogue = new AcceptAllImplementation();
+    function test_noForeignImplementationCanBeInjected() public {
+        // A correct ERC-1822 UUID proves slot compatibility, not code identity:
+        // PretendUUPS below answers proxiableUUID correctly and still swallows
+        // the initialization delegatecall. The factory now deploys its own
+        // implementation, so there is no argument through which any of these can
+        // be supplied at all.
+        PretendUUPSImplementation pretender = new PretendUUPSImplementation();
+        AcceptAllImplementation fallbackOnly = new AcceptAllImplementation();
+        WrongUuidImplementation wrongUuid = new WrongUuidImplementation();
 
-        vm.expectRevert(AgentPayAccountV3ProxyFactory.ImplementationNotUUPS.selector);
-        new AgentPayAccountV3ProxyFactory(admin, deployer, address(rogue));
+        assertEq(pretender.proxiableUUID(), ERC1967_IMPLEMENTATION_SLOT, "the pretender does pass a UUID check");
+
+        address deployedImplementation = factory.implementation();
+        assertTrue(deployedImplementation != address(pretender));
+        assertTrue(deployedImplementation != address(fallbackOnly));
+        assertTrue(deployedImplementation != address(wrongUuid));
+
+        // The proof that matters: the implementation behaves like V3, which a
+        // fallback-only or pretender contract cannot.
+        assertEq(AgentPayAccountV3(payable(deployedImplementation)).OWNER_ROLE(), keccak256("AGENTPAY_OWNER_ROLE"));
+        assertEq(AgentPayAccountV3(payable(deployedImplementation)).proxiableUUID(), ERC1967_IMPLEMENTATION_SLOT);
     }
 
-    function test_rejectsAnImplementationWithTheWrongProxiableUUID() public {
-        WrongUuidImplementation wrong = new WrongUuidImplementation();
+    function test_theDeployedImplementationIsAlreadyLockedDown() public {
+        // Deployed by the factory, so its constructor ran and disabled
+        // initializers: it cannot be seized even though its address is public.
+        address[] memory empty = new address[](0);
+        AgentPayAccountV3 impl = AgentPayAccountV3(payable(factory.implementation()));
 
-        vm.expectRevert(AgentPayAccountV3ProxyFactory.ImplementationNotUUPS.selector);
-        new AgentPayAccountV3ProxyFactory(admin, deployer, address(wrong));
+        vm.expectRevert();
+        impl.initialize(admin, owner, executor, upgrader, empty, empty);
+    }
+
+    function test_everyFactoryOwnsItsOwnImplementation() public {
+        AgentPayAccountV3ProxyFactory other = new AgentPayAccountV3ProxyFactory(admin, deployer);
+        address mine = factory.implementation();
+        address theirs = other.implementation();
+
+        assertTrue(mine != theirs, "each factory deploys its own instance");
+
+        // Runtime code hashes deliberately differ: UUPSUpgradeable bakes
+        // `address(this)` into an immutable `__self` so an implementation can
+        // detect being called outside a proxy. Identity is proven by behaviour,
+        // not by byte equality.
+        assertEq(AgentPayAccountV3(payable(theirs)).OWNER_ROLE(), AgentPayAccountV3(payable(mine)).OWNER_ROLE());
+        assertEq(AgentPayAccountV3(payable(theirs)).proxiableUUID(), AgentPayAccountV3(payable(mine)).proxiableUUID());
     }
 }
 
 /// Swallows any call, including the proxy's initialization delegatecall.
 contract AcceptAllImplementation {
+    fallback() external payable {}
+}
+
+/// Answers ERC-1822 correctly and still swallows everything else.
+contract PretendUUPSImplementation {
+    function proxiableUUID() external pure returns (bytes32) {
+        return ERC1967_IMPLEMENTATION_SLOT;
+    }
+
     fallback() external payable {}
 }
 
