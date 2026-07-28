@@ -1,18 +1,20 @@
 -- Migration: 20260729020000_arc_hosted_identity.sql
 -- Description: Arc-only hosted identity, tenant mapping, autonomy consent, and private Circle wallet bindings schema.
 
-create schema if not exists auth;
+begin;
 
-create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid(),
-  email text,
-  created_at timestamptz default now()
-);
-
-create or replace function auth.uid() returns uuid language sql stable as $$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
-$$;
-
+-- Expand arc_agent_activity activity_type constraint to include hosted identity events if table exists
+do $$
+begin
+  if exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'arc_agent_activity'
+  ) then
+    alter table public.arc_agent_activity drop constraint if exists arc_agent_activity_activity_type_check;
+    alter table public.arc_agent_activity add constraint arc_agent_activity_activity_type_check
+      check (activity_type in ('PAYMENT', 'BATCH_PAYOUT', 'PAYMENT_REQUEST', 'HOSTED_IDENTITY', 'CIRCLE_WALLET_PROVISIONING'));
+  end if;
+end $$;
 
 create table if not exists public.arc_hosted_accounts (
   auth_user_id uuid primary key references auth.users(id) on delete cascade,
@@ -32,9 +34,9 @@ create table if not exists public.arc_circle_wallet_bindings (
   auth_user_id uuid not null unique references auth.users(id) on delete cascade,
   tenant_id uuid not null unique references public.tenants(id) on delete cascade,
   provisioning_idempotency_key uuid not null unique,
-  circle_wallet_set_id text,
-  circle_wallet_id text,
-  wallet_address text check (wallet_address is null or wallet_address ~ '^0x[0-9a-f]{40}$'),
+  circle_wallet_set_id text unique,
+  circle_wallet_id text unique,
+  wallet_address text unique check (wallet_address is null or wallet_address ~ '^0x[0-9a-f]{40}$'),
   blockchain text check (blockchain is null or blockchain = 'ARC-TESTNET'),
   account_type text check (account_type is null or account_type = 'SCA'),
   custody_type text check (custody_type is null or custody_type = 'DEVELOPER'),
@@ -55,9 +57,17 @@ create table if not exists public.arc_circle_wallet_bindings (
   )
 );
 
+-- Schema Usage Grants
+grant usage on schema public to anon, authenticated, service_role;
+
 -- Enable RLS
 alter table public.arc_hosted_accounts enable row level security;
 alter table public.arc_circle_wallet_bindings enable row level security;
+
+-- Table Grants
+grant select on public.arc_hosted_accounts to authenticated;
+grant select, insert, update, delete on public.arc_hosted_accounts to service_role;
+grant select, insert, update, delete on public.arc_circle_wallet_bindings to service_role;
 
 -- RLS Policies
 create policy arc_hosted_accounts_user_select on public.arc_hosted_accounts
@@ -65,8 +75,27 @@ create policy arc_hosted_accounts_user_select on public.arc_hosted_accounts
   to authenticated
   using (auth_user_id = auth.uid());
 
--- Note: arc_circle_wallet_bindings has no select/insert/update/delete policy for authenticated or anon roles.
--- It is strictly backend service_role accessible.
+create policy arc_hosted_accounts_service_role_all on public.arc_hosted_accounts
+  for all
+  to service_role
+  using (true)
+  with check (true);
+
+create policy arc_circle_wallet_bindings_service_role_all on public.arc_circle_wallet_bindings
+  for all
+  to service_role
+  using (true)
+  with check (true);
+
+-- Allow service_role to query tenants if RLS enabled
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'tenants' and policyname = 'tenants_service_role_all'
+  ) then
+    create policy tenants_service_role_all on public.tenants for all to service_role using (true) with check (true);
+  end if;
+end $$;
 
 -- Indexes for performance and reconciliation
 create index if not exists idx_arc_hosted_accounts_tenant_status on public.arc_hosted_accounts (tenant_id, account_status);
@@ -104,13 +133,13 @@ begin
   end if;
 
   select exists(
-    select 1 from public.arc_hosted_accounts a where a.auth_user_id = p_auth_user_id
+    select 1 from public.arc_hosted_accounts a where a.auth_user_id = p_auth_user_id for update
   ) into v_account_exists;
 
   if not v_account_exists then
-    -- Create new tenant
-    insert into public.tenants (id, name, created_at)
-    values (gen_random_uuid(), 'arc-hosted-' || p_auth_user_id::text, now())
+    -- Create new production tenant conforming to public.tenants schema
+    insert into public.tenants (id, environment, status, auth_epoch, created_at, updated_at)
+    values (gen_random_uuid(), 'production', 'ACTIVE', 0, now(), now())
     returning id into v_tenant_id;
 
     -- Create hosted account record
@@ -166,6 +195,21 @@ begin
       now(),
       now()
     );
+
+    -- Audit account creation event if arc_agent_activity table exists
+    if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
+      insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
+      values (
+        v_tenant_id,
+        'hosted_account_created:' || p_auth_user_id::text,
+        'HOSTED_IDENTITY',
+        'ACTIVE',
+        p_auth_user_id::text,
+        jsonb_build_object('consent_version', p_consent_version, 'wallet_status', 'PENDING'),
+        now()
+      )
+      on conflict on constraint arc_agent_activity_pkey do nothing;
+    end if;
   end if;
 
   return query
@@ -204,10 +248,11 @@ begin
   select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state
   into v_binding
   from public.arc_circle_wallet_bindings b
-  where b.auth_user_id = p_auth_user_id;
+  where b.auth_user_id = p_auth_user_id
+  for update skip locked;
 
   if not found then
-    raise exception 'Binding not found for user: %', p_auth_user_id;
+    return;
   end if;
 
   if v_binding.provisioning_state in ('PENDING', 'FAILED') then
@@ -220,12 +265,26 @@ begin
     set wallet_status = 'PROVISIONING',
         updated_at = now()
     where arc_hosted_accounts.auth_user_id = p_auth_user_id;
-  end if;
 
-  return query
-  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state
-  from public.arc_circle_wallet_bindings b
-  where b.auth_user_id = p_auth_user_id;
+    if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
+      insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
+      values (
+        v_binding.tenant_id,
+        'provisioning_claimed:' || v_binding.provisioning_idempotency_key::text,
+        'CIRCLE_WALLET_PROVISIONING',
+        'PROVISIONING',
+        p_auth_user_id::text,
+        jsonb_build_object('idempotency_key', v_binding.provisioning_idempotency_key),
+        now()
+      )
+      on conflict on constraint arc_agent_activity_pkey do nothing;
+    end if;
+
+    return query
+    select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state
+    from public.arc_circle_wallet_bindings b
+    where b.auth_user_id = p_auth_user_id;
+  end if;
 end;
 $$;
 
@@ -243,8 +302,34 @@ set search_path = public
 as $$
 declare
   v_address text;
+  v_binding record;
 begin
-  v_address := lower(p_wallet_address);
+  v_address := lower(trim(p_wallet_address));
+
+  select b.tenant_id, b.circle_wallet_set_id, b.circle_wallet_id, b.wallet_address, b.provisioning_state
+  into v_binding
+  from public.arc_circle_wallet_bindings b
+  where b.auth_user_id = p_auth_user_id
+  for update;
+
+  if not found then
+    raise exception 'Binding record not found for user: %', p_auth_user_id;
+  end if;
+
+  -- Idempotent replay check if already LIVE with exact matching parameters
+  if v_binding.provisioning_state = 'LIVE' then
+    if v_binding.circle_wallet_set_id = p_circle_wallet_set_id and
+       v_binding.circle_wallet_id = p_circle_wallet_id and
+       v_binding.wallet_address = v_address then
+      return;
+    else
+      raise exception 'Cannot re-complete LIVE provisioning with conflicting Circle IDs or address';
+    end if;
+  end if;
+
+  if v_binding.provisioning_state != 'PROVISIONING' then
+    raise exception 'Cannot complete provisioning from state: %', v_binding.provisioning_state;
+  end if;
 
   update public.arc_circle_wallet_bindings
   set circle_wallet_set_id = p_circle_wallet_set_id,
@@ -263,6 +348,24 @@ begin
       wallet_status = 'LIVE',
       updated_at = now()
   where arc_hosted_accounts.auth_user_id = p_auth_user_id;
+
+  if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
+    insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
+    values (
+      v_binding.tenant_id,
+      'provisioning_completed:' || p_circle_wallet_id,
+      'CIRCLE_WALLET_PROVISIONING',
+      'LIVE',
+      p_auth_user_id::text,
+      jsonb_build_object(
+        'wallet_set_id', p_circle_wallet_set_id,
+        'wallet_id', p_circle_wallet_id,
+        'wallet_address', v_address
+      ),
+      now()
+    )
+    on conflict on constraint arc_agent_activity_pkey do nothing;
+  end if;
 end;
 $$;
 
@@ -276,7 +379,23 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_binding record;
 begin
+  select b.tenant_id, b.provisioning_state
+  into v_binding
+  from public.arc_circle_wallet_bindings b
+  where b.auth_user_id = p_auth_user_id
+  for update;
+
+  if not found then
+    raise exception 'Binding record not found for user: %', p_auth_user_id;
+  end if;
+
+  if v_binding.provisioning_state = 'LIVE' then
+    raise exception 'Cannot fail provisioning: wallet is already LIVE';
+  end if;
+
   update public.arc_circle_wallet_bindings
   set provisioning_state = 'FAILED',
       error_code = p_error_code,
@@ -287,6 +406,20 @@ begin
   set wallet_status = 'FAILED',
       updated_at = now()
   where arc_hosted_accounts.auth_user_id = p_auth_user_id;
+
+  if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
+    insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
+    values (
+      v_binding.tenant_id,
+      'provisioning_failed:' || p_auth_user_id::text || ':' || now()::text,
+      'CIRCLE_WALLET_PROVISIONING',
+      'FAILED',
+      p_auth_user_id::text,
+      jsonb_build_object('error_code', p_error_code),
+      now()
+    )
+    on conflict on constraint arc_agent_activity_pkey do nothing;
+  end if;
 end;
 $$;
 
@@ -318,6 +451,20 @@ begin
     set auth_epoch = auth_epoch + 1,
         updated_at = now()
     where id = v_tenant_id;
+
+    if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
+      insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
+      values (
+        v_tenant_id,
+        'account_status_changed:' || p_status || ':' || now()::text,
+        'HOSTED_IDENTITY',
+        p_status,
+        p_auth_user_id::text,
+        jsonb_build_object('account_status', p_status),
+        now()
+      )
+      on conflict on constraint arc_agent_activity_pkey do nothing;
+    end if;
   end if;
 end;
 $$;
@@ -335,3 +482,5 @@ grant execute on function public.arc_claim_provisioning_job(uuid) to service_rol
 grant execute on function public.arc_complete_provisioning(uuid, text, text, text) to service_role;
 grant execute on function public.arc_fail_provisioning(uuid, text) to service_role;
 grant execute on function public.arc_set_account_status(uuid, text) to service_role;
+
+commit;

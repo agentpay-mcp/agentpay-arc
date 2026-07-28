@@ -28,6 +28,24 @@ export interface SupabaseUserVerifier {
   }>;
 }
 
+export function parseJwtPayloadClaims(token: string): Record<string, unknown> {
+  const parts = token.trim().split(".");
+  if (parts.length !== 3) {
+    throw new Error("Malformed JWT token structure");
+  }
+
+  try {
+    const payloadJson = Buffer.from(parts[1], "base64url").toString("utf8");
+    const parsed = JSON.parse(payloadJson);
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Invalid JWT payload");
+    }
+    return parsed as Record<string, unknown>;
+  } catch (err: unknown) {
+    throw new Error("Failed to decode JWT payload claims");
+  }
+}
+
 export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
   private readonly config: ArcSupabaseUserConfig;
   private readonly supabaseClient: SupabaseClient;
@@ -58,6 +76,7 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
     }
 
     try {
+      // 1. Verify cryptographic validity with Supabase auth service
       const { data, error } = await this.supabaseClient.auth.getUser(cleanToken);
 
       if (error || !data?.user) {
@@ -73,22 +92,38 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
         throw new Error("Missing or malformed user ID in verified token");
       }
 
-      // Check for OAuth client_id if required
-      const appMetadata = (user.app_metadata as Record<string, unknown> | undefined) ?? {};
-      const userMetadata = (user.user_metadata as Record<string, unknown> | undefined) ?? {};
+      // 2. Decode verified JWT payload claims for top-level security claim validation
+      const claims = parseJwtPayloadClaims(cleanToken);
 
-      const oauthClientId =
-        (typeof appMetadata.client_id === "string" ? appMetadata.client_id : undefined) ??
-        (typeof appMetadata.oauth_client_id === "string" ? appMetadata.oauth_client_id : undefined) ??
-        (typeof userMetadata.client_id === "string" ? userMetadata.client_id : undefined);
+      // Validate top-level issuer if configured
+      const expectedIssuer = this.config.authIssuer ?? `${this.config.supabaseUrl}/auth/v1`;
+      if (claims.iss && typeof claims.iss === "string" && claims.iss !== expectedIssuer) {
+        throw new Error(`Token issuer mismatch: expected ${expectedIssuer}, received ${claims.iss}`);
+      }
 
-      if (options?.requireOAuthClientId && !oauthClientId) {
-        throw new Error("Verified token missing required OAuth client_id");
+      // Validate token expiration if present in claims
+      if (typeof claims.exp === "number") {
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (claims.exp <= nowSec) {
+          throw new Error("Token has expired");
+        }
+      }
+
+      // Read top-level client_id claim ONLY (never from user_metadata or app_metadata)
+      const topLevelClientId =
+        typeof claims.client_id === "string" && claims.client_id.trim().length > 0
+          ? claims.client_id.trim()
+          : typeof claims.oauth_client_id === "string" && claims.oauth_client_id.trim().length > 0
+          ? claims.oauth_client_id.trim()
+          : undefined;
+
+      if (options?.requireOAuthClientId && !topLevelClientId) {
+        throw new Error("Verified token missing required top-level OAuth client_id claim");
       }
 
       return {
         authUserId: user.id,
-        oauthClientId,
+        oauthClientId: topLevelClientId,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Authentication verification failed";

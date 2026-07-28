@@ -13,6 +13,10 @@ describe("ArcHostedAccountRepository", () => {
     wallet_status: "LIVE",
     created_at: "2026-07-29T00:00:00.000Z",
     updated_at: "2026-07-29T00:00:00.000Z",
+    tenants: {
+      status: "ACTIVE",
+      auth_epoch: 0,
+    },
   };
 
   it("claims a hosted account via atomic service-role RPC", async () => {
@@ -38,12 +42,13 @@ describe("ArcHostedAccountRepository", () => {
     assert.equal(account.walletStatus, "LIVE");
   });
 
-  it("resolves active tenant authority for a live account", async () => {
+  it("resolves active tenant authority for a live account with tenant auth_epoch", async () => {
     const fakeClient = {
       from(table: string) {
         assert.equal(table, "arc_hosted_accounts");
         return {
-          select() {
+          select(projection: string) {
+            assert.ok(projection.includes("tenants!inner"));
             return {
               eq(col: string, val: string) {
                 assert.equal(col, "auth_user_id");
@@ -71,10 +76,11 @@ describe("ArcHostedAccountRepository", () => {
     assert.equal(authority.tenantId, "b0000000-0000-4000-8000-000000000002");
     assert.equal(authority.walletAddress, "0x1234567890123456789012345678901234567890");
     assert.equal(authority.accountStatus, "ACTIVE");
+    assert.equal(authority.authEpoch, 0);
     assert.equal(authority.oauthClientId, "mcp-client-123");
   });
 
-  it("fails to resolve authority when account is PAUSED or CLOSED", async () => {
+  it("fails to resolve authority when tenant status is SUSPENDED or ARCHIVED", async () => {
     const fakeClient = {
       from() {
         return {
@@ -86,7 +92,10 @@ describe("ArcHostedAccountRepository", () => {
                     return {
                       data: {
                         ...fakeAccountRow,
-                        account_status: "PAUSED",
+                        tenants: {
+                          status: "SUSPENDED",
+                          auth_epoch: 1,
+                        },
                       },
                       error: null,
                     };
@@ -107,41 +116,7 @@ describe("ArcHostedAccountRepository", () => {
     assert.equal(authority, null);
   });
 
-  it("fails to resolve authority when wallet status is not LIVE or wallet address is missing", async () => {
-    const fakeClient = {
-      from() {
-        return {
-          select() {
-            return {
-              eq() {
-                return {
-                  async maybeSingle() {
-                    return {
-                      data: {
-                        ...fakeAccountRow,
-                        wallet_status: "PENDING",
-                        wallet_address: null,
-                      },
-                      error: null,
-                    };
-                  },
-                };
-              },
-            };
-          },
-        };
-      },
-    };
-
-    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
-    const authority = await repo.resolveHostedAuthority({
-      authUserId: "a0000000-0000-4000-8000-000000000001",
-    });
-
-    assert.equal(authority, null);
-  });
-
-  it("claims provisioning job via RPC", async () => {
+  it("claims provisioning job via RPC and throws on DB error", async () => {
     const fakeClient = {
       async rpc(funcName: string, args: any) {
         if (funcName === "arc_claim_provisioning_job") {
@@ -167,6 +142,18 @@ describe("ArcHostedAccountRepository", () => {
     assert.ok(job !== null);
     assert.equal(job.authUserId, "a0000000-0000-4000-8000-000000000001");
     assert.equal(job.provisioningState, "PROVISIONING");
+
+    // Verify DB error throws
+    const errorClient = {
+      async rpc() {
+        return { data: null, error: new Error("Connection failed") };
+      },
+    };
+    const errorRepo = new ArcHostedAccountRepositoryImpl(errorClient as any);
+    await assert.rejects(
+      () => errorRepo.claimProvisioningJob("a0000000-0000-4000-8000-000000000001"),
+      /Database error/i,
+    );
   });
 
   it("completes and fails provisioning via RPCs", async () => {

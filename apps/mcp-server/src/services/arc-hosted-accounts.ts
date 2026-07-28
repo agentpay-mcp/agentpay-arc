@@ -47,6 +47,10 @@ export interface ArcHostedAccountRepository {
   }): Promise<void>;
 }
 
+function sanitizeDbError(message: string): string {
+  return message.replace(/key \(.*?\)=\(.*?\)/gi, "key [REDACTED_KEY_VALUE]");
+}
+
 export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepository {
   private readonly supabaseClient: SupabaseClient;
 
@@ -65,8 +69,12 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       p_consent_version: consentVersion,
     });
 
-    if (error || !data || !Array.isArray(data) || data.length === 0) {
-      throw new Error(`Failed to claim hosted account: ${error?.message ?? "Empty RPC result"}`);
+    if (error) {
+      throw new Error(`Failed to claim hosted account: ${sanitizeDbError(error.message)}`);
+    }
+
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      throw new Error("Failed to claim hosted account: Empty RPC result");
     }
 
     const row = data[0];
@@ -91,7 +99,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       .maybeSingle();
 
     if (error) {
-      throw new Error(`Failed to read hosted account: ${error.message}`);
+      throw new Error(`Failed to read hosted account: ${sanitizeDbError(error.message)}`);
     }
 
     if (!data) {
@@ -115,22 +123,40 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     authUserId: string;
     oauthClientId?: string;
   }): Promise<ArcHostedAuthority | null> {
-    const account = await this.getHostedAccount(input.authUserId);
+    // Join arc_hosted_accounts with tenants to ensure both account and tenant are ACTIVE and retrieve tenant auth_epoch
+    const { data, error } = await this.supabaseClient
+      .from("arc_hosted_accounts")
+      .select("*, tenants!inner(status, auth_epoch)")
+      .eq("auth_user_id", input.authUserId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to resolve hosted authority: ${sanitizeDbError(error.message)}`);
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    const tenantInfo = (data as any).tenants;
+    const tenantStatus = tenantInfo?.status;
+    const authEpoch = Number(tenantInfo?.auth_epoch ?? 0);
 
     if (
-      !account ||
-      account.accountStatus !== "ACTIVE" ||
-      account.walletStatus !== "LIVE" ||
-      !account.walletAddress
+      data.account_status !== "ACTIVE" ||
+      tenantStatus !== "ACTIVE" ||
+      data.wallet_status !== "LIVE" ||
+      !data.wallet_address
     ) {
       return null;
     }
 
     return ArcHostedAuthoritySchema.parse({
-      authUserId: account.authUserId,
-      tenantId: account.tenantId,
-      walletAddress: account.walletAddress,
-      accountStatus: account.accountStatus,
+      authUserId: data.auth_user_id,
+      tenantId: data.tenant_id,
+      walletAddress: data.wallet_address,
+      accountStatus: data.account_status,
+      authEpoch,
       oauthClientId: input.oauthClientId,
     });
   }
@@ -145,7 +171,11 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       p_auth_user_id: authUserId,
     });
 
-    if (error || !data || !Array.isArray(data) || data.length === 0) {
+    if (error) {
+      throw new Error(`Database error in claimProvisioningJob: ${sanitizeDbError(error.message)}`);
+    }
+
+    if (!data || !Array.isArray(data) || data.length === 0) {
       return null;
     }
 
@@ -172,7 +202,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     });
 
     if (error) {
-      throw new Error(`Failed to complete provisioning: ${error.message}`);
+      throw new Error(`Failed to complete provisioning: ${sanitizeDbError(error.message)}`);
     }
   }
 
@@ -186,7 +216,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     });
 
     if (error) {
-      throw new Error(`Failed to record provisioning failure: ${error.message}`);
+      throw new Error(`Failed to record provisioning failure: ${sanitizeDbError(error.message)}`);
     }
   }
 
@@ -200,7 +230,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     });
 
     if (error) {
-      throw new Error(`Failed to set account status: ${error.message}`);
+      throw new Error(`Failed to set account status: ${sanitizeDbError(error.message)}`);
     }
   }
 }

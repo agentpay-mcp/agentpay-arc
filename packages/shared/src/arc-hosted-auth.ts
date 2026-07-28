@@ -35,6 +35,7 @@ export const ArcHostedAuthoritySchema = z.object({
   tenantId: z.string().uuid(),
   walletAddress: ArcEvmAddressSchema,
   accountStatus: ArcHostedAccountStatusSchema,
+  authEpoch: z.number().int().min(0),
   oauthClientId: z.string().trim().optional(),
 });
 export type ArcHostedAuthority = z.infer<typeof ArcHostedAuthoritySchema>;

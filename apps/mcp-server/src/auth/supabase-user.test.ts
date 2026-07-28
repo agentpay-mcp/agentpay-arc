@@ -2,12 +2,20 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseArcSupabaseUserConfig, SupabaseUserVerifierImpl } from "./supabase-user.js";
 
+function makeMockJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${header}.${body}.mock-signature`;
+}
+
 describe("SupabaseUserVerifier", () => {
   const config = {
     supabaseUrl: "https://arc-project.supabase.co",
     authIssuer: "https://arc-project.supabase.co/auth/v1",
     publishableKey: "sb-publishable-key-123",
   };
+
+  const validUserId = "a0000000-0000-4000-8000-000000000001";
 
   it("parses valid Arc Supabase user auth config", () => {
     const parsed = parseArcSupabaseUserConfig({
@@ -33,18 +41,22 @@ describe("SupabaseUserVerifier", () => {
   });
 
   it("verifies a valid Supabase JWT and extracts authUserId", async () => {
+    const jwt = makeMockJwt({
+      sub: validUserId,
+      role: "authenticated",
+      iss: "https://arc-project.supabase.co/auth/v1",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
     const fakeClient = {
       auth: {
         async getUser(token: string) {
-          if (token === "valid-user-jwt") {
+          if (token === jwt) {
             return {
               data: {
                 user: {
-                  id: "a0000000-0000-4000-8000-000000000001",
+                  id: validUserId,
                   role: "authenticated",
-                  app_metadata: {
-                    provider: "email",
-                  },
                 },
               },
               error: null,
@@ -56,24 +68,29 @@ describe("SupabaseUserVerifier", () => {
     };
 
     const verifier = new SupabaseUserVerifierImpl(config, fakeClient as any);
-    const result = await verifier.verifyAccessToken("valid-user-jwt");
+    const result = await verifier.verifyAccessToken(jwt);
 
-    assert.equal(result.authUserId, "a0000000-0000-4000-8000-000000000001");
+    assert.equal(result.authUserId, validUserId);
   });
 
-  it("verifies OAuth JWT with client_id requirement when specified", async () => {
+  it("verifies OAuth JWT with top-level client_id claim requirement when specified", async () => {
+    const jwt = makeMockJwt({
+      sub: validUserId,
+      role: "authenticated",
+      client_id: "mcp-client-xyz",
+      iss: "https://arc-project.supabase.co/auth/v1",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
     const fakeClient = {
       auth: {
         async getUser(token: string) {
-          if (token === "valid-oauth-jwt") {
+          if (token === jwt) {
             return {
               data: {
                 user: {
-                  id: "a0000000-0000-4000-8000-000000000001",
+                  id: validUserId,
                   role: "authenticated",
-                  app_metadata: {
-                    client_id: "mcp-client-xyz",
-                  },
                 },
               },
               error: null,
@@ -85,24 +102,33 @@ describe("SupabaseUserVerifier", () => {
     };
 
     const verifier = new SupabaseUserVerifierImpl(config, fakeClient as any);
-    const result = await verifier.verifyAccessToken("valid-oauth-jwt", {
+    const result = await verifier.verifyAccessToken(jwt, {
       requireOAuthClientId: true,
     });
 
-    assert.equal(result.authUserId, "a0000000-0000-4000-8000-000000000001");
+    assert.equal(result.authUserId, validUserId);
     assert.equal(result.oauthClientId, "mcp-client-xyz");
   });
 
-  it("rejects token missing OAuth client_id when required", async () => {
+  it("rejects token with client_id ONLY in user_metadata when top-level claim is missing", async () => {
+    const jwt = makeMockJwt({
+      sub: validUserId,
+      role: "authenticated",
+      iss: "https://arc-project.supabase.co/auth/v1",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
     const fakeClient = {
       auth: {
         async getUser() {
           return {
             data: {
               user: {
-                id: "a0000000-0000-4000-8000-000000000001",
+                id: validUserId,
                 role: "authenticated",
-                app_metadata: {},
+                user_metadata: {
+                  client_id: "attacker-controlled-client",
+                },
               },
             },
             error: null,
@@ -114,22 +140,29 @@ describe("SupabaseUserVerifier", () => {
     const verifier = new SupabaseUserVerifierImpl(config, fakeClient as any);
     await assert.rejects(
       () =>
-        verifier.verifyAccessToken("jwt-without-client-id", {
+        verifier.verifyAccessToken(jwt, {
           requireOAuthClientId: true,
         }),
-      /oauth client_id/i,
+      /top-level OAuth client_id/i,
     );
   });
 
-  it("rejects token with unauthenticated role or invalid user id", async () => {
+  it("rejects token with issuer mismatch", async () => {
+    const jwt = makeMockJwt({
+      sub: validUserId,
+      role: "authenticated",
+      iss: "https://untrusted-issuer.com/auth/v1",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+
     const fakeClient = {
       auth: {
         async getUser() {
           return {
             data: {
               user: {
-                id: "a0000000-0000-4000-8000-000000000001",
-                role: "anon",
+                id: validUserId,
+                role: "authenticated",
               },
             },
             error: null,
@@ -140,12 +173,13 @@ describe("SupabaseUserVerifier", () => {
 
     const verifier = new SupabaseUserVerifierImpl(config, fakeClient as any);
     await assert.rejects(
-      () => verifier.verifyAccessToken("anon-token"),
-      /authenticated/i,
+      () => verifier.verifyAccessToken(jwt),
+      /issuer mismatch/i,
     );
   });
 
   it("redacts raw token from error messages", async () => {
+    const secretToken = makeMockJwt({ sub: "secret" });
     const fakeClient = {
       auth: {
         async getUser() {
@@ -155,7 +189,6 @@ describe("SupabaseUserVerifier", () => {
     };
 
     const verifier = new SupabaseUserVerifierImpl(config, fakeClient as any);
-    const secretToken = "super-secret-bearer-token-12345";
 
     try {
       await verifier.verifyAccessToken(secretToken);
