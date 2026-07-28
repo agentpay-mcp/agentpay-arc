@@ -552,12 +552,22 @@ function unwrapResponse(response: unknown, responseKeys: readonly string[]): unk
     return response;
   }
   const record = response as Readonly<Record<string, unknown>>;
-  for (const key of [...responseKeys, "data", "result"]) {
-    if (record[key] !== undefined) {
-      return record[key];
-    }
+  const directResponseKey = responseKeys.find((key) => record[key] !== undefined);
+  if (directResponseKey) {
+    return record[directResponseKey];
   }
-  return response;
+
+  const envelopeKey = ["data", "result"].find((key) => record[key] !== undefined);
+  if (!envelopeKey) {
+    return response;
+  }
+  const envelope = record[envelopeKey];
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    return envelope;
+  }
+  const envelopeRecord = envelope as Readonly<Record<string, unknown>>;
+  const nestedResponseKey = responseKeys.find((key) => envelopeRecord[key] !== undefined);
+  return nestedResponseKey ? envelopeRecord[nestedResponseKey] : envelope;
 }
 
 function buildHttpArgs(input: {

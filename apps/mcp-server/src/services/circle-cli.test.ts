@@ -270,6 +270,102 @@ describe("Circle CLI adapter", () => {
     ]);
   });
 
+  it("unwraps the Circle CLI 0.0.6 data envelope for Arc agent wallets", async () => {
+    const runner: CircleCommandRunner = {
+      async run() {
+        return {
+          data: {
+            wallets: [{
+              address: ADDRESS,
+              type: "agent",
+              blockchain: "ARC-TESTNET",
+              createDate: "2026-07-28T13:30:00.000Z",
+              sessionToken: "must-not-escape",
+            }],
+            debugPath: "/Users/alice/.circle/session.json",
+          },
+          sessionToken: "must-not-escape",
+        };
+      },
+    };
+    const cli = createCircleCli({ runner });
+
+    const wallets = await cli.listAgentWallets();
+
+    assert.deepEqual(wallets, [{
+      address: ADDRESS,
+      type: "agent",
+      blockchain: "ARC-TESTNET",
+      createDate: "2026-07-28T13:30:00.000Z",
+    }]);
+  });
+
+  it("rejects repeated command keys and generic Circle response envelopes", async () => {
+    const wallet = {
+      address: ADDRESS,
+      type: "agent",
+      blockchain: "ARC-TESTNET",
+    };
+    const responses = [
+      { wallets: { wallets: [wallet] } },
+      { data: { data: { wallets: [wallet] } } },
+    ];
+
+    for (const response of responses) {
+      const cli = createCircleCli({
+        runner: {
+          async run() {
+            return response;
+          },
+        },
+      });
+
+      await assert.rejects(
+        () => cli.listAgentWallets(),
+        (error) => error instanceof CircleCliCommandError && error.code === "INVALID_RESPONSE",
+      );
+    }
+
+    const statusCli = createCircleCli({
+      runner: {
+        async run() {
+          return { data: { data: STATUS_RESULT } };
+        },
+      },
+    });
+    await assert.rejects(
+      () => statusCli.status(),
+      (error) => error instanceof CircleCliCommandError && error.code === "INVALID_RESPONSE",
+    );
+  });
+
+  it("rejects malformed wallets inside a Circle data envelope without retrying", async () => {
+    let attempts = 0;
+    const cli = createCircleCli({
+      runner: {
+        async run() {
+          attempts += 1;
+          return {
+            data: {
+              wallets: [{
+                address: "not-an-address",
+                type: "agent",
+                blockchain: "ARC-TESTNET",
+              }],
+            },
+          };
+        },
+      },
+      readOnlyMaxAttempts: 3,
+    });
+
+    await assert.rejects(
+      () => cli.listAgentWallets(),
+      (error) => error instanceof CircleCliCommandError && error.code === "INVALID_RESPONSE",
+    );
+    assert.equal(attempts, 1);
+  });
+
   it("uses documented Arc wallet transfer arguments", async () => {
     const calls: string[][] = [];
     const runner: CircleCommandRunner = {
