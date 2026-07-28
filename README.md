@@ -121,10 +121,17 @@ than hiding partial progress.
 ## Install
 
 The installer detects the target runtime and writes MCP configuration plus the
-`skills/agentpay/SKILL.md` agent instructions:
+`skills/agentpay/SKILL.md` agent instructions. The default install configures the
+config-free local `agentpay-wallet` MCP exposing all 31 Arc tools:
 
 ```bash
 npx @agentpay-ai/agentpay-arc install
+```
+
+To configure a remote hosted MCP alongside the local wallet MCP:
+
+```bash
+npx @agentpay-ai/agentpay-arc install --mcp-url https://wallet.agentpay.site/arc/mcp
 ```
 
 The Arc package is not published to npm yet; until it is, run the installer from

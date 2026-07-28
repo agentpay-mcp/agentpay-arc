@@ -26,13 +26,14 @@ npx @agentpay-ai/agentpay-arc install
 
 The install command only installs/configures the MCP plugin and instructions. It must not create a wallet, deploy a smart account, sign messages, approve payments, or move funds.
 
-The default install keeps the hosted consumer MCP for inherited tools and adds a
-config-free local `agentpay-wallet` MCP with 31 local Arc MCP tools. Circle Agent
-Wallet commands must run through that local surface because the authenticated
-Circle CLI session stays on the user's machine. Its process-owned durable state
-is stored at `~/.agentpay/arc-state.json` with owner-only permissions; tools
-never accept a tenant ID. Hosted AgentPay surfaces must not receive Circle OTPs,
-session credentials, wallet secrets, or mutation authority.
+The default install configures a config-free local `agentpay-wallet` MCP with 31
+local Arc MCP tools and does not require or install a remote hosted MCP. An
+explicit `--mcp-url` option adds a remote hosted `agentpay` MCP when supplied.
+Circle Agent Wallet commands must run through the local surface because the
+authenticated Circle CLI session stays on the user's machine. Its process-owned
+durable state is stored at `~/.agentpay/arc-state.json` with owner-only
+permissions; tools never accept a tenant ID. Hosted AgentPay surfaces must not
+receive Circle OTPs, session credentials, wallet secrets, or mutation authority.
 
 After installation, ask the user to reload or reconnect the agent runtime if needed. Then return to the agent chat and continue with wallet creation or payment using AgentPay MCP tools.
 

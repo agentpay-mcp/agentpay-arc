@@ -2,15 +2,21 @@
 
 AgentPay installs MCP tools and runtime instructions that let an AI agent hold a
 Circle Agent Wallet and transact autonomously in USDC on **Arc**, Circle's
-stablecoin-native L1. Hosted chat mode connects to the authenticated consumer
-endpoint at `https://wallet.agentpay.site/arc/mcp`; the separate paid public
-execution endpoint is `https://mcp.agentpay.site/arc/mcp`. Normal users do not
+stablecoin-native L1. The default install configures the config-free local
+`agentpay-wallet` MCP that exposes the 31 Arc tools. An explicit `--mcp-url`
+option adds a remote hosted `agentpay` MCP when supplied. Normal users do not
 manage Supabase, RPC, executor, deployer, or bytecode configuration.
 
 ## Install
 
 ```bash
 npx @agentpay-ai/agentpay-arc install
+```
+
+To configure a remote hosted MCP alongside the local wallet MCP:
+
+```bash
+npx @agentpay-ai/agentpay-arc install --mcp-url https://wallet.agentpay.site/arc/mcp
 ```
 
 Then return to your agent chat:
@@ -20,7 +26,7 @@ Set up an Arc agent wallet for me.
 Pay 5 USDC to 0x... on Arc Testnet for invoice INV-001.
 ```
 
-No user secrets are required for hosted mode.
+No user secrets are required for default local-first mode.
 
 AgentPay runs on **Arc Testnet only** — Arc has no mainnet — so there is no
 network to choose. Circle login, Terms acceptance, and email OTP stay manual
@@ -46,7 +52,7 @@ For x402 discovery without a URL, the agent uses `search_paid_services` and
 ## Commands
 
 ```bash
-agentpay install
+agentpay install [--mcp-url <url>]
 agentpay install --self-hosted
 agentpay agent-wallet-mcp
 agentpay mcp
