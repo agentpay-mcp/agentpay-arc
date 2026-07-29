@@ -245,11 +245,18 @@ describe("publishable AgentPay package manifests", () => {
     await access("apps/mcp-server/src/services/arc-swap-settlement-viem.ts");
     await access("apps/mcp-server/src/tools/circle-services.ts");
 
+    assert.ok(manifest.files.includes("src/auth/supabase-user.ts"));
+    assert.ok(manifest.files.includes("src/services/arc-hosted-accounts.ts"));
+    await access("apps/mcp-server/src/auth/supabase-user.ts");
+    await access("apps/mcp-server/src/services/arc-hosted-accounts.ts");
+
     const sharedManifest = await readPackageJson("packages/shared");
     assert.ok(sharedManifest.files.includes("src/batch-payout.ts"));
     assert.ok(sharedManifest.files.includes("src/x402-commerce.ts"));
+    assert.ok(sharedManifest.files.includes("src/arc-hosted-auth.ts"));
     await access("packages/shared/src/batch-payout.ts");
     await access("packages/shared/src/x402-commerce.ts");
+    await access("packages/shared/src/arc-hosted-auth.ts");
   });
 
   it("publishes the isolated Celo onboarding web and deployment worker entrypoints", async () => {

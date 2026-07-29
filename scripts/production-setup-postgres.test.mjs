@@ -66,7 +66,17 @@ async function installMigrations() {
     create role authenticated nologin noinherit;
     create role service_role nologin noinherit;
     create role authenticator nologin noinherit;
-    grant anon, authenticated to authenticator;
+    grant anon, authenticated, service_role to authenticator;
+
+    create schema if not exists auth;
+    create table if not exists auth.users (
+      id uuid primary key default gen_random_uuid(),
+      email text,
+      created_at timestamptz default now()
+    );
+    create or replace function auth.uid() returns uuid language sql stable as $$
+      select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+    $$;
   `, { tuplesOnly: false });
 
   const migrationNames = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql")).sort();
@@ -119,6 +129,8 @@ describe("production setup migration on disposable PostgreSQL", () => {
     ]);
     await waitForPostgres();
     await installMigrations();
+    const hostedTablesCount = await scalar("select count(*) from information_schema.tables where table_name in ('arc_hosted_accounts', 'arc_circle_wallet_bindings');");
+    assert.equal(hostedTablesCount, "2", "Applying complete migration directory must leave Task 13A tables installed");
     await seedRuntimeState();
   });
 
@@ -448,5 +460,294 @@ describe("production setup migration on disposable PostgreSQL", () => {
       { role: "agentpay_setup_worker", allowFailure: true },
     );
     assert.notEqual(workerWeb.code, 0, "worker cannot execute web RPCs");
+  });
+
+  it("claims Arc hosted account atomically as service_role and records audit event", async () => {
+    const user1 = "a0000000-0000-4000-8000-000000000001";
+    await dockerPsql(`insert into auth.users (id, email) values ('${user1}', 'user1@example.com') on conflict do nothing;`, { tuplesOnly: false });
+
+    const claimResult = await scalar(
+      `select row_to_json(r)::text from public.arc_claim_hosted_account('${user1}'::uuid) r;`,
+      { role: "service_role" },
+    );
+
+    const account = JSON.parse(claimResult);
+    assert.equal(account.auth_user_id, user1);
+    assert.equal(account.account_status, "ACTIVE");
+    assert.equal(account.wallet_status, "PENDING");
+    assert.ok(account.tenant_id);
+
+    // Replay claim returns same account cleanly
+    const replayResult = await scalar(
+      `select row_to_json(r)::text from public.arc_claim_hosted_account('${user1}'::uuid) r;`,
+      { role: "service_role" },
+    );
+    assert.equal(JSON.parse(replayResult).tenant_id, account.tenant_id);
+  });
+
+  it("enforces Arc hosted account RLS user isolation and denies unprivileged RPC execution", async () => {
+    const user1 = "a0000000-0000-4000-8000-000000000001";
+    const user2 = "a0000000-0000-4000-8000-000000000002";
+    await dockerPsql(`insert into auth.users (id, email) values ('${user2}', 'user2@example.com') on conflict do nothing;`, { tuplesOnly: false });
+
+    // Claim account for User 2 as service_role
+    await scalar(
+      `select public.arc_claim_hosted_account('${user2}'::uuid);`,
+      { role: "service_role" },
+    );
+
+    // Setting jwt.claim.sub for RLS test
+    const rlsReadUser1 = await dockerPsql(`
+      set session authorization authenticator;
+      set role authenticated;
+      set request.jwt.claim.sub = '${user1}';
+      select count(*)::text from public.arc_hosted_accounts;
+    `);
+    assert.equal(rlsReadUser1.stdout, "1");
+
+    // Private Circle wallet bindings table denies client SELECT
+    const bindingRead = await dockerPsql(`
+      set session authorization authenticator;
+      set role authenticated;
+      set request.jwt.claim.sub = '${user1}';
+      select count(*)::text from public.arc_circle_wallet_bindings;
+    `, { allowFailure: true });
+    assert.notEqual(bindingRead.code, 0, "authenticated role must be denied access to arc_circle_wallet_bindings");
+
+    // Anon and authenticated roles are denied RPC execution
+    const forbiddenRpc = await dockerPsql(
+      `select public.arc_claim_hosted_account('${user1}'::uuid);`,
+      { role: "authenticated", allowFailure: true },
+    );
+    assert.notEqual(forbiddenRpc.code, 0, "authenticated role must be denied arc_claim_hosted_account RPC");
+  });
+
+  it("handles provisioning lifecycle atomically, fencing tokens, and enforces monotonic state transitions", async () => {
+    const user1 = "a0000000-0000-4000-8000-000000000001";
+
+    // 1. Claim provisioning job
+    const claimJob = JSON.parse(await scalar(
+      `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user1}'::uuid) r;`,
+      { role: "service_role" },
+    ));
+    assert.equal(claimJob.auth_user_id, user1);
+    assert.equal(claimJob.provisioning_state, "PROVISIONING");
+    assert.ok(claimJob.fencing_token, "Claim job must return fencing token");
+
+    const originalFencingToken = claimJob.fencing_token;
+
+    // Verify activity log metadata does NOT leak the fencing token
+    const activityLog = await scalar(
+      `select metadata::text from public.arc_agent_activity where activity_type = 'CIRCLE_WALLET_PROVISIONING' and reference_id = '${user1}';`,
+      { role: "service_role" },
+    );
+    assert.ok(!activityLog.includes(originalFencingToken), "Activity log must not contain sensitive fencing token");
+
+    // Concurrent claim while PROVISIONING returns empty result
+    const secondClaim = await scalar(
+      `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user1}'::uuid) r;`,
+      { role: "service_role" },
+    );
+    assert.equal(secondClaim, "");
+
+    // Stale fencing token is rejected on complete
+    const walletSet = "ws-arc-001";
+    const walletId = "w-arc-001";
+    const address = "0x1111111111111111111111111111111111111111";
+
+    const staleComplete = await dockerPsql(
+      `select public.arc_complete_provisioning('${user1}'::uuid, '00000000-0000-4000-8000-000000000000'::uuid, '${walletSet}', '${walletId}', '${address}');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(staleComplete.code, 0, "Stale fencing token must be rejected");
+
+    // 2. Complete provisioning with valid fencing token
+    await scalar(
+      `select public.arc_complete_provisioning('${user1}'::uuid, '${originalFencingToken}'::uuid, '${walletSet}', '${walletId}', '${address}');`,
+      { role: "service_role" },
+    );
+
+    // Verify account is LIVE
+    const liveAccount = JSON.parse(await scalar(
+      `select row_to_json(t)::text from (select * from public.arc_hosted_accounts where auth_user_id = '${user1}'::uuid) t;`,
+      { role: "service_role" },
+    ));
+    assert.equal(liveAccount.wallet_status, "LIVE");
+    assert.equal(liveAccount.wallet_address, address);
+
+    // Idempotent re-complete with exact same parameters succeeds
+    await scalar(
+      `select public.arc_complete_provisioning('${user1}'::uuid, '${originalFencingToken}'::uuid, '${walletSet}', '${walletId}', '${address}');`,
+      { role: "service_role" },
+    );
+
+    // Failing a LIVE account is rejected
+    const invalidFail = await dockerPsql(
+      `select public.arc_fail_provisioning('${user1}'::uuid, '${originalFencingToken}'::uuid, 'SOME_ERROR');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(invalidFail.code, 0, "Cannot fail a LIVE provisioning job");
+  });
+
+  it("enforces global Circle ID and address uniqueness across users and idempotent fail replays", async () => {
+    const user2 = "a0000000-0000-4000-8000-000000000002";
+
+    // Attempt to claim User 2
+    const claimUser2 = JSON.parse(await scalar(
+      `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user2}'::uuid) r;`,
+      { role: "service_role" },
+    ));
+
+    const duplicateComplete = await dockerPsql(
+      `select public.arc_complete_provisioning('${user2}'::uuid, '${claimUser2.fencing_token}'::uuid, 'ws-arc-002', 'w-arc-002', '0x1111111111111111111111111111111111111111');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(duplicateComplete.code, 0, "Duplicate wallet address must violate unique constraint");
+
+    // Fail user 2 with valid fencing token
+    await scalar(
+      `select public.arc_fail_provisioning('${user2}'::uuid, '${claimUser2.fencing_token}'::uuid, 'UPSTREAM_ERROR');`,
+      { role: "service_role" },
+    );
+
+    // Idempotent fail replay with exact same fencing token & error code succeeds
+    await scalar(
+      `select public.arc_fail_provisioning('${user2}'::uuid, '${claimUser2.fencing_token}'::uuid, 'UPSTREAM_ERROR');`,
+      { role: "service_role" },
+    );
+  });
+
+  it("sets account status and increments tenant auth_epoch", async () => {
+    const user1 = "a0000000-0000-4000-8000-000000000001";
+
+    const preTenant = JSON.parse(await scalar(
+      `select row_to_json(x)::text from (select t.* from public.tenants t join public.arc_hosted_accounts a on a.tenant_id = t.id where a.auth_user_id = '${user1}'::uuid) x;`,
+      { role: "service_role" },
+    ));
+    const initialEpoch = Number(preTenant.auth_epoch);
+
+    await scalar(
+      `select public.arc_set_account_status('${user1}'::uuid, 'PAUSED');`,
+      { role: "service_role" },
+    );
+
+    const postTenant = JSON.parse(await scalar(
+      `select row_to_json(x)::text from (select t.* from public.tenants t join public.arc_hosted_accounts a on a.tenant_id = t.id where a.auth_user_id = '${user1}'::uuid) x;`,
+      { role: "service_role" },
+    ));
+    assert.equal(Number(postTenant.auth_epoch), initialEpoch + 1);
+
+    const postAccount = JSON.parse(await scalar(
+      `select row_to_json(x)::text from (select * from public.arc_hosted_accounts where auth_user_id = '${user1}'::uuid) x;`,
+      { role: "service_role" },
+    ));
+    assert.equal(postAccount.account_status, "PAUSED");
+
+    // Close user 1 account
+    await scalar(
+      `select public.arc_set_account_status('${user1}'::uuid, 'CLOSED');`,
+      { role: "service_role" },
+    );
+
+    // Verify CLOSED account cannot claim a provisioning job
+    const closedClaim = await scalar(
+      `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user1}'::uuid) r;`,
+      { role: "service_role" },
+    );
+    assert.equal(closedClaim, "", "CLOSED account must not claim a provisioning job");
+
+    // Verify CLOSED account cannot be reopened
+    const invalidReopen = await dockerPsql(
+      `select public.arc_set_account_status('${user1}'::uuid, 'ACTIVE');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(invalidReopen.code, 0, "Cannot reopen a CLOSED account");
+    assert.match(invalidReopen.stderr, /Cannot transition closed account/i);
+
+    // Negative test: unknown auth user ID raises exception
+    const unknownUser = "a0000000-0000-4000-8000-000000000099";
+    const invalidSetStatus = await dockerPsql(
+      `select public.arc_set_account_status('${unknownUser}'::uuid, 'ACTIVE');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(invalidSetStatus.code, 0, "arc_set_account_status must error for non-existent user");
+    assert.match(invalidSetStatus.stderr, /Hosted account not found for user/i);
+  });
+
+  it("fails closed when worker attempts to complete or fail provisioning on a PAUSED or CLOSED account", async () => {
+    const pausedUser = "a0000000-0000-4000-8000-000000000088";
+    await dockerPsql(`insert into auth.users (id, email) values ('${pausedUser}', 'paused@example.com') on conflict do nothing;`, { tuplesOnly: false });
+    await scalar(`select public.arc_claim_hosted_account('${pausedUser}'::uuid, 'arc-hosted-autonomy-v1');`, { role: "service_role" });
+
+    // Worker claims provisioning job while account is ACTIVE
+    const claimedJobJson = await scalar(`select row_to_json(r)::text from public.arc_claim_provisioning_job('${pausedUser}'::uuid) r;`, { role: "service_role" });
+    const claimedJob = JSON.parse(claimedJobJson);
+    const fencingToken = claimedJob.fencing_token;
+    assert.ok(fencingToken, "Worker must receive a valid fencing token");
+
+    // Account transitions to PAUSED while worker is running
+    await scalar(`select public.arc_set_account_status('${pausedUser}'::uuid, 'PAUSED');`, { role: "service_role" });
+
+    // Worker attempts to complete provisioning -> MUST fail closed
+    const completeResult = await dockerPsql(
+      `select public.arc_complete_provisioning('${pausedUser}'::uuid, '${fencingToken}'::uuid, 'set_1', 'w_1', '0x1111111111111111111111111111111111111111');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(completeResult.code, 0, "Completion on PAUSED account must fail");
+    assert.match(completeResult.stderr, /Cannot complete provisioning for non-active account/i);
+
+    // Worker attempts to fail provisioning -> MUST fail closed
+    const failResult = await dockerPsql(
+      `select public.arc_fail_provisioning('${pausedUser}'::uuid, '${fencingToken}'::uuid, 'FAILED_PROVISION');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(failResult.code, 0, "Failure report on PAUSED account must fail");
+    assert.match(failResult.stderr, /Cannot fail provisioning for non-active account/i);
+  });
+
+  it("handles 24 truly concurrent claim calls for a new user without duplicate key errors", async () => {
+    const newUserId = "a0000000-0000-4000-8000-000000000077";
+    await dockerPsql(`insert into auth.users (id, email) values ('${newUserId}', 'concurrent@example.com') on conflict do nothing;`, { tuplesOnly: false });
+
+    // Pipeline 24 simultaneous claims for the exact same new user ID
+    const results = await Promise.all(
+      Array.from({ length: 24 }, () =>
+        scalar(`select row_to_json(r)::text from public.arc_claim_hosted_account('${newUserId}'::uuid) r;`, {
+          role: "service_role",
+        }),
+      ),
+    );
+
+    assert.equal(results.length, 24);
+    const parsedResults = results.map((r) => JSON.parse(r));
+    const firstTenantId = parsedResults[0].tenant_id;
+    assert.ok(firstTenantId, "First claim must return valid tenant_id");
+
+    for (const res of parsedResults) {
+      assert.equal(res.auth_user_id, newUserId);
+      assert.equal(res.tenant_id, firstTenantId, "All 24 concurrent claims must return the exact same canonical tenant_id");
+      assert.equal(res.account_status, "ACTIVE");
+      assert.equal(res.wallet_status, "PENDING");
+    }
+
+    // Verify exactly one tenant and one hosted account were created
+    assert.equal(await scalar(`select count(*) from public.arc_hosted_accounts where auth_user_id = '${newUserId}'::uuid;`), "1");
+  });
+
+  it("reverses Task 13A migration cleanly and idempotently when running the rollback script", async () => {
+    const rollbackSql = await readFile("supabase/rollbacks/20260729020000_arc_hosted_identity_rollback.sql", "utf8");
+    const rollbackRes = await dockerPsql(rollbackSql, { tuplesOnly: false });
+    assert.equal(rollbackRes.code, 0, "Rollback SQL script must execute cleanly");
+
+    // Verify tables, functions, and tenant RLS policy no longer exist
+    const tableCount = await scalar("select count(*) from information_schema.tables where table_name in ('arc_hosted_accounts', 'arc_circle_wallet_bindings');");
+    assert.equal(tableCount, "0", "Task 13A tables must be dropped by rollback script");
+
+    const policyCount = await scalar("select count(*) from pg_policies where schemaname = 'public' and tablename = 'tenants' and policyname = 'arc_tenants_service_role_all';");
+    assert.equal(policyCount, "0", "Task 13A tenant policy must be dropped by rollback script");
+
+    // Verify rollback script is idempotent (can be executed a second time without error)
+    const secondRollbackRes = await dockerPsql(rollbackSql, { tuplesOnly: false });
+    assert.equal(secondRollbackRes.code, 0, "Rollback SQL script must execute idempotently on second run");
   });
 });
