@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CircleDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 import { CircleHostedWalletFacade, ARC_HOSTED_TOOL_CAPABILITY_MATRIX } from "./circle-hosted-wallet-facade.ts";
-import { CircleDeveloperWalletsAdapter } from "./circle-developer-wallets.ts";
+import { CircleDeveloperWalletsAdapter, CircleDeveloperSdkClient } from "./circle-developer-wallets.ts";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.ts";
 import { ArcHostedAuthority } from "@agentpay-ai/shared-arc";
 
@@ -23,15 +22,15 @@ describe("CircleHostedWalletFacade", () => {
     authEpoch: 1,
   };
 
-  const createTestContext = (customSdk?: Record<string, any>) => {
-    const mockSdk = {
+  const createTestContext = (customSdk?: Partial<CircleDeveloperSdkClient>) => {
+    const mockSdk: CircleDeveloperSdkClient = {
       listWalletSets: async () => ({ data: { walletSets: [] } }),
       createWalletSet: async () => ({ data: {} }),
       listWallets: async () => ({ data: { wallets: [] } }),
       createWallets: async () => ({ data: { wallets: [] } }),
       getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
       ...customSdk,
-    } as unknown as CircleDeveloperControlledWalletsClient;
+    };
 
     const adapter = new CircleDeveloperWalletsAdapter(
       { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
@@ -228,24 +227,11 @@ describe("CircleHostedWalletFacade", () => {
     );
   });
 
-  it("creates real App Kit adapter exposing all facade methods", async () => {
-    let queriedId = "";
-    const { facade } = createTestContext({
-      getWalletTokenBalance: async (input: any) => {
-        queriedId = input.id;
-        return { data: { tokenBalances: [{ token: { symbol: "USDC" }, amount: "12.0" }] } };
-      },
-    });
-
-    const appKitAdapter = facade.createAppKitAdapter(validAuthority);
-    assert.deepEqual(appKitAdapter.authority, validAuthority);
-
-    const walletInfo = await appKitAdapter.getWallet();
-    assert.equal(walletInfo.walletAddress, "0x1111111111111111111111111111111111111111");
-
-    const balances = await appKitAdapter.getBalances();
-    assert.equal(queriedId, "w-valid-1");
-    assert.deepEqual(balances, [{ symbol: "USDC", amount: "12.0", address: undefined }]);
+  it("creates real ArcAppKitService adapter instance", () => {
+    const { facade } = createTestContext();
+    const appKitService = facade.createAppKitAdapter(validAuthority);
+    assert.equal(typeof appKitService.getSupportedChains, "function");
+    assert.equal(typeof appKitService.getUnifiedBalances, "function");
   });
 
   it("returns capability matrix matching real test-backed capabilities", () => {

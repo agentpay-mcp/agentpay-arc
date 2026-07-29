@@ -1,15 +1,10 @@
 import { z } from "zod";
-import * as circleSdkModule from "@circle-fin/developer-controlled-wallets";
-import {
-  initiateDeveloperControlledWalletsClient,
-  CircleDeveloperControlledWalletsClient,
-} from "@circle-fin/developer-controlled-wallets";
+import circlePkg from "@circle-fin/developer-controlled-wallets";
 import {
   ARC_HOSTED_ACCOUNT_TYPE,
   ARC_HOSTED_CHAIN,
   ARC_HOSTED_CUSTODY_TYPE,
   ArcEvmAddressSchema,
-  ArcHostedAuthority,
 } from "@agentpay-ai/shared-arc";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
 import { createHash } from "node:crypto";
@@ -111,6 +106,38 @@ export const SdkTransactionSchema = z.object({
 });
 export type SdkTransaction = z.infer<typeof SdkTransactionSchema>;
 
+export interface CircleDeveloperSdkClient {
+  listWalletSets(params?: { pageBefore?: string; pageAfter?: string; pageSize?: number }): Promise<{ data?: { walletSets?: any[] } }>;
+  createWalletSet(input: { name: string; idempotencyKey?: string }): Promise<{ data?: { walletSet?: any } }>;
+  listWallets(params?: { walletSetId?: string; pageBefore?: string; pageAfter?: string; pageSize?: number }): Promise<{ data?: { wallets?: any[] } }>;
+  createWallets(input: {
+    blockchains: string[];
+    count: number;
+    walletSetId: string;
+    accountType: string;
+    metadata?: Array<{ refId: string }>;
+    idempotencyKey?: string;
+  }): Promise<{ data?: { wallets?: any[] } }>;
+  getWalletTokenBalance(input: { id: string }): Promise<{ data?: { tokenBalances?: any[] } }>;
+  createTransaction?(input: {
+    walletId: string;
+    destinationAddress: string;
+    amounts: string[];
+    tokenId?: string;
+    fee: { type: "level"; config: { feeLevel: "LOW" | "MEDIUM" | "HIGH" } };
+    idempotencyKey?: string;
+  }): Promise<{ data?: { id?: string; state?: string; txHash?: string; walletId?: string } }>;
+  createContractExecutionTransaction?(input: {
+    walletId: string;
+    contractAddress: string;
+    abiFunctionSignature: string;
+    abiParameters: any[];
+    fee: { type: "level"; config: { feeLevel: "LOW" | "MEDIUM" | "HIGH" } };
+    idempotencyKey?: string;
+  }): Promise<{ data?: { id?: string; state?: string; txHash?: string; walletId?: string } }>;
+  getTransaction?(input: { id: string }): Promise<{ data?: { transaction?: any } }>;
+}
+
 export function deriveWalletSetName(tenantId: string): string {
   const hash = createHash("sha256").update(`tenant-ws:${tenantId}`).digest("hex").substring(0, 16);
   return `arc-ws-${hash}`;
@@ -121,27 +148,23 @@ export function deriveWalletRefId(tenantId: string): string {
   return `arc-ref-${hash}`;
 }
 
-function resolveInitiateClientFn(): (params: { apiKey: string; entitySecret: string }) => CircleDeveloperControlledWalletsClient {
-  if (typeof initiateDeveloperControlledWalletsClient === "function") {
-    return initiateDeveloperControlledWalletsClient;
+function resolveInitiateClientFn(): (params: { apiKey: string; entitySecret: string }) => CircleDeveloperSdkClient {
+  if (typeof (circlePkg as any)?.initiateDeveloperControlledWalletsClient === "function") {
+    return (circlePkg as any).initiateDeveloperControlledWalletsClient;
   }
-  const modAny = circleSdkModule as any;
-  if (typeof modAny?.initiateDeveloperControlledWalletsClient === "function") {
-    return modAny.initiateDeveloperControlledWalletsClient;
-  }
-  if (typeof modAny?.default?.initiateDeveloperControlledWalletsClient === "function") {
-    return modAny.default.initiateDeveloperControlledWalletsClient;
+  if (typeof (circlePkg as any)?.default?.initiateDeveloperControlledWalletsClient === "function") {
+    return (circlePkg as any).default.initiateDeveloperControlledWalletsClient;
   }
   throw new Error("Circle SDK initiateDeveloperControlledWalletsClient is unavailable");
 }
 
 export class CircleDeveloperWalletsAdapter {
-  private readonly sdkClient: CircleDeveloperControlledWalletsClient;
+  private readonly sdkClient: CircleDeveloperSdkClient;
   private readonly config: CircleDeveloperWalletsConfig;
 
   constructor(
     config?: Partial<CircleDeveloperWalletsConfig>,
-    customSdkClient?: CircleDeveloperControlledWalletsClient,
+    customSdkClient?: CircleDeveloperSdkClient,
   ) {
     this.config = validateCircleDeveloperWalletsConfig(config);
     if (customSdkClient) {
@@ -155,29 +178,55 @@ export class CircleDeveloperWalletsAdapter {
     }
   }
 
-  private async fetchAllWalletSets(): Promise<unknown[]> {
-    const allSets: unknown[] = [];
+  private async fetchAllWalletSets(): Promise<any[]> {
+    const allSets: any[] = [];
+    const pageSize = 50;
     let pageAfter: string | undefined = undefined;
-    do {
-      const res = await this.sdkClient.listWalletSets(pageAfter ? ({ pageAfter } as any) : undefined);
-      const rawData = res.data as any;
-      const sets = rawData?.walletSets ?? [];
+    let hasMore = true;
+
+    while (hasMore) {
+      const res = await this.sdkClient.listWalletSets(
+        pageAfter ? { pageAfter, pageSize } : { pageSize },
+      );
+      const sets = res.data?.walletSets ?? [];
       allSets.push(...sets);
-      pageAfter = sets.length > 0 && typeof rawData?.pageAfter === "string" ? rawData.pageAfter : undefined;
-    } while (pageAfter);
+
+      if (sets.length < pageSize) {
+        hasMore = false;
+      } else {
+        const lastItem = sets[sets.length - 1];
+        pageAfter = lastItem?.id;
+        if (!pageAfter) {
+          hasMore = false;
+        }
+      }
+    }
     return allSets;
   }
 
-  private async fetchAllWallets(walletSetId: string): Promise<unknown[]> {
-    const allWallets: unknown[] = [];
+  private async fetchAllWallets(walletSetId: string): Promise<any[]> {
+    const allWallets: any[] = [];
+    const pageSize = 50;
     let pageAfter: string | undefined = undefined;
-    do {
-      const res = await this.sdkClient.listWallets({ walletSetId, ...(pageAfter ? { pageAfter } : {}) } as any);
-      const rawData = res.data as any;
-      const wallets = rawData?.wallets ?? [];
+    let hasMore = true;
+
+    while (hasMore) {
+      const res = await this.sdkClient.listWallets(
+        pageAfter ? { walletSetId, pageAfter, pageSize } : { walletSetId, pageSize },
+      );
+      const wallets = res.data?.wallets ?? [];
       allWallets.push(...wallets);
-      pageAfter = wallets.length > 0 && typeof rawData?.pageAfter === "string" ? rawData.pageAfter : undefined;
-    } while (pageAfter);
+
+      if (wallets.length < pageSize) {
+        hasMore = false;
+      } else {
+        const lastItem = wallets[wallets.length - 1];
+        pageAfter = lastItem?.id;
+        if (!pageAfter) {
+          hasMore = false;
+        }
+      }
+    }
     return allWallets;
   }
 
@@ -211,7 +260,7 @@ export class CircleDeveloperWalletsAdapter {
       const createRes = await this.sdkClient.createWalletSet({
         name: walletSetName,
         idempotencyKey,
-      } as any);
+      });
       const rawSet = createRes.data?.walletSet;
       const parsedSet = SdkWalletSetSchema.safeParse(rawSet);
       if (!parsedSet.success || parsedSet.data.name !== walletSetName || parsedSet.data.custodyType !== ARC_HOSTED_CUSTODY_TYPE) {
@@ -281,7 +330,7 @@ export class CircleDeveloperWalletsAdapter {
         accountType: ARC_HOSTED_ACCOUNT_TYPE,
         metadata: [{ refId }],
         idempotencyKey,
-      } as any);
+      });
 
       const rawWallets = createRes.data?.wallets ?? [];
       const validWallets = rawWallets
@@ -385,7 +434,7 @@ export class CircleDeveloperWalletsAdapter {
 
   async getWalletBalances(walletId: string): Promise<Array<{ symbol: string; amount: string; address?: string }>> {
     try {
-      const res = await this.sdkClient.getWalletTokenBalance({ id: walletId } as any);
+      const res = await this.sdkClient.getWalletTokenBalance({ id: walletId });
       const parsed = SdkBalancesResponseSchema.parse(res.data ?? {});
       return parsed.tokenBalances.map((tb) => ({
         symbol: tb.token.symbol ?? "USDC",
@@ -404,6 +453,10 @@ export class CircleDeveloperWalletsAdapter {
     tokenId?: string;
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
+    if (!this.sdkClient.createTransaction) {
+      throw new Error("Circle SDK createTransaction method unavailable");
+    }
+
     try {
       const res = await this.sdkClient.createTransaction({
         walletId: input.walletId,
@@ -412,7 +465,7 @@ export class CircleDeveloperWalletsAdapter {
         tokenId: input.tokenId,
         fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
-      } as any);
+      });
       const parsed = SdkTransactionSchema.parse(res.data ?? {});
       return {
         transactionId: parsed.id,
@@ -430,6 +483,10 @@ export class CircleDeveloperWalletsAdapter {
     args: any[];
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
+    if (!this.sdkClient.createContractExecutionTransaction) {
+      throw new Error("Circle SDK createContractExecutionTransaction method unavailable");
+    }
+
     try {
       const res = await this.sdkClient.createContractExecutionTransaction({
         walletId: input.walletId,
@@ -438,7 +495,7 @@ export class CircleDeveloperWalletsAdapter {
         abiParameters: input.args,
         fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
-      } as any);
+      });
       const parsed = SdkTransactionSchema.parse(res.data ?? {});
       return {
         transactionId: parsed.id,
@@ -450,8 +507,12 @@ export class CircleDeveloperWalletsAdapter {
   }
 
   async getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string; walletId?: string }> {
+    if (!this.sdkClient.getTransaction) {
+      throw new Error("Circle SDK getTransaction method unavailable");
+    }
+
     try {
-      const res = await this.sdkClient.getTransaction({ id: transactionId } as any);
+      const res = await this.sdkClient.getTransaction({ id: transactionId });
       const rawTx = res.data?.transaction ?? res.data;
       const parsed = SdkTransactionSchema.parse(rawTx);
       return {

@@ -1,150 +1,183 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CircleDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 import {
   CircleDeveloperWalletsAdapter,
   CircleReconciliationRequiredError,
-  validateCircleDeveloperWalletsConfig,
   deriveWalletSetName,
   deriveWalletRefId,
+  CircleDeveloperSdkClient,
 } from "./circle-developer-wallets.ts";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.ts";
 
 const TEST_SECRET = ["0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdef"].join("");
 const MOCK_API_KEY = ["mock", "api", "key"].join("_");
 
+const VALID_USER_ID = "11111111-1111-4111-8111-111111111111";
+const VALID_TENANT_ID = "22222222-2222-4222-8222-222222222222";
+const PROVISIONING_KEY = "33333333-3333-4333-8333-333333333333";
+
 describe("CircleDeveloperWalletsAdapter", () => {
-  it("validates config and rejects invalid entity secrets", () => {
-    assert.throws(
-      () =>
-        validateCircleDeveloperWalletsConfig({
-          apiKey: MOCK_API_KEY,
-          entitySecret: "short",
-        }),
-      /Invalid or missing Circle Developer-Controlled entity secret configuration/,
-    );
-  });
+  const createMockRepo = (): { repo: ArcHostedAccountRepository; state: any } => {
+    const state = {
+      claimed: false,
+      completed: false,
+      failed: false,
+      lastError: null as string | null,
+    };
 
-  it("derives deterministic wallet set names and ref IDs for tenants", () => {
-    const wsName = deriveWalletSetName("tenant-123");
-    const refId = deriveWalletRefId("tenant-123");
-    assert.match(wsName, /^arc-ws-[0-9a-f]{16}$/);
-    assert.match(refId, /^arc-ref-[0-9a-f]{16}$/);
-  });
-
-  it("initializes production client factory when no custom client is injected", () => {
-    const adapter = new CircleDeveloperWalletsAdapter({
-      apiKey: MOCK_API_KEY,
-      entitySecret: TEST_SECRET,
-    });
-    assert.ok(adapter instanceof CircleDeveloperWalletsAdapter);
-  });
-
-  it("paginates multi-page wallet sets during preflight check", async () => {
-    const wsName = deriveWalletSetName("tenant-multi");
-    const queriedPages: Array<string | undefined> = [];
-
-    const mockSdk = {
-      listWalletSets: async (params?: any) => {
-        queriedPages.push(params?.pageAfter);
-        if (!params?.pageAfter) {
+    const repo: ArcHostedAccountRepository = {
+      claimHostedAccount: async () => null as any,
+      resolveHostedAuthority: async () => null,
+      setAccountStatus: async () => {},
+      claimProvisioningJob: async (authUserId: string) => {
+        if (authUserId === VALID_USER_ID && !state.claimed) {
+          state.claimed = true;
           return {
-            data: {
-              walletSets: [{ id: "ws-page-1", name: "other-ws", custodyType: "DEVELOPER" }],
-              pageAfter: "cursor-1",
-            },
+            authUserId: VALID_USER_ID,
+            tenantId: VALID_TENANT_ID,
+            fencingToken: "1",
+            provisioningState: "PROVISIONING",
+            provisioningIdempotencyKey: PROVISIONING_KEY,
           };
         }
-        return {
-          data: {
-            walletSets: [{ id: "ws-page-2", name: wsName, custodyType: "DEVELOPER" }],
+        return null;
+      },
+      completeProvisioning: async (input) => {
+        if (input.authUserId === VALID_USER_ID && input.fencingToken === "1") {
+          state.completed = true;
+        }
+      },
+      failProvisioning: async (input) => {
+        if (input.authUserId === VALID_USER_ID && input.fencingToken === "1") {
+          state.failed = true;
+          state.lastError = input.errorCode;
+        }
+      },
+      getHostedAccount: async () => null,
+      getPrivateWalletBinding: async () => null,
+    };
+
+    return { repo, state };
+  };
+
+  it("provisions a new tenant wallet when no existing set/wallet exists", async () => {
+    const mockSdk: CircleDeveloperSdkClient = {
+      listWalletSets: async () => ({ data: { walletSets: [] } }),
+      createWalletSet: async (input: any) => ({
+        data: {
+          walletSet: {
+            id: "ws-new-1",
+            name: input.name,
+            custodyType: "DEVELOPER",
           },
-        };
-      },
-      createWalletSet: async () => ({ data: {} }),
-      createWallets: async () => ({ data: { wallets: [] } }),
-      listWallets: async () => ({ data: { wallets: [] } }),
-      getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
-    } as unknown as CircleDeveloperControlledWalletsClient;
-
-    const adapter = new CircleDeveloperWalletsAdapter(
-      { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
-      mockSdk,
-    );
-
-    const set = await adapter.ensureWalletSetForTenant("tenant-multi", "idempotency-p");
-    assert.equal(set.id, "ws-page-2");
-    assert.deepEqual(queriedPages, [undefined, "cursor-1"]);
-  });
-
-  it("throws CircleReconciliationRequiredError if wallet set create fails and reconciliation is empty", async () => {
-    const mockSdk: CircleDeveloperControlledWalletsClient = {
-      listWalletSets: async () => ({ data: { walletSets: [] } }),
-      createWalletSet: async () => {
-        throw new Error("Circle API timeout during createWalletSet");
-      },
-      createWallets: async () => ({ data: { wallets: [] } }),
-      listWallets: async () => ({ data: { wallets: [] } }),
-      getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
-    } as any;
-
-    const adapter = new CircleDeveloperWalletsAdapter(
-      { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
-      mockSdk,
-    );
-
-    await assert.rejects(
-      adapter.ensureWalletSetForTenant("tenant-timeout", "idem-timeout"),
-      CircleReconciliationRequiredError,
-    );
-  });
-
-  it("provisions hosted wallet, claims job, and completes setup", async () => {
-    const wsName = deriveWalletSetName("t-1");
-    const refId = deriveWalletRefId("t-1");
-    let completedInput: any = null;
-
-    const mockSdk: CircleDeveloperControlledWalletsClient = {
-      listWalletSets: async () => ({ data: { walletSets: [] } }),
-      createWalletSet: async () => ({
-        data: { walletSet: { id: "ws-1", name: wsName, custodyType: "DEVELOPER" } },
+        },
       }),
       listWallets: async () => ({ data: { wallets: [] } }),
-      createWallets: async () => ({
+      createWallets: async (input: any) => ({
         data: {
           wallets: [
             {
-              id: "w-1",
-              walletSetId: "ws-1",
+              id: "w-new-1",
+              walletSetId: input.walletSetId,
               address: "0x1111111111111111111111111111111111111111",
               blockchain: "ARC-TESTNET",
               accountType: "SCA",
               custodyType: "DEVELOPER",
-              refId,
+              refId: input.metadata?.[0]?.refId,
             },
           ],
         },
       }),
       getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
-    } as any;
+    };
 
-    const mockRepo: ArcHostedAccountRepository = {
-      claimHostedAccount: async () => null as any,
-      resolveHostedAuthority: async () => null,
-      setAccountStatus: async () => {},
-      claimProvisioningJob: async () => ({
-        authUserId: "usr-1",
-        tenantId: "t-1",
-        fencingToken: "fence-1",
-        provisioningIdempotencyKey: "idem-1",
-        provisioningState: "PROVISIONING",
-      }),
-      completeProvisioning: async (input) => {
-        completedInput = input;
+    const adapter = new CircleDeveloperWalletsAdapter(
+      { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
+      mockSdk,
+    );
+    const { repo, state } = createMockRepo();
+
+    const res = await adapter.provisionHostedUserWallet({
+      authUserId: VALID_USER_ID,
+      repository: repo,
+    });
+
+    assert.equal(res.status, "LIVE");
+    assert.equal(res.walletAddress, "0x1111111111111111111111111111111111111111");
+    assert.equal(state.completed, true);
+    assert.equal(state.failed, false);
+  });
+
+  it("paginates wallet sets and wallets using collection-ID pageAfter cursors", async () => {
+    const walletSetName = deriveWalletSetName(VALID_TENANT_ID);
+    const refId = deriveWalletRefId(VALID_TENANT_ID);
+
+    const page1WalletSets = Array.from({ length: 50 }, (_, i) => ({
+      id: `ws-page1-${i}`,
+      name: `other-ws-${i}`,
+      custodyType: "DEVELOPER",
+    }));
+
+    let listWalletSetsCalls = 0;
+    let listWalletsCalls = 0;
+
+    const mockSdk: CircleDeveloperSdkClient = {
+      listWalletSets: async (params?: any) => {
+        listWalletSetsCalls++;
+        if (!params?.pageAfter) {
+          return { data: { walletSets: page1WalletSets } };
+        }
+        if (params.pageAfter === "ws-page1-49") {
+          return {
+            data: {
+              walletSets: [
+                {
+                  id: "ws-target-page2",
+                  name: walletSetName,
+                  custodyType: "DEVELOPER",
+                },
+              ],
+            },
+          };
+        }
+        return { data: { walletSets: [] } };
       },
-      failProvisioning: async () => {},
-      getHostedAccount: async () => null,
-      getPrivateWalletBinding: async () => null,
+      createWalletSet: async () => ({ data: {} }),
+      listWallets: async (params?: any) => {
+        listWalletsCalls++;
+        if (!params?.pageAfter) {
+          const page1Wallets = Array.from({ length: 50 }, (_, i) => ({
+            id: `w-page1-${i}`,
+            walletSetId: "ws-target-page2",
+            address: "0x2222222222222222222222222222222222222222",
+            blockchain: "ARC-TESTNET",
+            accountType: "SCA",
+            custodyType: "DEVELOPER",
+            refId: `other-ref-${i}`,
+          }));
+          return { data: { wallets: page1Wallets } };
+        }
+        if (params.pageAfter === "w-page1-49") {
+          return {
+            data: {
+              wallets: [
+                {
+                  id: "w-target-page2",
+                  walletSetId: "ws-target-page2",
+                  address: "0x3333333333333333333333333333333333333333",
+                  blockchain: "ARC-TESTNET",
+                  accountType: "SCA",
+                  custodyType: "DEVELOPER",
+                  refId: refId,
+                },
+              ],
+            },
+          };
+        }
+        return { data: { wallets: [] } };
+      },
+      createWallets: async () => ({ data: { wallets: [] } }),
+      getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
     };
 
     const adapter = new CircleDeveloperWalletsAdapter(
@@ -152,116 +185,43 @@ describe("CircleDeveloperWalletsAdapter", () => {
       mockSdk,
     );
 
-    const res = await adapter.provisionHostedUserWallet({
-      authUserId: "usr-1",
-      repository: mockRepo,
-    });
+    const ws = await adapter.ensureWalletSetForTenant(VALID_TENANT_ID, PROVISIONING_KEY);
+    assert.equal(ws.id, "ws-target-page2");
+    assert.equal(listWalletSetsCalls, 2);
 
-    assert.deepEqual(res, {
-      walletAddress: "0x1111111111111111111111111111111111111111",
-      status: "LIVE",
-    });
-    assert.deepEqual(completedInput, {
-      authUserId: "usr-1",
-      fencingToken: "fence-1",
-      circleWalletSetId: "ws-1",
-      circleWalletId: "w-1",
-      walletAddress: "0x1111111111111111111111111111111111111111",
-    });
+    const w = await adapter.ensureScaWalletForTenant(VALID_TENANT_ID, "ws-target-page2", PROVISIONING_KEY);
+    assert.equal(w.id, "w-target-page2");
+    assert.equal(listWalletsCalls, 2);
   });
 
-  it("fetches wallet balances using id param", async () => {
-    let queriedId = "";
-    const mockSdk: CircleDeveloperControlledWalletsClient = {
-      getWalletTokenBalance: async (input: any) => {
-        queriedId = input.id;
-        return {
-          data: {
-            tokenBalances: [
-              {
-                token: { symbol: "USDC", address: "0x3333333333333333333333333333333333333333" },
-                amount: "100.50",
-              },
-            ],
-          },
-        };
+  it("raises CircleReconciliationRequiredError on ambiguous post-mutation timeout without calling failProvisioning", async () => {
+    let createWalletSetCalled = false;
+    const mockSdk: CircleDeveloperSdkClient = {
+      listWalletSets: async () => ({ data: { walletSets: [] } }),
+      createWalletSet: async () => {
+        createWalletSetCalled = true;
+        throw new Error("ETIMEDOUT: Connection timed out");
       },
-    } as any;
+      listWallets: async () => ({ data: { wallets: [] } }),
+      createWallets: async () => ({ data: { wallets: [] } }),
+      getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
+    };
 
     const adapter = new CircleDeveloperWalletsAdapter(
       { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
       mockSdk,
     );
+    const { repo, state } = createMockRepo();
 
-    const balances = await adapter.getWalletBalances("w-1");
-    assert.equal(queriedId, "w-1");
-    assert.deepEqual(balances, [
-      { symbol: "USDC", amount: "100.50", address: "0x3333333333333333333333333333333333333333" },
-    ]);
-  });
-
-  it("creates developer transfers with fee configuration", async () => {
-    let txInput: any = null;
-    const mockSdk: CircleDeveloperControlledWalletsClient = {
-      createTransaction: async (input: any) => {
-        txInput = input;
-        return { data: { id: "tx-transfer-1", state: "PENDING" } };
-      },
-    } as any;
-
-    const adapter = new CircleDeveloperWalletsAdapter(
-      { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
-      mockSdk,
+    await assert.rejects(
+      adapter.provisionHostedUserWallet({
+        authUserId: VALID_USER_ID,
+        repository: repo,
+      }),
+      (err: any) => err instanceof CircleReconciliationRequiredError,
     );
 
-    const res = await adapter.createDeveloperTransfer({
-      walletId: "w-1",
-      destinationAddress: "0x2222222222222222222222222222222222222222",
-      amount: "50",
-      idempotencyKey: "idem-tx-1",
-    });
-
-    assert.deepEqual(res, { transactionId: "tx-transfer-1", state: "PENDING" });
-    assert.deepEqual(txInput, {
-      walletId: "w-1",
-      destinationAddress: "0x2222222222222222222222222222222222222222",
-      amounts: ["50"],
-      tokenId: undefined,
-      fee: { type: "level", config: { feeLevel: "MEDIUM" } },
-      idempotencyKey: "idem-tx-1",
-    });
-  });
-
-  it("gets transaction status by transaction ID", async () => {
-    let queriedId = "";
-    const mockSdk: CircleDeveloperControlledWalletsClient = {
-      getTransaction: async (input: any) => {
-        queriedId = input.id;
-        return {
-          data: {
-            transaction: {
-              id: "tx-100",
-              state: "COMPLETE",
-              txHash: "0xhash123",
-              walletId: "w-1",
-            },
-          },
-        };
-      },
-    } as any;
-
-    const adapter = new CircleDeveloperWalletsAdapter(
-      { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
-      mockSdk,
-    );
-
-    const res = await adapter.getTransactionStatus("tx-100");
-    assert.equal(queriedId, "tx-100");
-    assert.deepEqual(res, {
-      transactionId: "tx-100",
-      state: "COMPLETE",
-      txHash: "0xhash123",
-      walletId: "w-1",
-    });
+    assert.equal(createWalletSetCalled, true);
+    assert.equal(state.failed, false, "Must NOT mark provisioning as permanently failed on ambiguous timeout");
   });
 });

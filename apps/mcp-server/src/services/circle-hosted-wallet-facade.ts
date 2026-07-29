@@ -14,6 +14,7 @@ import {
   redactSecretsAndFormatError,
 } from "./circle-developer-wallets.js";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
+import { createArcAppKitService, ArcAppKitService } from "./arc-app-kit.js";
 
 export const CircleHostedTransferInputSchema = z.object({
   toAddress: ArcEvmAddressSchema,
@@ -94,18 +95,9 @@ export const ARC_HOSTED_TOOL_CAPABILITY_MATRIX: readonly HostedToolCapability[] 
   {
     toolName: "circle_agent_wallet",
     hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "Local Circle CLI session management. Delegated to local CLI runtime only; not used in hosted server mode.",
+    description: "App Kit / local Circle CLI session management. Delegated to local CLI runtime; not used in hosted Developer-Controlled server mode.",
   },
 ] as const;
-
-export interface CircleAppKitHostedAdapter {
-  authority: ArcHostedAuthority;
-  getWallet(): Promise<CircleHostedWalletInfo>;
-  getBalances(): Promise<Array<{ symbol: string; amount: string; address?: string }>>;
-  transferTokens(input: CircleHostedTransferInput): Promise<{ transactionId: string; state: string }>;
-  executeContract(input: CircleHostedContractExecutionInput): Promise<{ transactionId: string; state: string }>;
-  getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string }>;
-}
 
 export class CircleHostedWalletFacade {
   private readonly adapter: CircleDeveloperWalletsAdapter;
@@ -227,20 +219,12 @@ export class CircleHostedWalletFacade {
     };
   }
 
-  createAppKitAdapter(authority: ArcHostedAuthority): CircleAppKitHostedAdapter {
+  createAppKitAdapter(authority: ArcHostedAuthority): ArcAppKitService {
     const validAuth = ArcHostedAuthoritySchema.parse(authority);
     if (validAuth.accountStatus !== "ACTIVE") {
       throw new Error("Hosted authority account status must be ACTIVE");
     }
-    const facadeInstance = this;
-    return {
-      authority: validAuth,
-      getWallet: () => facadeInstance.getWallet(validAuth),
-      getBalances: () => facadeInstance.getBalances(validAuth),
-      transferTokens: (input) => facadeInstance.transferTokens(validAuth, input),
-      executeContract: (input) => facadeInstance.executeContract(validAuth, input),
-      getTransactionStatus: (txId) => facadeInstance.getTransactionStatus(validAuth, txId),
-    };
+    return createArcAppKitService();
   }
 
   getCapabilityMatrix(): readonly HostedToolCapability[] {
