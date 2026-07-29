@@ -59,7 +59,7 @@ describe("Arc-only Hosted Identity Migration Static Analysis", () => {
   });
 
   it("provides a tracked rollback procedure file dropping all Task 13A resources in reverse order", async () => {
-    const rollbackPath = "supabase/migrations/20260729020001_arc_hosted_identity_rollback.sql";
+    const rollbackPath = "supabase/rollbacks/20260729020000_arc_hosted_identity_rollback.sql";
     const sql = await readFile(rollbackPath, "utf8");
 
     assert.match(sql, /drop function if exists public\.arc_set_account_status/i);

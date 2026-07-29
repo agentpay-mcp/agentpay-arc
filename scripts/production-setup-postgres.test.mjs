@@ -79,7 +79,7 @@ async function installMigrations() {
     $$;
   `, { tuplesOnly: false });
 
-  const migrationNames = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql") && !name.includes("rollback")).sort();
+  const migrationNames = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql")).sort();
   for (const migrationName of migrationNames) {
     await dockerPsql(await readFile(`${migrationsDir}/${migrationName}`, "utf8"), { tuplesOnly: false });
   }
@@ -129,6 +129,8 @@ describe("production setup migration on disposable PostgreSQL", () => {
     ]);
     await waitForPostgres();
     await installMigrations();
+    const hostedTablesCount = await scalar("select count(*) from information_schema.tables where table_name in ('arc_hosted_accounts', 'arc_circle_wallet_bindings');");
+    assert.equal(hostedTablesCount, "2", "Applying complete migration directory must leave Task 13A tables installed");
     await seedRuntimeState();
   });
 
@@ -733,7 +735,7 @@ describe("production setup migration on disposable PostgreSQL", () => {
   });
 
   it("reverses Task 13A migration cleanly when running the rollback script", async () => {
-    const rollbackSql = await readFile("supabase/migrations/20260729020001_arc_hosted_identity_rollback.sql", "utf8");
+    const rollbackSql = await readFile("supabase/rollbacks/20260729020000_arc_hosted_identity_rollback.sql", "utf8");
     const rollbackRes = await dockerPsql(rollbackSql, { tuplesOnly: false });
     assert.equal(rollbackRes.code, 0, "Rollback SQL script must execute cleanly");
 
