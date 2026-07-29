@@ -343,20 +343,93 @@ describe("ArcHostedAccountRepository", () => {
     }
   });
 
-  it("handles empty RPC results in claimHostedAccount and claimProvisioningJob", async () => {
-    const emptyClient = {
-      async rpc() {
-        return { data: [], error: null };
-      },
+  it("rejects returned row with foreign authUserId mismatch across methods", async () => {
+    const foreignRow = {
+      ...fakeAccountRow,
+      auth_user_id: "e0000000-0000-4000-8000-000000000005",
     };
 
-    const repo = new ArcHostedAccountRepositoryImpl(emptyClient as any);
+    // claimHostedAccount mismatch
+    const client1 = {
+      async rpc() {
+        return { data: [foreignRow], error: null };
+      },
+    };
+    const repo1 = new ArcHostedAccountRepositoryImpl(client1 as any);
     await assert.rejects(
-      () => repo.claimHostedAccount({ authUserId: "a0000000-0000-4000-8000-000000000001" }),
-      /Empty RPC result/i,
+      () => repo1.claimHostedAccount({ authUserId: "a0000000-0000-4000-8000-000000000001" }),
+      /authUserId mismatch/i,
     );
 
-    const job = await repo.claimProvisioningJob("a0000000-0000-4000-8000-000000000001");
-    assert.equal(job, null);
+    // getHostedAccount mismatch
+    const client2 = {
+      from() {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return { data: foreignRow, error: null };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    const repo2 = new ArcHostedAccountRepositoryImpl(client2 as any);
+    await assert.rejects(
+      () => repo2.getHostedAccount("a0000000-0000-4000-8000-000000000001"),
+      /authUserId mismatch/i,
+    );
+
+    // resolveHostedAuthority mismatch
+    const repo3 = new ArcHostedAccountRepositoryImpl(client2 as any);
+    await assert.rejects(
+      () => repo3.resolveHostedAuthority({ authUserId: "a0000000-0000-4000-8000-000000000001" }),
+      /authUserId mismatch/i,
+    );
+
+    // claimProvisioningJob mismatch
+    const client4 = {
+      async rpc() {
+        return {
+          data: [
+            {
+              auth_user_id: "e0000000-0000-4000-8000-000000000005",
+              tenant_id: "b0000000-0000-4000-8000-000000000002",
+              provisioning_idempotency_key: "c0000000-0000-4000-8000-000000000003",
+              fencing_token: "d0000000-0000-4000-8000-000000000004",
+              provisioning_state: "PROVISIONING",
+            },
+          ],
+          error: null,
+        };
+      },
+    };
+    const repo4 = new ArcHostedAccountRepositoryImpl(client4 as any);
+    await assert.rejects(
+      () => repo4.claimProvisioningJob("a0000000-0000-4000-8000-000000000001"),
+      /authUserId mismatch/i,
+    );
+  });
+
+  it("handles invalid timestamp format safely", async () => {
+    const invalidDateRow = {
+      ...fakeAccountRow,
+      consent_timestamp: "not-a-valid-date-string",
+    };
+    const fakeClient = {
+      async rpc() {
+        return { data: [invalidDateRow], error: null };
+      },
+    };
+    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
+    await assert.rejects(
+      () => repo.claimHostedAccount({ authUserId: "a0000000-0000-4000-8000-000000000001" }),
+      /Invalid ISO timestamp format/i,
+    );
   });
 });

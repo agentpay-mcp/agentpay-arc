@@ -534,6 +534,13 @@ describe("production setup migration on disposable PostgreSQL", () => {
 
     const originalFencingToken = claimJob.fencing_token;
 
+    // Verify activity log metadata does NOT leak the fencing token
+    const activityLog = await scalar(
+      `select metadata::text from public.arc_agent_activity where activity_type = 'CIRCLE_WALLET_PROVISIONING' and reference_id = '${user1}';`,
+      { role: "service_role" },
+    );
+    assert.ok(!activityLog.includes(originalFencingToken), "Activity log must not contain sensitive fencing token");
+
     // Concurrent claim while PROVISIONING returns empty result
     const secondClaim = await scalar(
       `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user1}'::uuid) r;`,
@@ -633,6 +640,20 @@ describe("production setup migration on disposable PostgreSQL", () => {
       { role: "service_role" },
     ));
     assert.equal(postAccount.account_status, "PAUSED");
+
+    // Close user 1 account
+    await scalar(
+      `select public.arc_set_account_status('${user1}'::uuid, 'CLOSED');`,
+      { role: "service_role" },
+    );
+
+    // Verify CLOSED account cannot be reopened
+    const invalidReopen = await dockerPsql(
+      `select public.arc_set_account_status('${user1}'::uuid, 'ACTIVE');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(invalidReopen.code, 0, "Cannot reopen a CLOSED account");
+    assert.match(invalidReopen.stderr, /Cannot transition closed account/i);
 
     // Negative test: unknown auth user ID raises exception
     const unknownUser = "a0000000-0000-4000-8000-000000000099";

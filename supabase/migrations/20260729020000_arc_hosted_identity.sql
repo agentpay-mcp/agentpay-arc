@@ -281,11 +281,11 @@ begin
       insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
       values (
         v_binding.tenant_id,
-        'provisioning_claimed:' || v_binding.provisioning_idempotency_key::text || ':' || v_fencing_token::text,
+        'provisioning_claimed:' || v_binding.provisioning_idempotency_key::text || ':' || gen_random_uuid()::text,
         'CIRCLE_WALLET_PROVISIONING',
         'PROVISIONING',
         p_auth_user_id::text,
-        jsonb_build_object('idempotency_key', v_binding.provisioning_idempotency_key, 'fencing_token', v_fencing_token),
+        jsonb_build_object('idempotency_key', v_binding.provisioning_idempotency_key, 'auth_user_id', p_auth_user_id),
         now()
       )
       on conflict on constraint arc_agent_activity_pkey do nothing;
@@ -462,20 +462,34 @@ set search_path = public
 as $$
 declare
   v_tenant_id uuid;
+  v_current_status text;
 begin
   if p_status not in ('ACTIVE', 'PAUSED', 'CLOSED') then
     raise exception 'Invalid account status: %', p_status;
   end if;
 
-  update public.arc_hosted_accounts
-  set account_status = p_status,
-      updated_at = now()
-  where arc_hosted_accounts.auth_user_id = p_auth_user_id
-  returning tenant_id into v_tenant_id;
+  select a.tenant_id, a.account_status
+  into v_tenant_id, v_current_status
+  from public.arc_hosted_accounts a
+  where a.auth_user_id = p_auth_user_id
+  for update;
 
   if v_tenant_id is null then
     raise exception 'Hosted account not found for user: %', p_auth_user_id;
   end if;
+
+  if v_current_status = p_status then
+    return;
+  end if;
+
+  if v_current_status = 'CLOSED' then
+    raise exception 'Cannot transition closed account for user: %', p_auth_user_id;
+  end if;
+
+  update public.arc_hosted_accounts
+  set account_status = p_status,
+      updated_at = now()
+  where arc_hosted_accounts.auth_user_id = p_auth_user_id;
 
   update public.tenants
   set auth_epoch = auth_epoch + 1,

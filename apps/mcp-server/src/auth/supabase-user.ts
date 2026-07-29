@@ -7,7 +7,6 @@ export const ArcSupabaseUserConfigSchema = z.object({
   }),
   authIssuer: z.string().url().optional(),
   publishableKey: z.string().trim().min(1, "ARC_SUPABASE_PUBLISHABLE_KEY is required"),
-  audience: z.string().trim().optional(),
 });
 export type ArcSupabaseUserConfig = z.infer<typeof ArcSupabaseUserConfigSchema>;
 
@@ -16,7 +15,6 @@ export function parseArcSupabaseUserConfig(env: Record<string, string | undefine
     supabaseUrl: env.ARC_SUPABASE_URL,
     authIssuer: env.ARC_SUPABASE_AUTH_ISSUER,
     publishableKey: env.ARC_SUPABASE_PUBLISHABLE_KEY,
-    audience: env.ARC_SUPABASE_AUDIENCE,
   });
 }
 
@@ -149,7 +147,7 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
       }
 
       // Require top-level aud claim to be present string and match expectedAudience
-      const expectedAudience = this.config.audience ?? "authenticated";
+      const expectedAudience = "authenticated";
       if (typeof claims.aud !== "string" || !claims.aud || claims.aud !== expectedAudience) {
         throw new Error(`Token audience mismatch or missing: expected ${expectedAudience}, received ${claims.aud}`);
       }

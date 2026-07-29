@@ -57,6 +57,11 @@ const WalletAddressSchema = z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Inva
 const BoundedIdentifierSchema = z.string().trim().min(1).max(256).regex(/^[a-zA-Z0-9_-]+$/, "Invalid Circle ID format");
 const BoundedErrorCodeSchema = z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/, "Invalid errorCode format");
 
+const TenantJoinSchema = z.object({
+  status: z.enum(["ACTIVE", "SUSPENDED", "ARCHIVED"]),
+  auth_epoch: z.number().int().nonnegative(),
+});
+
 const ClaimHostedAccountRpcRowSchema = z.object({
   auth_user_id: UuidSchema,
   tenant_id: UuidSchema,
@@ -74,8 +79,16 @@ const ClaimProvisioningJobRpcRowSchema = z.object({
   tenant_id: UuidSchema,
   provisioning_idempotency_key: UuidSchema,
   fencing_token: UuidSchema,
-  provisioning_state: z.enum(["PENDING", "PROVISIONING", "LIVE", "FAILED", "CLOSED"]),
+  provisioning_state: z.literal("PROVISIONING"),
 });
+
+function safeIsoDate(val: string | Date, context: string): string {
+  const d = typeof val === "string" ? new Date(val) : val;
+  if (!(d instanceof Date) || isNaN(d.getTime())) {
+    throw new Error(`Invalid ISO timestamp format in ${context}`);
+  }
+  return d.toISOString();
+}
 
 function formatRepositoryError(context: string, error: { message: string }): Error {
   const msg = error.message;
@@ -94,6 +107,9 @@ function formatRepositoryError(context: string, error: { message: string }): Err
   }
   if (msg.includes("Hosted account not found")) {
     return new Error(`${context}: Hosted account not found`);
+  }
+  if (msg.includes("Cannot transition closed account")) {
+    return new Error(`${context}: Cannot transition closed account`);
   }
   if (msg.includes("Invalid account status")) {
     return new Error(`${context}: Invalid account status`);
@@ -119,7 +135,9 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     consentVersion?: typeof ARC_AUTONOMY_CONSENT_VERSION;
   }): Promise<ArcHostedAccount> {
     const validUserId = UuidSchema.parse(input.authUserId);
-    const consentVersion = input.consentVersion ?? ARC_AUTONOMY_CONSENT_VERSION;
+    const consentVersion = z
+      .literal(ARC_AUTONOMY_CONSENT_VERSION)
+      .parse(input.consentVersion ?? ARC_AUTONOMY_CONSENT_VERSION);
 
     const { data, error } = await this.supabaseClient.rpc("arc_claim_hosted_account", {
       p_auth_user_id: validUserId,
@@ -135,16 +153,21 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     }
 
     const validatedRow = ClaimHostedAccountRpcRowSchema.parse(data[0]);
+
+    if (validatedRow.auth_user_id !== validUserId) {
+      throw new Error("Returned authUserId mismatch in claimHostedAccount");
+    }
+
     return ArcHostedAccountSchema.parse({
       authUserId: validatedRow.auth_user_id,
       tenantId: validatedRow.tenant_id,
       accountStatus: validatedRow.account_status,
       consentVersion: validatedRow.consent_version,
-      consentTimestamp: new Date(validatedRow.consent_timestamp).toISOString(),
+      consentTimestamp: safeIsoDate(validatedRow.consent_timestamp, "consentTimestamp"),
       walletAddress: validatedRow.wallet_address ?? undefined,
       walletStatus: validatedRow.wallet_status,
-      createdAt: new Date(validatedRow.created_at).toISOString(),
-      updatedAt: new Date(validatedRow.updated_at).toISOString(),
+      createdAt: safeIsoDate(validatedRow.created_at, "createdAt"),
+      updatedAt: safeIsoDate(validatedRow.updated_at, "updatedAt"),
     });
   }
 
@@ -165,16 +188,21 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     }
 
     const validatedRow = ClaimHostedAccountRpcRowSchema.parse(data);
+
+    if (validatedRow.auth_user_id !== validUserId) {
+      throw new Error("Returned authUserId mismatch in getHostedAccount");
+    }
+
     return ArcHostedAccountSchema.parse({
       authUserId: validatedRow.auth_user_id,
       tenantId: validatedRow.tenant_id,
       accountStatus: validatedRow.account_status,
       consentVersion: validatedRow.consent_version,
-      consentTimestamp: new Date(validatedRow.consent_timestamp).toISOString(),
+      consentTimestamp: safeIsoDate(validatedRow.consent_timestamp, "consentTimestamp"),
       walletAddress: validatedRow.wallet_address ?? undefined,
       walletStatus: validatedRow.wallet_status,
-      createdAt: new Date(validatedRow.created_at).toISOString(),
-      updatedAt: new Date(validatedRow.updated_at).toISOString(),
+      createdAt: safeIsoDate(validatedRow.created_at, "createdAt"),
+      updatedAt: safeIsoDate(validatedRow.updated_at, "updatedAt"),
     });
   }
 
@@ -203,9 +231,14 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     }
 
     const validatedAccount = ClaimHostedAccountRpcRowSchema.parse(data);
-    const tenantInfo = (data as any).tenants;
-    const tenantStatus = tenantInfo?.status;
-    const authEpoch = Number(tenantInfo?.auth_epoch ?? 0);
+
+    if (validatedAccount.auth_user_id !== validUserId) {
+      throw new Error("Returned authUserId mismatch in resolveHostedAuthority");
+    }
+
+    const tenantInfo = TenantJoinSchema.parse((data as any).tenants);
+    const tenantStatus = tenantInfo.status;
+    const authEpoch = tenantInfo.auth_epoch;
 
     if (
       validatedAccount.account_status !== "ACTIVE" ||
@@ -248,6 +281,11 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     }
 
     const validatedRow = ClaimProvisioningJobRpcRowSchema.parse(data[0]);
+
+    if (validatedRow.auth_user_id !== validUserId) {
+      throw new Error("Returned authUserId mismatch in claimProvisioningJob");
+    }
+
     return {
       authUserId: validatedRow.auth_user_id,
       tenantId: validatedRow.tenant_id,
