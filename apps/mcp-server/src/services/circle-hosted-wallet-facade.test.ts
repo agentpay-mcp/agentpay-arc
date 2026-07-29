@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { CircleDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 import { CircleHostedWalletFacade, ARC_HOSTED_TOOL_CAPABILITY_MATRIX } from "./circle-hosted-wallet-facade.ts";
-import { CircleDeveloperWalletsAdapter, CircleDeveloperSdkClient } from "./circle-developer-wallets.ts";
+import { CircleDeveloperWalletsAdapter } from "./circle-developer-wallets.ts";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.ts";
 import { ArcHostedAuthority } from "@agentpay-ai/shared-arc";
 
@@ -22,15 +23,15 @@ describe("CircleHostedWalletFacade", () => {
     authEpoch: 1,
   };
 
-  const createTestContext = (customSdk?: Partial<CircleDeveloperSdkClient>) => {
-    const mockSdk: CircleDeveloperSdkClient = {
+  const createTestContext = (customSdk?: Record<string, any>) => {
+    const mockSdk = {
       listWalletSets: async () => ({ data: { walletSets: [] } }),
       createWalletSet: async () => ({ data: {} }),
       listWallets: async () => ({ data: { wallets: [] } }),
       createWallets: async () => ({ data: { wallets: [] } }),
       getWalletTokenBalance: async () => ({ data: { tokenBalances: [] } }),
       ...customSdk,
-    };
+    } as unknown as CircleDeveloperControlledWalletsClient;
 
     const adapter = new CircleDeveloperWalletsAdapter(
       { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
@@ -121,7 +122,7 @@ describe("CircleHostedWalletFacade", () => {
   it("fetches balances for tenant-bound wallet", async () => {
     let queriedId = "";
     const { facade } = createTestContext({
-      getWalletTokenBalance: async (input) => {
+      getWalletTokenBalance: async (input: any) => {
         queriedId = input.id;
         return {
           data: {
@@ -143,7 +144,7 @@ describe("CircleHostedWalletFacade", () => {
   it("transfers tokens resolving private wallet ID internally", async () => {
     let txInput: any = null;
     const { facade } = createTestContext({
-      createTransaction: async (input) => {
+      createTransaction: async (input: any) => {
         txInput = input;
         return { data: { id: "tx-facade-1", state: "PENDING" } };
       },
@@ -208,11 +209,51 @@ describe("CircleHostedWalletFacade", () => {
     );
   });
 
+  it("rejects transaction status lookup when transaction response lacks walletId", async () => {
+    const { facade } = createTestContext({
+      getTransaction: async () => ({
+        data: {
+          transaction: {
+            id: "tx-no-wallet-id",
+            state: "COMPLETE",
+            txHash: "0xhash777",
+          },
+        },
+      }),
+    });
+
+    await assert.rejects(
+      facade.getTransactionStatus(validAuthority, "tx-no-wallet-id"),
+      /Access denied: transaction does not belong to caller tenant wallet/,
+    );
+  });
+
+  it("creates real App Kit adapter exposing all facade methods", async () => {
+    let queriedId = "";
+    const { facade } = createTestContext({
+      getWalletTokenBalance: async (input: any) => {
+        queriedId = input.id;
+        return { data: { tokenBalances: [{ token: { symbol: "USDC" }, amount: "12.0" }] } };
+      },
+    });
+
+    const appKitAdapter = facade.createAppKitAdapter(validAuthority);
+    assert.deepEqual(appKitAdapter.authority, validAuthority);
+
+    const walletInfo = await appKitAdapter.getWallet();
+    assert.equal(walletInfo.walletAddress, "0x1111111111111111111111111111111111111111");
+
+    const balances = await appKitAdapter.getBalances();
+    assert.equal(queriedId, "w-valid-1");
+    assert.deepEqual(balances, [{ symbol: "USDC", amount: "12.0", address: undefined }]);
+  });
+
   it("returns capability matrix matching real test-backed capabilities", () => {
     const { facade } = createTestContext();
     const matrix = facade.getCapabilityMatrix();
     assert.deepEqual(matrix, ARC_HOSTED_TOOL_CAPABILITY_MATRIX);
-    const circleTool = matrix.find((m) => m.toolName === "circle_agent_wallet");
-    assert.equal(circleTool?.hostedStatus, "DELEGATED_LOCAL_ONLY");
+
+    const supportedTools = matrix.filter((m) => m.hostedStatus === "SUPPORTED").map((m) => m.toolName);
+    assert.deepEqual(supportedTools, ["get_balance", "execute_payment", "wallet_setup"]);
   });
 });

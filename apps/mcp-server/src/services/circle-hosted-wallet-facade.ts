@@ -52,19 +52,9 @@ export const ARC_HOSTED_TOOL_CAPABILITY_MATRIX: readonly HostedToolCapability[] 
     description: "Reads stablecoin and token balances bound to the user's hosted authority wallet address.",
   },
   {
-    toolName: "prepare_payment",
-    hostedStatus: "SUPPORTED",
-    description: "Prepares payment intents bound to the hosted authority.",
-  },
-  {
     toolName: "execute_payment",
     hostedStatus: "SUPPORTED",
     description: "Executes approved payments via the hosted Developer-Controlled SCA wallet.",
-  },
-  {
-    toolName: "quote_payment_route",
-    hostedStatus: "SUPPORTED",
-    description: "Quotes payment routes for the hosted authority wallet.",
   },
   {
     toolName: "wallet_setup",
@@ -72,24 +62,34 @@ export const ARC_HOSTED_TOOL_CAPABILITY_MATRIX: readonly HostedToolCapability[] 
     description: "Verifies and manages hosted user wallet setup and status.",
   },
   {
+    toolName: "prepare_payment",
+    hostedStatus: "DELEGATED_LOCAL_ONLY",
+    description: "Prepares payment intents locally. Delegated to local CLI runtime only; not supported in hosted server mode.",
+  },
+  {
+    toolName: "quote_payment_route",
+    hostedStatus: "DELEGATED_LOCAL_ONLY",
+    description: "Quotes payment routes locally. Delegated to local CLI runtime only; not supported in hosted server mode.",
+  },
+  {
     toolName: "route_target_allowance",
-    hostedStatus: "SUPPORTED",
-    description: "Checks and prepares route target allowances for the hosted wallet.",
+    hostedStatus: "DELEGATED_LOCAL_ONLY",
+    description: "Route target allowance management. Delegated to local CLI runtime only; not supported in hosted server mode.",
   },
   {
     toolName: "x402_bazaar_search",
-    hostedStatus: "SUPPORTED",
-    description: "Searches x402 Bazaar services in hosted mode.",
+    hostedStatus: "DELEGATED_LOCAL_ONLY",
+    description: "x402 Bazaar search. Delegated to local CLI runtime only; not supported in hosted server mode.",
   },
   {
     toolName: "x402_bazaar_prepare",
-    hostedStatus: "SUPPORTED",
-    description: "Prepares x402 Bazaar service requests for hosted authority.",
+    hostedStatus: "DELEGATED_LOCAL_ONLY",
+    description: "x402 Bazaar request preparation. Delegated to local CLI runtime only; not supported in hosted server mode.",
   },
   {
     toolName: "account_admin",
-    hostedStatus: "SUPPORTED",
-    description: "Manages hosted account state and consent.",
+    hostedStatus: "DELEGATED_LOCAL_ONLY",
+    description: "Local account administration. Delegated to local CLI runtime only; not supported in hosted server mode.",
   },
   {
     toolName: "circle_agent_wallet",
@@ -97,6 +97,15 @@ export const ARC_HOSTED_TOOL_CAPABILITY_MATRIX: readonly HostedToolCapability[] 
     description: "Local Circle CLI session management. Delegated to local CLI runtime only; not used in hosted server mode.",
   },
 ] as const;
+
+export interface CircleAppKitHostedAdapter {
+  authority: ArcHostedAuthority;
+  getWallet(): Promise<CircleHostedWalletInfo>;
+  getBalances(): Promise<Array<{ symbol: string; amount: string; address?: string }>>;
+  transferTokens(input: CircleHostedTransferInput): Promise<{ transactionId: string; state: string }>;
+  executeContract(input: CircleHostedContractExecutionInput): Promise<{ transactionId: string; state: string }>;
+  getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string }>;
+}
 
 export class CircleHostedWalletFacade {
   private readonly adapter: CircleDeveloperWalletsAdapter;
@@ -207,7 +216,7 @@ export class CircleHostedWalletFacade {
     }
 
     const txStatus = await this.adapter.getTransactionStatus(transactionId);
-    if (txStatus.walletId && txStatus.walletId !== circleWalletId) {
+    if (!txStatus.walletId || txStatus.walletId !== circleWalletId) {
       throw new Error("Access denied: transaction does not belong to caller tenant wallet");
     }
 
@@ -218,12 +227,20 @@ export class CircleHostedWalletFacade {
     };
   }
 
-  createAppKitAdapter(authority: ArcHostedAuthority) {
+  createAppKitAdapter(authority: ArcHostedAuthority): CircleAppKitHostedAdapter {
     const validAuth = ArcHostedAuthoritySchema.parse(authority);
     if (validAuth.accountStatus !== "ACTIVE") {
       throw new Error("Hosted authority account status must be ACTIVE");
     }
-    return this.adapter.createAppKitAdapter(validAuth);
+    const facadeInstance = this;
+    return {
+      authority: validAuth,
+      getWallet: () => facadeInstance.getWallet(validAuth),
+      getBalances: () => facadeInstance.getBalances(validAuth),
+      transferTokens: (input) => facadeInstance.transferTokens(validAuth, input),
+      executeContract: (input) => facadeInstance.executeContract(validAuth, input),
+      getTransactionStatus: (txId) => facadeInstance.getTransactionStatus(validAuth, txId),
+    };
   }
 
   getCapabilityMatrix(): readonly HostedToolCapability[] {

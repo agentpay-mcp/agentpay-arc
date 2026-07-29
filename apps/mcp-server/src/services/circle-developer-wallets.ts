@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import * as circleSdkModule from "@circle-fin/developer-controlled-wallets";
+import {
+  initiateDeveloperControlledWalletsClient,
+  CircleDeveloperControlledWalletsClient,
+} from "@circle-fin/developer-controlled-wallets";
 import {
   ARC_HOSTED_ACCOUNT_TYPE,
   ARC_HOSTED_CHAIN,
@@ -107,38 +111,6 @@ export const SdkTransactionSchema = z.object({
 });
 export type SdkTransaction = z.infer<typeof SdkTransactionSchema>;
 
-export interface CircleDeveloperSdkClient {
-  createWalletSet(input: { name: string; idempotencyKey?: string }): Promise<{ data?: { walletSet?: any } }>;
-  listWalletSets(input?: { pageBefore?: string; pageAfter?: string; pageSize?: number }): Promise<{ data?: { walletSets?: any[] } }>;
-  createWallets(input: {
-    blockchains: string[];
-    count: number;
-    walletSetId: string;
-    accountType: string;
-    metadata?: Array<{ refId: string }>;
-    idempotencyKey?: string;
-  }): Promise<{ data?: { wallets?: any[] } }>;
-  listWallets(input: { walletSetId?: string; pageBefore?: string; pageAfter?: string; pageSize?: number }): Promise<{ data?: { wallets?: any[] } }>;
-  getWalletTokenBalance(input: { id: string }): Promise<{ data?: { tokenBalances?: any[] } }>;
-  createTransaction?(input: {
-    walletId: string;
-    destinationAddress: string;
-    amounts: string[];
-    tokenId?: string;
-    fee: { type: "level"; config: { feeLevel: "LOW" | "MEDIUM" | "HIGH" } };
-    idempotencyKey?: string;
-  }): Promise<{ data?: { id?: string; state?: string; txHash?: string; walletId?: string } }>;
-  createContractExecutionTransaction?(input: {
-    walletId: string;
-    contractAddress: string;
-    abiFunctionSignature: string;
-    abiParameters: any[];
-    fee: { type: "level"; config: { feeLevel: "LOW" | "MEDIUM" | "HIGH" } };
-    idempotencyKey?: string;
-  }): Promise<{ data?: { id?: string; state?: string; txHash?: string; walletId?: string } }>;
-  getTransaction?(input: { id: string }): Promise<{ data?: { transaction?: any } }>;
-}
-
 export function deriveWalletSetName(tenantId: string): string {
   const hash = createHash("sha256").update(`tenant-ws:${tenantId}`).digest("hex").substring(0, 16);
   return `arc-ws-${hash}`;
@@ -149,32 +121,73 @@ export function deriveWalletRefId(tenantId: string): string {
   return `arc-ref-${hash}`;
 }
 
+function resolveInitiateClientFn(): (params: { apiKey: string; entitySecret: string }) => CircleDeveloperControlledWalletsClient {
+  if (typeof initiateDeveloperControlledWalletsClient === "function") {
+    return initiateDeveloperControlledWalletsClient;
+  }
+  const modAny = circleSdkModule as any;
+  if (typeof modAny?.initiateDeveloperControlledWalletsClient === "function") {
+    return modAny.initiateDeveloperControlledWalletsClient;
+  }
+  if (typeof modAny?.default?.initiateDeveloperControlledWalletsClient === "function") {
+    return modAny.default.initiateDeveloperControlledWalletsClient;
+  }
+  throw new Error("Circle SDK initiateDeveloperControlledWalletsClient is unavailable");
+}
+
 export class CircleDeveloperWalletsAdapter {
-  private readonly sdkClient: CircleDeveloperSdkClient;
+  private readonly sdkClient: CircleDeveloperControlledWalletsClient;
   private readonly config: CircleDeveloperWalletsConfig;
 
   constructor(
     config?: Partial<CircleDeveloperWalletsConfig>,
-    customSdkClient?: CircleDeveloperSdkClient,
+    customSdkClient?: CircleDeveloperControlledWalletsClient,
   ) {
     this.config = validateCircleDeveloperWalletsConfig(config);
     if (customSdkClient) {
       this.sdkClient = customSdkClient;
     } else {
-      this.sdkClient = initiateDeveloperControlledWalletsClient({
+      const initFn = resolveInitiateClientFn();
+      this.sdkClient = initFn({
         apiKey: this.config.apiKey,
         entitySecret: this.config.entitySecret,
-      }) as unknown as CircleDeveloperSdkClient;
+      });
     }
+  }
+
+  private async fetchAllWalletSets(): Promise<unknown[]> {
+    const allSets: unknown[] = [];
+    let pageAfter: string | undefined = undefined;
+    do {
+      const res = await this.sdkClient.listWalletSets(pageAfter ? ({ pageAfter } as any) : undefined);
+      const rawData = res.data as any;
+      const sets = rawData?.walletSets ?? [];
+      allSets.push(...sets);
+      pageAfter = sets.length > 0 && typeof rawData?.pageAfter === "string" ? rawData.pageAfter : undefined;
+    } while (pageAfter);
+    return allSets;
+  }
+
+  private async fetchAllWallets(walletSetId: string): Promise<unknown[]> {
+    const allWallets: unknown[] = [];
+    let pageAfter: string | undefined = undefined;
+    do {
+      const res = await this.sdkClient.listWallets({ walletSetId, ...(pageAfter ? { pageAfter } : {}) } as any);
+      const rawData = res.data as any;
+      const wallets = rawData?.wallets ?? [];
+      allWallets.push(...wallets);
+      pageAfter = wallets.length > 0 && typeof rawData?.pageAfter === "string" ? rawData.pageAfter : undefined;
+    } while (pageAfter);
+    return allWallets;
   }
 
   async ensureWalletSetForTenant(tenantId: string, idempotencyKey: string): Promise<SdkWalletSet> {
     const walletSetName = deriveWalletSetName(tenantId);
-    let listSucceeded = false;
+    let preflightSucceeded = false;
+
     try {
-      const listRes = await this.sdkClient.listWalletSets();
-      listSucceeded = true;
-      const rawSets = listRes.data?.walletSets ?? [];
+      const rawSets = await this.fetchAllWalletSets();
+      preflightSucceeded = true;
       const matchingSets = rawSets
         .map((s) => SdkWalletSetSchema.safeParse(s))
         .filter(
@@ -187,10 +200,10 @@ export class CircleDeveloperWalletsAdapter {
         return matchingSets[0];
       }
     } catch {
-      listSucceeded = false;
+      preflightSucceeded = false;
     }
 
-    if (!listSucceeded) {
+    if (!preflightSucceeded) {
       throw new CircleReconciliationRequiredError("Preflight listWalletSets failed; state inconclusive");
     }
 
@@ -198,17 +211,16 @@ export class CircleDeveloperWalletsAdapter {
       const createRes = await this.sdkClient.createWalletSet({
         name: walletSetName,
         idempotencyKey,
-      });
+      } as any);
       const rawSet = createRes.data?.walletSet;
       const parsedSet = SdkWalletSetSchema.safeParse(rawSet);
       if (!parsedSet.success || parsedSet.data.name !== walletSetName || parsedSet.data.custodyType !== ARC_HOSTED_CUSTODY_TYPE) {
         throw new Error("Created wallet set does not match required properties");
       }
       return parsedSet.data;
-    } catch (err) {
+    } catch {
       try {
-        const listRes = await this.sdkClient.listWalletSets();
-        const rawSets = listRes.data?.walletSets ?? [];
+        const rawSets = await this.fetchAllWalletSets();
         const matchingSets = rawSets
           .map((s) => SdkWalletSetSchema.safeParse(s))
           .filter(
@@ -222,7 +234,7 @@ export class CircleDeveloperWalletsAdapter {
       } catch {
         // ignore list error during reconciliation
       }
-      throw redactSecretsAndFormatError(err, this.config);
+      throw new CircleReconciliationRequiredError("Wallet set creation outcome ambiguous; reconciliation required");
     }
   }
 
@@ -232,12 +244,11 @@ export class CircleDeveloperWalletsAdapter {
     idempotencyKey: string,
   ): Promise<SdkWallet> {
     const refId = deriveWalletRefId(tenantId);
-    let listSucceeded = false;
+    let preflightSucceeded = false;
 
     try {
-      const listRes = await this.sdkClient.listWallets({ walletSetId });
-      listSucceeded = true;
-      const rawWallets = listRes.data?.wallets ?? [];
+      const rawWallets = await this.fetchAllWallets(walletSetId);
+      preflightSucceeded = true;
       const matchingWallets = rawWallets
         .map((w) => SdkWalletSchema.safeParse(w))
         .filter(
@@ -255,10 +266,10 @@ export class CircleDeveloperWalletsAdapter {
         return matchingWallets[0];
       }
     } catch {
-      listSucceeded = false;
+      preflightSucceeded = false;
     }
 
-    if (!listSucceeded) {
+    if (!preflightSucceeded) {
       throw new CircleReconciliationRequiredError("Preflight listWallets failed; state inconclusive");
     }
 
@@ -270,7 +281,7 @@ export class CircleDeveloperWalletsAdapter {
         accountType: ARC_HOSTED_ACCOUNT_TYPE,
         metadata: [{ refId }],
         idempotencyKey,
-      });
+      } as any);
 
       const rawWallets = createRes.data?.wallets ?? [];
       const validWallets = rawWallets
@@ -291,10 +302,9 @@ export class CircleDeveloperWalletsAdapter {
       }
 
       return validWallets[0];
-    } catch (err) {
+    } catch {
       try {
-        const listRes = await this.sdkClient.listWallets({ walletSetId });
-        const rawWallets = listRes.data?.wallets ?? [];
+        const rawWallets = await this.fetchAllWallets(walletSetId);
         const matchingWallets = rawWallets
           .map((w) => SdkWalletSchema.safeParse(w))
           .filter(
@@ -315,7 +325,7 @@ export class CircleDeveloperWalletsAdapter {
         // ignore list error during reconciliation
       }
 
-      throw redactSecretsAndFormatError(err, this.config);
+      throw new CircleReconciliationRequiredError("SCA wallet creation outcome ambiguous; reconciliation required");
     }
   }
 
@@ -357,25 +367,25 @@ export class CircleDeveloperWalletsAdapter {
         status: "LIVE",
       };
     } catch (err) {
-      const formattedError = redactSecretsAndFormatError(err, this.config);
-      if (!(err instanceof CircleReconciliationRequiredError)) {
-        try {
-          await input.repository.failProvisioning({
-            authUserId: job.authUserId,
-            fencingToken: job.fencingToken,
-            errorCode: "PROVISIONING_FAILED",
-          });
-        } catch {
-          // ignore repository failure
-        }
+      if (err instanceof CircleReconciliationRequiredError) {
+        throw err;
       }
-      throw formattedError;
+      try {
+        await input.repository.failProvisioning({
+          authUserId: job.authUserId,
+          fencingToken: job.fencingToken,
+          errorCode: "PROVISIONING_FAILED",
+        });
+      } catch {
+        // ignore repository failure
+      }
+      throw redactSecretsAndFormatError(err, this.config);
     }
   }
 
   async getWalletBalances(walletId: string): Promise<Array<{ symbol: string; amount: string; address?: string }>> {
     try {
-      const res = await this.sdkClient.getWalletTokenBalance({ id: walletId });
+      const res = await this.sdkClient.getWalletTokenBalance({ id: walletId } as any);
       const parsed = SdkBalancesResponseSchema.parse(res.data ?? {});
       return parsed.tokenBalances.map((tb) => ({
         symbol: tb.token.symbol ?? "USDC",
@@ -394,10 +404,6 @@ export class CircleDeveloperWalletsAdapter {
     tokenId?: string;
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
-    if (!this.sdkClient.createTransaction) {
-      throw new Error("Circle SDK createTransaction method unavailable");
-    }
-
     try {
       const res = await this.sdkClient.createTransaction({
         walletId: input.walletId,
@@ -406,7 +412,7 @@ export class CircleDeveloperWalletsAdapter {
         tokenId: input.tokenId,
         fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
-      });
+      } as any);
       const parsed = SdkTransactionSchema.parse(res.data ?? {});
       return {
         transactionId: parsed.id,
@@ -424,10 +430,6 @@ export class CircleDeveloperWalletsAdapter {
     args: any[];
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
-    if (!this.sdkClient.createContractExecutionTransaction) {
-      throw new Error("Circle SDK createContractExecutionTransaction method unavailable");
-    }
-
     try {
       const res = await this.sdkClient.createContractExecutionTransaction({
         walletId: input.walletId,
@@ -436,7 +438,7 @@ export class CircleDeveloperWalletsAdapter {
         abiParameters: input.args,
         fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
-      });
+      } as any);
       const parsed = SdkTransactionSchema.parse(res.data ?? {});
       return {
         transactionId: parsed.id,
@@ -448,12 +450,8 @@ export class CircleDeveloperWalletsAdapter {
   }
 
   async getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string; walletId?: string }> {
-    if (!this.sdkClient.getTransaction) {
-      throw new Error("Circle SDK getTransaction method unavailable");
-    }
-
     try {
-      const res = await this.sdkClient.getTransaction({ id: transactionId });
+      const res = await this.sdkClient.getTransaction({ id: transactionId } as any);
       const rawTx = res.data?.transaction ?? res.data;
       const parsed = SdkTransactionSchema.parse(rawTx);
       return {
@@ -465,12 +463,5 @@ export class CircleDeveloperWalletsAdapter {
     } catch (err) {
       throw redactSecretsAndFormatError(err, this.config);
     }
-  }
-
-  createAppKitAdapter(authority: ArcHostedAuthority): { authority: ArcHostedAuthority; isAppKitAdapter: true } {
-    return {
-      authority,
-      isAppKitAdapter: true,
-    };
   }
 }
