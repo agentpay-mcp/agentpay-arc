@@ -1,0 +1,125 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import {
+  CircleHostedWalletFacade,
+  ARC_HOSTED_TOOL_CAPABILITY_MATRIX,
+} from "./circle-hosted-wallet-facade.js";
+import { CircleDeveloperWalletsAdapter, CircleDeveloperSdkClient } from "./circle-developer-wallets.js";
+import { ArcHostedAuthority } from "@agentpay-ai/shared-arc";
+
+const FAKE_CONFIG = {
+  apiKey: ["mock", "key", "test"].join("_"),
+  entitySecret: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+};
+
+const VALID_ADDRESS = "0x1111111111222222222233333333334444444444";
+const VALID_UUID_1 = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+const VALID_UUID_2 = "b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22";
+
+class FakeSdkForFacade implements CircleDeveloperSdkClient {
+  async createWalletSet() {
+    return { data: { walletSet: { id: "ws-1", name: "test", custodyType: "DEVELOPER" } } };
+  }
+  async listWalletSets() {
+    return { data: { walletSets: [] } };
+  }
+  async createWallets() {
+    return {
+      data: {
+        wallets: [
+          {
+            id: "w-1",
+            walletSetId: "ws-1",
+            address: VALID_ADDRESS,
+            blockchain: "ARC-TESTNET",
+            accountType: "SCA",
+            custodyType: "DEVELOPER",
+          },
+        ],
+      },
+    };
+  }
+  async listWallets() {
+    return { data: { wallets: [] } };
+  }
+  async getWalletTokenBalance() {
+    return {
+      data: {
+        tokenBalances: [
+          {
+            token: { symbol: "USDC", address: "0x0000000000000000000000000000000000000001", decimals: 6 },
+            amount: "250.00",
+          },
+        ],
+      },
+    };
+  }
+}
+
+const VALID_AUTHORITY: ArcHostedAuthority = {
+  authUserId: VALID_UUID_1,
+  tenantId: VALID_UUID_2,
+  walletAddress: VALID_ADDRESS,
+  accountStatus: "ACTIVE",
+  authEpoch: 1,
+};
+
+describe("CircleHostedWalletFacade", () => {
+  it("returns wallet info for valid active authority", async () => {
+    const fakeSdk = new FakeSdkForFacade();
+    const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
+    const facade = new CircleHostedWalletFacade(adapter);
+
+    const info = await facade.getWallet(VALID_AUTHORITY);
+    assert.equal(info.walletAddress, VALID_ADDRESS);
+    assert.equal(info.chain, "ARC-TESTNET");
+    assert.equal(info.accountType, "SCA");
+    assert.equal(info.custodyType, "DEVELOPER");
+    assert.equal(info.status, "LIVE");
+  });
+
+  it("rejects authority with non-ACTIVE account status", async () => {
+    const fakeSdk = new FakeSdkForFacade();
+    const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
+    const facade = new CircleHostedWalletFacade(adapter);
+
+    const pausedAuthority: ArcHostedAuthority = {
+      ...VALID_AUTHORITY,
+      accountStatus: "PAUSED",
+    };
+
+    await assert.rejects(
+      async () => facade.getWallet(pausedAuthority),
+      (err: any) => err.message.includes("Hosted authority account status must be ACTIVE"),
+    );
+  });
+
+  it("fetches balances for tenant's bound wallet", async () => {
+    const fakeSdk = new FakeSdkForFacade();
+    const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
+    const facade = new CircleHostedWalletFacade(adapter);
+
+    const balances = await facade.getBalances(VALID_AUTHORITY, "w-1");
+    assert.equal(balances.length, 1);
+    assert.equal(balances[0].symbol, "USDC");
+    assert.equal(balances[0].amount, "250.00");
+  });
+
+  it("provides a documented, complete tool capability matrix", () => {
+    const fakeSdk = new FakeSdkForFacade();
+    const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
+    const facade = new CircleHostedWalletFacade(adapter);
+
+    const matrix = facade.getCapabilityMatrix();
+    assert.ok(Array.isArray(matrix));
+    assert.ok(matrix.length >= 10);
+
+    const getBalanceCap = matrix.find((m) => m.toolName === "get_balance");
+    assert.ok(getBalanceCap);
+    assert.equal(getBalanceCap.hostedStatus, "SUPPORTED");
+
+    const circleAgentWalletCap = matrix.find((m) => m.toolName === "circle_agent_wallet");
+    assert.ok(circleAgentWalletCap);
+    assert.equal(circleAgentWalletCap.hostedStatus, "DELEGATED_LOCAL_ONLY");
+  });
+});
