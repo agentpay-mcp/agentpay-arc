@@ -48,6 +48,28 @@ describe("SupabaseUserVerifier", () => {
     );
   });
 
+  it("rejects off-origin or HTTP auth issuer", () => {
+    assert.throws(
+      () =>
+        parseArcSupabaseUserConfig({
+          ARC_SUPABASE_URL: "https://arc-project.supabase.co",
+          ARC_SUPABASE_AUTH_ISSUER: "http://arc-project.supabase.co/auth/v1",
+          ARC_SUPABASE_PUBLISHABLE_KEY: "sb-key",
+        }),
+      /ARC_SUPABASE_AUTH_ISSUER/i,
+    );
+
+    assert.throws(
+      () =>
+        parseArcSupabaseUserConfig({
+          ARC_SUPABASE_URL: "https://arc-project.supabase.co",
+          ARC_SUPABASE_AUTH_ISSUER: "https://malicious-origin.com/auth/v1",
+          ARC_SUPABASE_PUBLISHABLE_KEY: "sb-key",
+        }),
+      /ARC_SUPABASE_AUTH_ISSUER/i,
+    );
+  });
+
   it("verifies a valid Supabase JWT and extracts authUserId", async () => {
     const jwt = makeMockJwt({
       sub: validUserId,

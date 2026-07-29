@@ -58,6 +58,7 @@ const BoundedIdentifierSchema = z.string().trim().min(1).max(256).regex(/^[a-zA-
 const BoundedErrorCodeSchema = z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/, "Invalid errorCode format");
 
 const TenantJoinSchema = z.object({
+  id: UuidSchema,
   status: z.enum(["ACTIVE", "SUSPENDED", "ARCHIVED"]),
   auth_epoch: z.number().int().nonnegative(),
 });
@@ -218,7 +219,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     // Join arc_hosted_accounts with tenants to ensure both account and tenant are ACTIVE and retrieve tenant auth_epoch
     const { data, error } = await this.supabaseClient
       .from("arc_hosted_accounts")
-      .select("*, tenants!inner(status, auth_epoch)")
+      .select("*, tenants!inner(id, status, auth_epoch)")
       .eq("auth_user_id", validUserId)
       .maybeSingle();
 
@@ -237,6 +238,9 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     }
 
     const tenantInfo = TenantJoinSchema.parse((data as any).tenants);
+    if (tenantInfo.id !== validatedAccount.tenant_id) {
+      throw new Error("Returned tenantId mismatch in resolveHostedAuthority");
+    }
     const tenantStatus = tenantInfo.status;
     const authEpoch = tenantInfo.auth_epoch;
 

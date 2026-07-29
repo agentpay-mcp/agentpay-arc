@@ -79,7 +79,7 @@ async function installMigrations() {
     $$;
   `, { tuplesOnly: false });
 
-  const migrationNames = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql")).sort();
+  const migrationNames = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql") && !name.includes("rollback")).sort();
   for (const migrationName of migrationNames) {
     await dockerPsql(await readFile(`${migrationsDir}/${migrationName}`, "utf8"), { tuplesOnly: false });
   }
@@ -646,6 +646,13 @@ describe("production setup migration on disposable PostgreSQL", () => {
       `select public.arc_set_account_status('${user1}'::uuid, 'CLOSED');`,
       { role: "service_role" },
     );
+
+    // Verify CLOSED account cannot claim a provisioning job
+    const closedClaim = await scalar(
+      `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user1}'::uuid) r;`,
+      { role: "service_role" },
+    );
+    assert.equal(closedClaim, "", "CLOSED account must not claim a provisioning job");
 
     // Verify CLOSED account cannot be reopened
     const invalidReopen = await dockerPsql(

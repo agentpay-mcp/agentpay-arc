@@ -14,6 +14,7 @@ describe("ArcHostedAccountRepository", () => {
     created_at: "2026-07-29T00:00:00.000Z",
     updated_at: "2026-07-29T00:00:00.000Z",
     tenants: {
+      id: "b0000000-0000-4000-8000-000000000002",
       status: "ACTIVE",
       auth_epoch: 0,
     },
@@ -93,6 +94,7 @@ describe("ArcHostedAccountRepository", () => {
                       data: {
                         ...fakeAccountRow,
                         tenants: {
+                          id: "b0000000-0000-4000-8000-000000000002",
                           status: "SUSPENDED",
                           auth_epoch: 1,
                         },
@@ -430,6 +432,40 @@ describe("ArcHostedAccountRepository", () => {
     await assert.rejects(
       () => repo.claimHostedAccount({ authUserId: "a0000000-0000-4000-8000-000000000001" }),
       /Invalid ISO timestamp format/i,
+    );
+  });
+
+  it("rejects joined tenant ID mismatch in resolveHostedAuthority", async () => {
+    const mismatchedTenantRow = {
+      ...fakeAccountRow,
+      tenant_id: "b0000000-0000-4000-8000-000000000002",
+      tenants: {
+        id: "f0000000-0000-4000-8000-000000000006", // Mismatched tenant ID
+        status: "ACTIVE",
+        auth_epoch: 1,
+      },
+    };
+    const fakeClient = {
+      from() {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return { data: mismatchedTenantRow, error: null };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
+    await assert.rejects(
+      () => repo.resolveHostedAuthority({ authUserId: "a0000000-0000-4000-8000-000000000001" }),
+      /tenantId mismatch/i,
     );
   });
 });

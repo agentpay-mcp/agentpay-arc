@@ -57,4 +57,17 @@ describe("Arc-only Hosted Identity Migration Static Analysis", () => {
 
     assert.doesNotMatch(sql, /daily_limit|per_payment_cap|recipient_allowlist|domain_allowlist/i);
   });
+
+  it("provides a tracked rollback procedure file dropping all Task 13A resources in reverse order", async () => {
+    const rollbackPath = "supabase/migrations/20260729020001_arc_hosted_identity_rollback.sql";
+    const sql = await readFile(rollbackPath, "utf8");
+
+    assert.match(sql, /drop function if exists public\.arc_set_account_status/i);
+    assert.match(sql, /drop function if exists public\.arc_fail_provisioning/i);
+    assert.match(sql, /drop function if exists public\.arc_complete_provisioning/i);
+    assert.match(sql, /drop function if exists public\.arc_claim_provisioning_job/i);
+    assert.match(sql, /drop function if exists public\.arc_claim_hosted_account/i);
+    assert.match(sql, /drop table if exists public\.arc_circle_wallet_bindings/i);
+    assert.match(sql, /drop table if exists public\.arc_hosted_accounts/i);
+  });
 });

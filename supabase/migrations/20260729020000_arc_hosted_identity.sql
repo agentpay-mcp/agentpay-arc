@@ -251,13 +251,14 @@ declare
   v_binding record;
   v_fencing_token uuid;
 begin
-  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.fencing_token, b.provisioning_state, b.updated_at
+  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.fencing_token, b.provisioning_state, b.updated_at, a.account_status
   into v_binding
   from public.arc_circle_wallet_bindings b
+  join public.arc_hosted_accounts a on a.auth_user_id = b.auth_user_id
   where b.auth_user_id = p_auth_user_id
-  for update skip locked;
+  for update of b, a skip locked;
 
-  if not found then
+  if not found or v_binding.account_status != 'ACTIVE' then
     return;
   end if;
 
@@ -318,14 +319,19 @@ declare
 begin
   v_address := lower(trim(p_wallet_address));
 
-  select b.tenant_id, b.circle_wallet_set_id, b.circle_wallet_id, b.wallet_address, b.provisioning_state, b.fencing_token
+  select b.tenant_id, b.circle_wallet_set_id, b.circle_wallet_id, b.wallet_address, b.provisioning_state, b.fencing_token, a.account_status
   into v_binding
   from public.arc_circle_wallet_bindings b
+  join public.arc_hosted_accounts a on a.auth_user_id = b.auth_user_id
   where b.auth_user_id = p_auth_user_id
-  for update;
+  for update of b, a;
 
   if not found then
     raise exception 'Binding record not found for user: %', p_auth_user_id;
+  end if;
+
+  if v_binding.account_status != 'ACTIVE' then
+    raise exception 'Cannot complete provisioning for non-active account';
   end if;
 
   -- Idempotent replay check if already LIVE with exact matching parameters and fencing token
@@ -398,11 +404,12 @@ as $$
 declare
   v_binding record;
 begin
-  select b.tenant_id, b.provisioning_state, b.fencing_token, b.error_code
+  select b.tenant_id, b.provisioning_state, b.fencing_token, b.error_code, a.account_status
   into v_binding
   from public.arc_circle_wallet_bindings b
+  join public.arc_hosted_accounts a on a.auth_user_id = b.auth_user_id
   where b.auth_user_id = p_auth_user_id
-  for update;
+  for update of b, a;
 
   if not found then
     raise exception 'Binding record not found for user: %', p_auth_user_id;
@@ -413,6 +420,10 @@ begin
      v_binding.fencing_token = p_fencing_token and
      v_binding.error_code = p_error_code then
     return;
+  end if;
+
+  if v_binding.account_status != 'ACTIVE' then
+    raise exception 'Cannot fail provisioning for non-active account';
   end if;
 
   if v_binding.fencing_token != p_fencing_token then

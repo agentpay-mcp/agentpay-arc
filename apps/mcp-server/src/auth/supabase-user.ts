@@ -1,13 +1,27 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
-export const ArcSupabaseUserConfigSchema = z.object({
-  supabaseUrl: z.string().url().refine((url) => url.startsWith("https://"), {
-    message: "ARC_SUPABASE_URL must be a valid HTTPS URL",
-  }),
-  authIssuer: z.string().url().optional(),
-  publishableKey: z.string().trim().min(1, "ARC_SUPABASE_PUBLISHABLE_KEY is required"),
-});
+export const ArcSupabaseUserConfigSchema = z
+  .object({
+    supabaseUrl: z.string().url().refine((url) => url.startsWith("https://"), {
+      message: "ARC_SUPABASE_URL must be a valid HTTPS URL",
+    }),
+    authIssuer: z.string().url().optional(),
+    publishableKey: z.string().trim().min(1, "ARC_SUPABASE_PUBLISHABLE_KEY is required"),
+  })
+  .refine(
+    (cfg) => {
+      if (!cfg.authIssuer) return true;
+      try {
+        const supabaseOrigin = new URL(cfg.supabaseUrl).origin;
+        const issuerUrl = new URL(cfg.authIssuer);
+        return issuerUrl.protocol === "https:" && issuerUrl.origin === supabaseOrigin;
+      } catch {
+        return false;
+      }
+    },
+    { message: "ARC_SUPABASE_AUTH_ISSUER must be an HTTPS URL on the same origin as ARC_SUPABASE_URL" },
+  );
 export type ArcSupabaseUserConfig = z.infer<typeof ArcSupabaseUserConfigSchema>;
 
 export function parseArcSupabaseUserConfig(env: Record<string, string | undefined>): ArcSupabaseUserConfig {
@@ -137,24 +151,24 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
 
       // Require sub claim to be present, string, and match user.id
       if (typeof claims.sub !== "string" || !claims.sub || claims.sub !== user.id) {
-        throw new Error(`Token sub claim mismatch or missing: expected ${user.id}, received ${claims.sub}`);
+        throw new Error("Token sub claim mismatch or missing");
       }
 
       // Require top-level iss claim to be present string and match expectedIssuer
       const expectedIssuer = this.config.authIssuer ?? `${this.config.supabaseUrl}/auth/v1`;
       if (typeof claims.iss !== "string" || !claims.iss || claims.iss !== expectedIssuer) {
-        throw new Error(`Token issuer mismatch or missing: expected ${expectedIssuer}, received ${claims.iss}`);
+        throw new Error("Token issuer mismatch or missing");
       }
 
       // Require top-level aud claim to be present string and match expectedAudience
       const expectedAudience = "authenticated";
       if (typeof claims.aud !== "string" || !claims.aud || claims.aud !== expectedAudience) {
-        throw new Error(`Token audience mismatch or missing: expected ${expectedAudience}, received ${claims.aud}`);
+        throw new Error("Token audience mismatch or missing");
       }
 
       // Require top-level role claim to be present string and match 'authenticated'
       if (typeof claims.role !== "string" || !claims.role || claims.role !== "authenticated") {
-        throw new Error(`Token role claim must be 'authenticated', received ${claims.role}`);
+        throw new Error("Token role claim must be 'authenticated'");
       }
 
       // Require top-level exp claim to be present numeric and in the future
@@ -182,9 +196,27 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Authentication verification failed";
-      // Ensure raw token is never leaked in error message
-      const sanitized = message.replace(cleanToken, "[REDACTED_TOKEN]");
-      throw new Error(`Supabase user verification failed: ${sanitized}`);
+      // Known internal validation failure messages pass through cleanly without raw tokens
+      const isKnownValidationError =
+        message.includes("Invalid or expired") ||
+        message.includes("Token sub claim") ||
+        message.includes("Token issuer") ||
+        message.includes("Token audience") ||
+        message.includes("Token role claim") ||
+        message.includes("Token missing mandatory") ||
+        message.includes("Token has expired") ||
+        message.includes("Verified token missing") ||
+        message.includes("Missing or malformed") ||
+        message.includes("User role must") ||
+        message.startsWith("Fetch destination");
+
+      if (isKnownValidationError) {
+        const sanitized = message.replace(cleanToken, "[REDACTED_TOKEN]");
+        throw new Error(`Supabase user verification failed: ${sanitized}`);
+      }
+
+      // Map raw/upstream errors to a generic fail-closed error message
+      throw new Error("Supabase user verification failed: Authentication service error");
     }
   }
 }
