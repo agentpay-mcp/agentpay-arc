@@ -675,7 +675,7 @@ describe("production setup migration on disposable PostgreSQL", () => {
   it("fails closed when worker attempts to complete or fail provisioning on a PAUSED or CLOSED account", async () => {
     const pausedUser = "a0000000-0000-4000-8000-000000000088";
     await dockerPsql(`insert into auth.users (id, email) values ('${pausedUser}', 'paused@example.com') on conflict do nothing;`, { tuplesOnly: false });
-    await scalar(`select public.arc_claim_hosted_account('${pausedUser}'::uuid, '2026-07-29-arc-hosted-autonomy-v1');`, { role: "service_role" });
+    await scalar(`select public.arc_claim_hosted_account('${pausedUser}'::uuid, 'arc-hosted-autonomy-v1');`, { role: "service_role" });
 
     // Worker claims provisioning job while account is ACTIVE
     const claimedJobJson = await scalar(`select row_to_json(r)::text from public.arc_claim_provisioning_job('${pausedUser}'::uuid) r;`, { role: "service_role" });
