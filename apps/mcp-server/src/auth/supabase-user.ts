@@ -15,12 +15,16 @@ export const ArcSupabaseUserConfigSchema = z
       try {
         const supabaseOrigin = new URL(cfg.supabaseUrl).origin;
         const issuerUrl = new URL(cfg.authIssuer);
-        return issuerUrl.protocol === "https:" && issuerUrl.origin === supabaseOrigin;
+        return (
+          issuerUrl.protocol === "https:" &&
+          issuerUrl.origin === supabaseOrigin &&
+          issuerUrl.pathname.startsWith("/auth/v1")
+        );
       } catch {
         return false;
       }
     },
-    { message: "ARC_SUPABASE_AUTH_ISSUER must be an HTTPS URL on the same origin as ARC_SUPABASE_URL" },
+    { message: "ARC_SUPABASE_AUTH_ISSUER must be an HTTPS URL on the same origin as ARC_SUPABASE_URL at expected /auth/v1 path" },
   );
 export type ArcSupabaseUserConfig = z.infer<typeof ArcSupabaseUserConfigSchema>;
 

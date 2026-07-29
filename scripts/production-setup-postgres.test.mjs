@@ -672,6 +672,37 @@ describe("production setup migration on disposable PostgreSQL", () => {
     assert.match(invalidSetStatus.stderr, /Hosted account not found for user/i);
   });
 
+  it("fails closed when worker attempts to complete or fail provisioning on a PAUSED or CLOSED account", async () => {
+    const pausedUser = "a0000000-0000-4000-8000-000000000088";
+    await dockerPsql(`insert into auth.users (id, email) values ('${pausedUser}', 'paused@example.com') on conflict do nothing;`, { tuplesOnly: false });
+    await scalar(`select public.arc_claim_hosted_account('${pausedUser}'::uuid, '2026-07-29-arc-hosted-autonomy-v1');`, { role: "service_role" });
+
+    // Worker claims provisioning job while account is ACTIVE
+    const claimedJobJson = await scalar(`select row_to_json(r)::text from public.arc_claim_provisioning_job('${pausedUser}'::uuid) r;`, { role: "service_role" });
+    const claimedJob = JSON.parse(claimedJobJson);
+    const fencingToken = claimedJob.fencing_token;
+    assert.ok(fencingToken, "Worker must receive a valid fencing token");
+
+    // Account transitions to PAUSED while worker is running
+    await scalar(`select public.arc_set_account_status('${pausedUser}'::uuid, 'PAUSED');`, { role: "service_role" });
+
+    // Worker attempts to complete provisioning -> MUST fail closed
+    const completeResult = await dockerPsql(
+      `select public.arc_complete_provisioning('${pausedUser}'::uuid, '${fencingToken}'::uuid, 'set_1', 'w_1', '0x1111111111111111111111111111111111111111');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(completeResult.code, 0, "Completion on PAUSED account must fail");
+    assert.match(completeResult.stderr, /Cannot complete provisioning for non-active account/i);
+
+    // Worker attempts to fail provisioning -> MUST fail closed
+    const failResult = await dockerPsql(
+      `select public.arc_fail_provisioning('${pausedUser}'::uuid, '${fencingToken}'::uuid, 'FAILED_PROVISION');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(failResult.code, 0, "Failure report on PAUSED account must fail");
+    assert.match(failResult.stderr, /Cannot fail provisioning for non-active account/i);
+  });
+
   it("handles 24 truly concurrent claim calls for a new user without duplicate key errors", async () => {
     const newUserId = "a0000000-0000-4000-8000-000000000077";
     await dockerPsql(`insert into auth.users (id, email) values ('${newUserId}', 'concurrent@example.com') on conflict do nothing;`, { tuplesOnly: false });
@@ -699,5 +730,15 @@ describe("production setup migration on disposable PostgreSQL", () => {
 
     // Verify exactly one tenant and one hosted account were created
     assert.equal(await scalar(`select count(*) from public.arc_hosted_accounts where auth_user_id = '${newUserId}'::uuid;`), "1");
+  });
+
+  it("reverses Task 13A migration cleanly when running the rollback script", async () => {
+    const rollbackSql = await readFile("supabase/migrations/20260729020001_arc_hosted_identity_rollback.sql", "utf8");
+    const rollbackRes = await dockerPsql(rollbackSql, { tuplesOnly: false });
+    assert.equal(rollbackRes.code, 0, "Rollback SQL script must execute cleanly");
+
+    // Verify tables and functions no longer exist
+    const tableCount = await scalar("select count(*) from information_schema.tables where table_name in ('arc_hosted_accounts', 'arc_circle_wallet_bindings');");
+    assert.equal(tableCount, "0", "Task 13A tables must be dropped by rollback script");
   });
 });

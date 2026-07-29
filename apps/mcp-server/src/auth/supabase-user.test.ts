@@ -68,6 +68,16 @@ describe("SupabaseUserVerifier", () => {
         }),
       /ARC_SUPABASE_AUTH_ISSUER/i,
     );
+
+    assert.throws(
+      () =>
+        parseArcSupabaseUserConfig({
+          ARC_SUPABASE_URL: "https://arc-project.supabase.co",
+          ARC_SUPABASE_AUTH_ISSUER: "https://arc-project.supabase.co/invalid-path",
+          ARC_SUPABASE_PUBLISHABLE_KEY: "sb-key",
+        }),
+      /ARC_SUPABASE_AUTH_ISSUER/i,
+    );
   });
 
   it("verifies a valid Supabase JWT and extracts authUserId", async () => {

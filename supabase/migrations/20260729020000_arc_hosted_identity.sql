@@ -502,6 +502,13 @@ begin
       updated_at = now()
   where arc_hosted_accounts.auth_user_id = p_auth_user_id;
 
+  if p_status in ('PAUSED', 'CLOSED') then
+    update public.arc_circle_wallet_bindings
+    set fencing_token = gen_random_uuid(),
+        updated_at = now()
+    where arc_circle_wallet_bindings.auth_user_id = p_auth_user_id;
+  end if;
+
   update public.tenants
   set auth_epoch = auth_epoch + 1,
       updated_at = now()
