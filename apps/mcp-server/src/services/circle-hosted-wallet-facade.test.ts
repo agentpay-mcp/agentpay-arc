@@ -6,6 +6,7 @@ import {
 } from "./circle-hosted-wallet-facade.js";
 import { CircleDeveloperWalletsAdapter, CircleDeveloperSdkClient } from "./circle-developer-wallets.js";
 import { ArcHostedAuthority } from "@agentpay-ai/shared-arc";
+import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
 
 const FAKE_CONFIG = {
   apiKey: ["mock", "key", "test"].join("_"),
@@ -13,8 +14,10 @@ const FAKE_CONFIG = {
 };
 
 const VALID_ADDRESS = "0x1111111111222222222233333333334444444444";
+const OTHER_ADDRESS = "0x9999999999888888888877777777776666666666";
 const VALID_UUID_1 = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
 const VALID_UUID_2 = "b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22";
+const VALID_UUID_3 = "c0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33";
 
 class FakeSdkForFacade implements CircleDeveloperSdkClient {
   async createWalletSet() {
@@ -54,6 +57,38 @@ class FakeSdkForFacade implements CircleDeveloperSdkClient {
       },
     };
   }
+  async createTransaction() {
+    return { data: { id: "tx-facade-1", state: "PENDING" } };
+  }
+  async createContractExecutionTransaction() {
+    return { data: { id: "tx-exec-facade-1", state: "PENDING" } };
+  }
+  async getTransaction() {
+    return { data: { transaction: { id: "tx-facade-1", state: "COMPLETE", txHash: "0xhash" } } };
+  }
+}
+
+class FakeRepoForFacade implements ArcHostedAccountRepository {
+  async claimHostedAccount(): Promise<any> { throw new Error("Not implemented"); }
+  async getHostedAccount(): Promise<any> { throw new Error("Not implemented"); }
+  async resolveHostedAuthority(): Promise<any> { throw new Error("Not implemented"); }
+  async claimProvisioningJob(): Promise<any> { throw new Error("Not implemented"); }
+  async completeProvisioning(): Promise<void> {}
+  async failProvisioning(): Promise<void> {}
+  async setAccountStatus(): Promise<void> {}
+  async getPrivateWalletBinding(authUserId: string): Promise<any> {
+    if (authUserId === VALID_UUID_1) {
+      return {
+        authUserId: VALID_UUID_1,
+        tenantId: VALID_UUID_2,
+        circleWalletSetId: "ws-1",
+        circleWalletId: "w-1",
+        walletAddress: VALID_ADDRESS,
+        provisioningState: "LIVE",
+      };
+    }
+    return null;
+  }
 }
 
 const VALID_AUTHORITY: ArcHostedAuthority = {
@@ -67,8 +102,9 @@ const VALID_AUTHORITY: ArcHostedAuthority = {
 describe("CircleHostedWalletFacade", () => {
   it("returns wallet info for valid active authority", async () => {
     const fakeSdk = new FakeSdkForFacade();
+    const fakeRepo = new FakeRepoForFacade();
     const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
-    const facade = new CircleHostedWalletFacade(adapter);
+    const facade = new CircleHostedWalletFacade(adapter, fakeRepo);
 
     const info = await facade.getWallet(VALID_AUTHORITY);
     assert.equal(info.walletAddress, VALID_ADDRESS);
@@ -80,8 +116,9 @@ describe("CircleHostedWalletFacade", () => {
 
   it("rejects authority with non-ACTIVE account status", async () => {
     const fakeSdk = new FakeSdkForFacade();
+    const fakeRepo = new FakeRepoForFacade();
     const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
-    const facade = new CircleHostedWalletFacade(adapter);
+    const facade = new CircleHostedWalletFacade(adapter, fakeRepo);
 
     const pausedAuthority: ArcHostedAuthority = {
       ...VALID_AUTHORITY,
@@ -94,21 +131,68 @@ describe("CircleHostedWalletFacade", () => {
     );
   });
 
-  it("fetches balances for tenant's bound wallet", async () => {
+  it("fetches balances resolving private binding by authority", async () => {
     const fakeSdk = new FakeSdkForFacade();
+    const fakeRepo = new FakeRepoForFacade();
     const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
-    const facade = new CircleHostedWalletFacade(adapter);
+    const facade = new CircleHostedWalletFacade(adapter, fakeRepo);
 
-    const balances = await facade.getBalances(VALID_AUTHORITY, "w-1");
+    const balances = await facade.getBalances(VALID_AUTHORITY);
     assert.equal(balances.length, 1);
     assert.equal(balances[0].symbol, "USDC");
     assert.equal(balances[0].amount, "250.00");
   });
 
+  it("rejects cross-tenant or mismatched authority inputs in facade methods", async () => {
+    const fakeSdk = new FakeSdkForFacade();
+    const fakeRepo = new FakeRepoForFacade();
+    const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
+    const facade = new CircleHostedWalletFacade(adapter, fakeRepo);
+
+    const foreignTenantAuthority: ArcHostedAuthority = {
+      ...VALID_AUTHORITY,
+      tenantId: "d0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44", // Foreign tenant!
+    };
+
+    await assert.rejects(
+      async () => facade.getBalances(foreignTenantAuthority),
+      (err: any) => err.message.includes("Cross-tenant or missing private wallet binding"),
+    );
+  });
+
+  it("executes transfers and contract execution through private binding", async () => {
+    const fakeSdk = new FakeSdkForFacade();
+    const fakeRepo = new FakeRepoForFacade();
+    const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
+    const facade = new CircleHostedWalletFacade(adapter, fakeRepo);
+
+    const tx = await facade.transferTokens(VALID_AUTHORITY, {
+      toAddress: OTHER_ADDRESS,
+      amount: "10.00",
+      idempotencyKey: VALID_UUID_3,
+    });
+    assert.equal(tx.transactionId, "tx-facade-1");
+
+    const exec = await facade.executeContract(VALID_AUTHORITY, {
+      contractAddress: OTHER_ADDRESS,
+      abiFunctionSignature: "approve(address,uint256)",
+      args: [OTHER_ADDRESS, "100"],
+      idempotencyKey: VALID_UUID_3,
+    });
+    assert.equal(exec.transactionId, "tx-exec-facade-1");
+
+    const status = await facade.getTransactionStatus(VALID_AUTHORITY, "tx-facade-1");
+    assert.equal(status.state, "COMPLETE");
+
+    const appKitAdapter = facade.createAppKitAdapter(VALID_AUTHORITY);
+    assert.ok(appKitAdapter);
+  });
+
   it("provides a documented, complete tool capability matrix", () => {
     const fakeSdk = new FakeSdkForFacade();
+    const fakeRepo = new FakeRepoForFacade();
     const adapter = new CircleDeveloperWalletsAdapter(FAKE_CONFIG, fakeSdk);
-    const facade = new CircleHostedWalletFacade(adapter);
+    const facade = new CircleHostedWalletFacade(adapter, fakeRepo);
 
     const matrix = facade.getCapabilityMatrix();
     assert.ok(Array.isArray(matrix));

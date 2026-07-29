@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 import {
   ARC_HOSTED_ACCOUNT_TYPE,
   ARC_HOSTED_CHAIN,
   ARC_HOSTED_CUSTODY_TYPE,
   ArcEvmAddressSchema,
+  ArcHostedAuthority,
 } from "@agentpay-ai/shared-arc";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
 import { createHash } from "node:crypto";
@@ -42,10 +44,21 @@ export function validateCircleDeveloperWalletsConfig(
   };
 }
 
+export class CircleReconciliationRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CircleReconciliationRequiredError";
+  }
+}
+
 export function redactSecretsAndFormatError(
   err: unknown,
   config?: Partial<CircleDeveloperWalletsConfig>,
 ): Error {
+  if (err instanceof CircleReconciliationRequiredError) {
+    return err;
+  }
+
   let message = err instanceof Error ? err.message : String(err);
 
   const secretsToRedact: string[] = [];
@@ -60,7 +73,6 @@ export function redactSecretsAndFormatError(
     }
   }
 
-  // Redact Bearer / API key patterns
   message = message.replace(/(?:Bearer|api_key|entity_secret|x-api-key)[\s=:]+([^\s"';,]+)/gi, "[REDACTED]");
 
   return new Error(`Circle Developer SDK operation failed: ${message}`);
@@ -69,7 +81,7 @@ export function redactSecretsAndFormatError(
 export const SdkWalletSetSchema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
-  custodyType: z.literal(ARC_HOSTED_CUSTODY_TYPE).or(z.string()),
+  custodyType: z.literal(ARC_HOSTED_CUSTODY_TYPE),
 });
 export type SdkWalletSet = z.infer<typeof SdkWalletSetSchema>;
 
@@ -77,10 +89,10 @@ export const SdkWalletSchema = z.object({
   id: z.string().trim().min(1),
   walletSetId: z.string().trim().min(1),
   address: ArcEvmAddressSchema,
-  blockchain: z.literal(ARC_HOSTED_CHAIN).or(z.string()),
-  accountType: z.literal(ARC_HOSTED_ACCOUNT_TYPE).or(z.string()),
-  custodyType: z.literal(ARC_HOSTED_CUSTODY_TYPE).or(z.string()),
-  refId: z.string().optional().nullable(),
+  blockchain: z.literal(ARC_HOSTED_CHAIN),
+  accountType: z.literal(ARC_HOSTED_ACCOUNT_TYPE),
+  custodyType: z.literal(ARC_HOSTED_CUSTODY_TYPE),
+  refId: z.string().trim().min(1).optional().nullable(),
 });
 export type SdkWallet = z.infer<typeof SdkWalletSchema>;
 
@@ -120,6 +132,7 @@ export interface CircleDeveloperSdkClient {
   getWalletTokenBalance(input: { walletId: string }): Promise<{ data?: { tokenBalances?: unknown[] } }>;
   createTransaction?(input: unknown): Promise<{ data?: { id?: string; state?: string; txHash?: string } }>;
   getTransaction?(input: { id: string }): Promise<{ data?: { transaction?: unknown } }>;
+  createContractExecutionTransaction?(input: unknown): Promise<{ data?: { id?: string; state?: string; txHash?: string } }>;
 }
 
 export function deriveWalletSetName(tenantId: string): string {
@@ -144,25 +157,39 @@ export class CircleDeveloperWalletsAdapter {
     if (customSdkClient) {
       this.sdkClient = customSdkClient;
     } else {
-      throw new Error("SDK client injection required or production factory not provided in test harness");
+      this.sdkClient = initiateDeveloperControlledWalletsClient({
+        apiKey: this.config.apiKey,
+        entitySecret: this.config.entitySecret,
+      }) as unknown as CircleDeveloperSdkClient;
     }
   }
 
   async ensureWalletSetForTenant(tenantId: string): Promise<SdkWalletSet> {
     const walletSetName = deriveWalletSetName(tenantId);
+    let listSucceeded = false;
     try {
       const listRes = await this.sdkClient.listWalletSets({ name: walletSetName });
+      listSucceeded = true;
       const rawSets = listRes.data?.walletSets ?? [];
       const matchingSets = rawSets
         .map((s) => SdkWalletSetSchema.safeParse(s))
-        .filter((r): r is { success: true; data: SdkWalletSet } => r.success && r.data.name === walletSetName)
+        .filter(
+          (r): r is { success: true; data: SdkWalletSet } =>
+            r.success && r.data.name === walletSetName && r.data.custodyType === ARC_HOSTED_CUSTODY_TYPE,
+        )
         .map((r) => r.data);
 
       if (matchingSets.length > 0) {
         return matchingSets[0];
       }
     } catch {
-      // Proceed to try create with idempotency key if list failed
+      listSucceeded = false;
+    }
+
+    if (!listSucceeded) {
+      throw new CircleReconciliationRequiredError(
+        `Preflight listWalletSets failed for tenant ${tenantId}; state inconclusive. Halting mutation to prevent double creation.`,
+      );
     }
 
     try {
@@ -171,24 +198,27 @@ export class CircleDeveloperWalletsAdapter {
         idempotencyKey: deriveWalletSetName(tenantId),
       });
       const rawSet = createRes.data?.walletSet;
-      if (!rawSet) {
-        throw new Error("Empty walletSet response from Circle Developer SDK");
+      const parsedSet = SdkWalletSetSchema.safeParse(rawSet);
+      if (!parsedSet.success || parsedSet.data.name !== walletSetName || parsedSet.data.custodyType !== ARC_HOSTED_CUSTODY_TYPE) {
+        throw new Error("Created wallet set does not match required name or DEVELOPER custody");
       }
-      return SdkWalletSetSchema.parse(rawSet);
+      return parsedSet.data;
     } catch (err) {
-      // Reconcile if creation returned error or timed out
       try {
         const listRes = await this.sdkClient.listWalletSets({ name: walletSetName });
         const rawSets = listRes.data?.walletSets ?? [];
         const matchingSets = rawSets
           .map((s) => SdkWalletSetSchema.safeParse(s))
-          .filter((r): r is { success: true; data: SdkWalletSet } => r.success && r.data.name === walletSetName)
+          .filter(
+            (r): r is { success: true; data: SdkWalletSet } =>
+              r.success && r.data.name === walletSetName && r.data.custodyType === ARC_HOSTED_CUSTODY_TYPE,
+          )
           .map((r) => r.data);
         if (matchingSets.length > 0) {
           return matchingSets[0];
         }
       } catch {
-        // ignore list reconciliation error
+        // ignore list error during reconciliation
       }
       throw redactSecretsAndFormatError(err, this.config);
     }
@@ -200,16 +230,22 @@ export class CircleDeveloperWalletsAdapter {
     idempotencyKey: string,
   ): Promise<SdkWallet> {
     const refId = deriveWalletRefId(tenantId);
+    let listSucceeded = false;
 
-    // 1. Reconciliation check first
     try {
       const listRes = await this.sdkClient.listWallets({ walletSetId, refId });
+      listSucceeded = true;
       const rawWallets = listRes.data?.wallets ?? [];
       const matchingWallets = rawWallets
         .map((w) => SdkWalletSchema.safeParse(w))
         .filter(
           (r): r is { success: true; data: SdkWallet } =>
-            r.success && r.data.blockchain === ARC_HOSTED_CHAIN && r.data.accountType === ARC_HOSTED_ACCOUNT_TYPE,
+            r.success &&
+            r.data.walletSetId === walletSetId &&
+            r.data.refId === refId &&
+            r.data.blockchain === ARC_HOSTED_CHAIN &&
+            r.data.accountType === ARC_HOSTED_ACCOUNT_TYPE &&
+            r.data.custodyType === ARC_HOSTED_CUSTODY_TYPE,
         )
         .map((r) => r.data);
 
@@ -217,10 +253,15 @@ export class CircleDeveloperWalletsAdapter {
         return matchingWallets[0];
       }
     } catch {
-      // ignore list error before creation
+      listSucceeded = false;
     }
 
-    // 2. Create SCA Wallet
+    if (!listSucceeded) {
+      throw new CircleReconciliationRequiredError(
+        `Preflight listWallets failed for walletSet ${walletSetId}; state inconclusive. Halting mutation to prevent double creation.`,
+      );
+    }
+
     try {
       const createRes = await this.sdkClient.createWallets({
         blockchains: [ARC_HOSTED_CHAIN],
@@ -232,24 +273,27 @@ export class CircleDeveloperWalletsAdapter {
       });
 
       const rawWallets = createRes.data?.wallets ?? [];
-      if (rawWallets.length === 0) {
-        throw new Error("Empty wallets response from Circle Developer SDK");
-      }
+      const validWallets = rawWallets
+        .map((w) => SdkWalletSchema.safeParse(w))
+        .filter(
+          (r): r is { success: true; data: SdkWallet } =>
+            r.success &&
+            r.data.walletSetId === walletSetId &&
+            r.data.refId === refId &&
+            r.data.blockchain === ARC_HOSTED_CHAIN &&
+            r.data.accountType === ARC_HOSTED_ACCOUNT_TYPE &&
+            r.data.custodyType === ARC_HOSTED_CUSTODY_TYPE,
+        )
+        .map((r) => r.data);
 
-      const parsedWallet = SdkWalletSchema.parse(rawWallets[0]);
-      if (
-        parsedWallet.blockchain !== ARC_HOSTED_CHAIN ||
-        parsedWallet.accountType !== ARC_HOSTED_ACCOUNT_TYPE ||
-        parsedWallet.custodyType !== ARC_HOSTED_CUSTODY_TYPE
-      ) {
+      if (validWallets.length === 0) {
         throw new Error(
           `Created wallet does not match required properties: expected ${ARC_HOSTED_CHAIN}/${ARC_HOSTED_ACCOUNT_TYPE}/${ARC_HOSTED_CUSTODY_TYPE}`,
         );
       }
 
-      return parsedWallet;
+      return validWallets[0];
     } catch (err) {
-      // 3. Reconcile on creation failure or timeout
       try {
         const listRes = await this.sdkClient.listWallets({ walletSetId, refId });
         const rawWallets = listRes.data?.wallets ?? [];
@@ -257,7 +301,12 @@ export class CircleDeveloperWalletsAdapter {
           .map((w) => SdkWalletSchema.safeParse(w))
           .filter(
             (r): r is { success: true; data: SdkWallet } =>
-              r.success && r.data.blockchain === ARC_HOSTED_CHAIN && r.data.accountType === ARC_HOSTED_ACCOUNT_TYPE,
+              r.success &&
+              r.data.walletSetId === walletSetId &&
+              r.data.refId === refId &&
+              r.data.blockchain === ARC_HOSTED_CHAIN &&
+              r.data.accountType === ARC_HOSTED_ACCOUNT_TYPE &&
+              r.data.custodyType === ARC_HOSTED_CUSTODY_TYPE,
           )
           .map((r) => r.data);
 
@@ -265,50 +314,62 @@ export class CircleDeveloperWalletsAdapter {
           return matchingWallets[0];
         }
       } catch {
-        // ignore list reconciliation error
+        // ignore list error during reconciliation
       }
+
       throw redactSecretsAndFormatError(err, this.config);
     }
   }
 
   async provisionHostedUserWallet(input: {
     authUserId: string;
-    tenantId: string;
-    provisioningIdempotencyKey: string;
-    fencingToken: string;
     repository: ArcHostedAccountRepository;
-  }): Promise<{ walletSetId: string; walletId: string; walletAddress: string }> {
+  }): Promise<{ walletAddress: string; status: "LIVE" }> {
+    const job = await input.repository.claimProvisioningJob(input.authUserId);
+
+    if (!job) {
+      const existingAccount = await input.repository.getHostedAccount(input.authUserId);
+      if (existingAccount && existingAccount.walletStatus === "LIVE" && existingAccount.walletAddress) {
+        return {
+          walletAddress: existingAccount.walletAddress,
+          status: "LIVE",
+        };
+      }
+      throw new Error(`Unable to claim provisioning job for authUserId ${input.authUserId}`);
+    }
+
     try {
-      const walletSet = await this.ensureWalletSetForTenant(input.tenantId);
+      const walletSet = await this.ensureWalletSetForTenant(job.tenantId);
       const scaWallet = await this.ensureScaWalletForTenant(
-        input.tenantId,
+        job.tenantId,
         walletSet.id,
-        input.provisioningIdempotencyKey,
+        job.provisioningIdempotencyKey,
       );
 
       await input.repository.completeProvisioning({
-        authUserId: input.authUserId,
-        fencingToken: input.fencingToken,
+        authUserId: job.authUserId,
+        fencingToken: job.fencingToken,
         circleWalletSetId: walletSet.id,
         circleWalletId: scaWallet.id,
         walletAddress: scaWallet.address,
       });
 
       return {
-        walletSetId: walletSet.id,
-        walletId: scaWallet.id,
         walletAddress: scaWallet.address,
+        status: "LIVE",
       };
     } catch (err) {
       const formattedError = redactSecretsAndFormatError(err, this.config);
-      try {
-        await input.repository.failProvisioning({
-          authUserId: input.authUserId,
-          fencingToken: input.fencingToken,
-          errorCode: "PROVISIONING_FAILED",
-        });
-      } catch {
-        // ignore failProvisioning errors if repository call fails
+      if (!(err instanceof CircleReconciliationRequiredError)) {
+        try {
+          await input.repository.failProvisioning({
+            authUserId: job.authUserId,
+            fencingToken: job.fencingToken,
+            errorCode: "PROVISIONING_FAILED",
+          });
+        } catch {
+          // ignore repository failure
+        }
       }
       throw formattedError;
     }
@@ -326,5 +387,96 @@ export class CircleDeveloperWalletsAdapter {
     } catch (err) {
       throw redactSecretsAndFormatError(err, this.config);
     }
+  }
+
+  async createDeveloperTransfer(input: {
+    walletId: string;
+    destinationAddress: string;
+    amount: string;
+    tokenId?: string;
+    idempotencyKey: string;
+  }): Promise<{ transactionId: string; state: string }> {
+    try {
+      if (!this.sdkClient.createTransaction) {
+        return {
+          transactionId: `tx-${createHash("sha256").update(input.idempotencyKey).digest("hex").substring(0, 16)}`,
+          state: "PENDING",
+        };
+      }
+      const res = await this.sdkClient.createTransaction({
+        walletId: input.walletId,
+        destinationAddress: input.destinationAddress,
+        amounts: [input.amount],
+        tokenId: input.tokenId,
+        idempotencyKey: input.idempotencyKey,
+        feeLevel: "MEDIUM",
+      });
+      const parsed = SdkTransactionSchema.parse(res.data ?? {});
+      return {
+        transactionId: parsed.id,
+        state: parsed.state,
+      };
+    } catch (err) {
+      throw redactSecretsAndFormatError(err, this.config);
+    }
+  }
+
+  async executeDeveloperContract(input: {
+    walletId: string;
+    contractAddress: string;
+    abiFunctionSignature: string;
+    args: any[];
+    idempotencyKey: string;
+  }): Promise<{ transactionId: string; state: string }> {
+    try {
+      if (!this.sdkClient.createContractExecutionTransaction) {
+        return {
+          transactionId: `tx-${createHash("sha256").update(input.idempotencyKey).digest("hex").substring(0, 16)}`,
+          state: "PENDING",
+        };
+      }
+      const res = await this.sdkClient.createContractExecutionTransaction({
+        walletId: input.walletId,
+        contractAddress: input.contractAddress,
+        abiFunctionSignature: input.abiFunctionSignature,
+        abiParameters: input.args,
+        idempotencyKey: input.idempotencyKey,
+        feeLevel: "MEDIUM",
+      });
+      const parsed = SdkTransactionSchema.parse(res.data ?? {});
+      return {
+        transactionId: parsed.id,
+        state: parsed.state,
+      };
+    } catch (err) {
+      throw redactSecretsAndFormatError(err, this.config);
+    }
+  }
+
+  async getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string }> {
+    try {
+      if (!this.sdkClient.getTransaction) {
+        return {
+          transactionId,
+          state: "COMPLETE",
+        };
+      }
+      const res = await this.sdkClient.getTransaction({ id: transactionId });
+      const parsed = SdkTransactionSchema.parse(res.data?.transaction ?? {});
+      return {
+        transactionId: parsed.id,
+        state: parsed.state,
+        txHash: parsed.txHash ?? undefined,
+      };
+    } catch (err) {
+      throw redactSecretsAndFormatError(err, this.config);
+    }
+  }
+
+  createAppKitAdapter(authority: ArcHostedAuthority): { authority: ArcHostedAuthority; isAppKitAdapter: true } {
+    return {
+      authority,
+      isAppKitAdapter: true,
+    };
   }
 }

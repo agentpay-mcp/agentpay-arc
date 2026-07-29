@@ -48,6 +48,15 @@ export interface ArcHostedAccountRepository {
     authUserId: string;
     status: ArcHostedAccountStatus;
   }): Promise<void>;
+
+  getPrivateWalletBinding(authUserId: string): Promise<{
+    authUserId: string;
+    tenantId: string;
+    circleWalletSetId: string | null;
+    circleWalletId: string | null;
+    walletAddress: string | null;
+    provisioningState: ArcWalletProvisioningState;
+  } | null>;
 }
 
 import { z } from "zod";
@@ -360,5 +369,38 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     if (error) {
       throw formatRepositoryError("Failed to set account status", error);
     }
+  }
+
+  async getPrivateWalletBinding(authUserId: string): Promise<{
+    authUserId: string;
+    tenantId: string;
+    circleWalletSetId: string | null;
+    circleWalletId: string | null;
+    walletAddress: string | null;
+    provisioningState: ArcWalletProvisioningState;
+  } | null> {
+    const validUserId = UuidSchema.parse(authUserId);
+    const { data, error } = await this.supabaseClient
+      .from("arc_circle_wallet_bindings")
+      .select("auth_user_id, tenant_id, circle_wallet_set_id, circle_wallet_id, wallet_address, provisioning_state")
+      .eq("auth_user_id", validUserId)
+      .maybeSingle();
+
+    if (error) {
+      throw formatRepositoryError("Failed to read private wallet binding", error);
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    return {
+      authUserId: data.auth_user_id,
+      tenantId: data.tenant_id,
+      circleWalletSetId: data.circle_wallet_set_id ?? null,
+      circleWalletId: data.circle_wallet_id ?? null,
+      walletAddress: data.wallet_address ?? null,
+      provisioningState: data.provisioning_state as ArcWalletProvisioningState,
+    };
   }
 }
