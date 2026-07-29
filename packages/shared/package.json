@@ -9,6 +9,7 @@
     "README.md",
     "src/account-admin.ts",
     "src/approval.ts",
+    "src/arc-hosted-auth.ts",
     "src/arc.ts",
     "src/auth.ts",
     "src/balance.ts",

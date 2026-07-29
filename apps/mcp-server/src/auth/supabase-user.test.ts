@@ -3,8 +3,16 @@ import { describe, it } from "node:test";
 import { parseArcSupabaseUserConfig, SupabaseUserVerifierImpl } from "./supabase-user.js";
 
 function makeMockJwt(payload: Record<string, unknown>): string {
+  const defaultPayload = {
+    sub: "a0000000-0000-4000-8000-000000000001",
+    role: "authenticated",
+    aud: "authenticated",
+    iss: "https://arc-project.supabase.co/auth/v1",
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  const merged = { ...defaultPayload, ...payload };
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const body = Buffer.from(JSON.stringify(merged)).toString("base64url");
   return `${header}.${body}.mock-signature`;
 }
 
@@ -176,6 +184,37 @@ describe("SupabaseUserVerifier", () => {
       () => verifier.verifyAccessToken(jwt),
       /issuer mismatch/i,
     );
+  });
+
+  it("rejects token missing mandatory sub, aud, or role claim or sub mismatch", async () => {
+    const fakeClient = {
+      auth: {
+        async getUser() {
+          return {
+            data: {
+              user: {
+                id: validUserId,
+                role: "authenticated",
+              },
+            },
+            error: null,
+          };
+        },
+      },
+    };
+    const verifier = new SupabaseUserVerifierImpl(config, fakeClient as any);
+
+    // Mismatched sub
+    const badSubJwt = makeMockJwt({ sub: "different-user-id" });
+    await assert.rejects(() => verifier.verifyAccessToken(badSubJwt), /sub claim mismatch/i);
+
+    // Missing aud
+    const badAudJwt = makeMockJwt({ aud: undefined });
+    await assert.rejects(() => verifier.verifyAccessToken(badAudJwt), /audience mismatch or missing/i);
+
+    // Missing role
+    const badRoleJwt = makeMockJwt({ role: undefined });
+    await assert.rejects(() => verifier.verifyAccessToken(badRoleJwt), /role claim must be 'authenticated'/i);
   });
 
   it("redacts raw token from error messages", async () => {

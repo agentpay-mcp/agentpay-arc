@@ -611,5 +611,43 @@ describe("production setup migration on disposable PostgreSQL", () => {
       { role: "service_role" },
     ));
     assert.equal(postAccount.account_status, "PAUSED");
+
+    // Negative test: unknown auth user ID raises exception
+    const unknownUser = "a0000000-0000-4000-8000-000000000099";
+    const invalidSetStatus = await dockerPsql(
+      `select public.arc_set_account_status('${unknownUser}'::uuid, 'ACTIVE');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(invalidSetStatus.code, 0, "arc_set_account_status must error for non-existent user");
+    assert.match(invalidSetStatus.stderr, /Hosted account not found for user/i);
+  });
+
+  it("handles 24 truly concurrent claim calls for a new user without duplicate key errors", async () => {
+    const newUserId = "a0000000-0000-4000-8000-000000000077";
+    await dockerPsql(`insert into auth.users (id, email) values ('${newUserId}', 'concurrent@example.com') on conflict do nothing;`, { tuplesOnly: false });
+
+    // Pipeline 24 simultaneous claims for the exact same new user ID
+    const results = await Promise.all(
+      Array.from({ length: 24 }, () =>
+        scalar(`select row_to_json(r)::text from public.arc_claim_hosted_account('${newUserId}'::uuid) r;`, {
+          role: "service_role",
+        }),
+      ),
+    );
+
+    assert.equal(results.length, 24);
+    const parsedResults = results.map((r) => JSON.parse(r));
+    const firstTenantId = parsedResults[0].tenant_id;
+    assert.ok(firstTenantId, "First claim must return valid tenant_id");
+
+    for (const res of parsedResults) {
+      assert.equal(res.auth_user_id, newUserId);
+      assert.equal(res.tenant_id, firstTenantId, "All 24 concurrent claims must return the exact same canonical tenant_id");
+      assert.equal(res.account_status, "ACTIVE");
+      assert.equal(res.wallet_status, "PENDING");
+    }
+
+    // Verify exactly one tenant and one hosted account were created
+    assert.equal(await scalar(`select count(*) from public.arc_hosted_accounts where auth_user_id = '${newUserId}'::uuid;`), "1");
   });
 });

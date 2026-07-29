@@ -152,7 +152,7 @@ describe("ArcHostedAccountRepository", () => {
     const errorRepo = new ArcHostedAccountRepositoryImpl(errorClient as any);
     await assert.rejects(
       () => errorRepo.claimProvisioningJob("a0000000-0000-4000-8000-000000000001"),
-      /Database error/i,
+      /Failed to claim provisioning job|Database error/i,
     );
   });
 

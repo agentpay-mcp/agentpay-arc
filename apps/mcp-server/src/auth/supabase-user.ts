@@ -7,6 +7,7 @@ export const ArcSupabaseUserConfigSchema = z.object({
   }),
   authIssuer: z.string().url().optional(),
   publishableKey: z.string().trim().min(1, "ARC_SUPABASE_PUBLISHABLE_KEY is required"),
+  audience: z.string().trim().optional(),
 });
 export type ArcSupabaseUserConfig = z.infer<typeof ArcSupabaseUserConfigSchema>;
 
@@ -15,6 +16,7 @@ export function parseArcSupabaseUserConfig(env: Record<string, string | undefine
     supabaseUrl: env.ARC_SUPABASE_URL,
     authIssuer: env.ARC_SUPABASE_AUTH_ISSUER,
     publishableKey: env.ARC_SUPABASE_PUBLISHABLE_KEY,
+    audience: env.ARC_SUPABASE_AUDIENCE,
   });
 }
 
@@ -84,37 +86,52 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
       }
 
       const user = data.user;
-      if (user.role && user.role !== "authenticated") {
-        throw new Error("User role must be authenticated");
-      }
-
       if (!user.id || typeof user.id !== "string") {
         throw new Error("Missing or malformed user ID in verified token");
       }
 
-      // 2. Decode verified JWT payload claims for top-level security claim validation
+      if (user.role && user.role !== "authenticated") {
+        throw new Error("User role must be authenticated");
+      }
+
+      // 2. Decode verified JWT payload claims for mandatory fail-closed claim validation
       const claims = parseJwtPayloadClaims(cleanToken);
 
-      // Validate top-level issuer if configured
+      // Require sub claim to be present, string, and match user.id
+      if (typeof claims.sub !== "string" || !claims.sub || claims.sub !== user.id) {
+        throw new Error(`Token sub claim mismatch or missing: expected ${user.id}, received ${claims.sub}`);
+      }
+
+      // Require top-level iss claim to be present string and match expectedIssuer
       const expectedIssuer = this.config.authIssuer ?? `${this.config.supabaseUrl}/auth/v1`;
-      if (claims.iss && typeof claims.iss === "string" && claims.iss !== expectedIssuer) {
-        throw new Error(`Token issuer mismatch: expected ${expectedIssuer}, received ${claims.iss}`);
+      if (typeof claims.iss !== "string" || !claims.iss || claims.iss !== expectedIssuer) {
+        throw new Error(`Token issuer mismatch or missing: expected ${expectedIssuer}, received ${claims.iss}`);
       }
 
-      // Validate token expiration if present in claims
-      if (typeof claims.exp === "number") {
-        const nowSec = Math.floor(Date.now() / 1000);
-        if (claims.exp <= nowSec) {
-          throw new Error("Token has expired");
-        }
+      // Require top-level aud claim to be present string and match expectedAudience
+      const expectedAudience = this.config.audience ?? "authenticated";
+      if (typeof claims.aud !== "string" || !claims.aud || claims.aud !== expectedAudience) {
+        throw new Error(`Token audience mismatch or missing: expected ${expectedAudience}, received ${claims.aud}`);
       }
 
-      // Read top-level client_id claim ONLY (never from user_metadata or app_metadata)
+      // Require top-level role claim to be present string and match 'authenticated'
+      if (typeof claims.role !== "string" || !claims.role || claims.role !== "authenticated") {
+        throw new Error(`Token role claim must be 'authenticated', received ${claims.role}`);
+      }
+
+      // Require top-level exp claim to be present numeric and in the future
+      if (typeof claims.exp !== "number" || isNaN(claims.exp)) {
+        throw new Error("Token missing mandatory numeric exp claim");
+      }
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (claims.exp <= nowSec) {
+        throw new Error("Token has expired");
+      }
+
+      // Read top-level client_id claim ONLY (never from user_metadata/app_metadata, do NOT accept undocumented aliases)
       const topLevelClientId =
         typeof claims.client_id === "string" && claims.client_id.trim().length > 0
           ? claims.client_id.trim()
-          : typeof claims.oauth_client_id === "string" && claims.oauth_client_id.trim().length > 0
-          ? claims.oauth_client_id.trim()
           : undefined;
 
       if (options?.requireOAuthClientId && !topLevelClientId) {

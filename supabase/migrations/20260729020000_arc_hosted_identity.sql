@@ -132,6 +132,9 @@ begin
     raise exception 'Invalid consent version: %', p_consent_version;
   end if;
 
+  -- Transaction advisory lock to serialize concurrent claims for the same auth_user_id
+  perform pg_advisory_xact_lock(hashtext('arc_claim_hosted_account:' || p_auth_user_id::text));
+
   select exists(
     select 1 from public.arc_hosted_accounts a where a.auth_user_id = p_auth_user_id for update
   ) into v_account_exists;
@@ -245,7 +248,7 @@ as $$
 declare
   v_binding record;
 begin
-  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state
+  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state, b.updated_at
   into v_binding
   from public.arc_circle_wallet_bindings b
   where b.auth_user_id = p_auth_user_id
@@ -255,7 +258,9 @@ begin
     return;
   end if;
 
-  if v_binding.provisioning_state in ('PENDING', 'FAILED') then
+  if v_binding.provisioning_state in ('PENDING', 'FAILED') or (
+     v_binding.provisioning_state = 'PROVISIONING' and v_binding.updated_at < now() - interval '5 minutes'
+  ) then
     update public.arc_circle_wallet_bindings
     set provisioning_state = 'PROVISIONING',
         updated_at = now()
@@ -353,13 +358,11 @@ begin
     insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
     values (
       v_binding.tenant_id,
-      'provisioning_completed:' || p_circle_wallet_id,
+      'provisioning_completed:' || p_auth_user_id::text || ':' || now()::text,
       'CIRCLE_WALLET_PROVISIONING',
       'LIVE',
       p_auth_user_id::text,
       jsonb_build_object(
-        'wallet_set_id', p_circle_wallet_set_id,
-        'wallet_id', p_circle_wallet_id,
         'wallet_address', v_address
       ),
       now()
@@ -392,8 +395,8 @@ begin
     raise exception 'Binding record not found for user: %', p_auth_user_id;
   end if;
 
-  if v_binding.provisioning_state = 'LIVE' then
-    raise exception 'Cannot fail provisioning: wallet is already LIVE';
+  if v_binding.provisioning_state not in ('PENDING', 'PROVISIONING') then
+    raise exception 'Cannot fail provisioning from state: %', v_binding.provisioning_state;
   end if;
 
   update public.arc_circle_wallet_bindings
@@ -446,25 +449,27 @@ begin
   where arc_hosted_accounts.auth_user_id = p_auth_user_id
   returning tenant_id into v_tenant_id;
 
-  if v_tenant_id is not null then
-    update public.tenants
-    set auth_epoch = auth_epoch + 1,
-        updated_at = now()
-    where id = v_tenant_id;
+  if v_tenant_id is null then
+    raise exception 'Hosted account not found for user: %', p_auth_user_id;
+  end if;
 
-    if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
-      insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
-      values (
-        v_tenant_id,
-        'account_status_changed:' || p_status || ':' || now()::text,
-        'HOSTED_IDENTITY',
-        p_status,
-        p_auth_user_id::text,
-        jsonb_build_object('account_status', p_status),
-        now()
-      )
-      on conflict on constraint arc_agent_activity_pkey do nothing;
-    end if;
+  update public.tenants
+  set auth_epoch = auth_epoch + 1,
+      updated_at = now()
+  where id = v_tenant_id;
+
+  if exists (select 1 from information_schema.tables where table_name = 'arc_agent_activity') then
+    insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
+    values (
+      v_tenant_id,
+      'account_status_changed:' || p_status || ':' || now()::text,
+      'HOSTED_IDENTITY',
+      p_status,
+      p_auth_user_id::text,
+      jsonb_build_object('account_status', p_status),
+      now()
+    )
+    on conflict on constraint arc_agent_activity_pkey do nothing;
   end if;
 end;
 $$;
