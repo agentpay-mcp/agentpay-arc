@@ -12,6 +12,7 @@ import {
 import {
   CircleDeveloperWalletsAdapter,
   redactSecretsAndFormatError,
+  ARC_HOSTED_USDC_TOKEN_ADDRESS,
 } from "./circle-developer-wallets.js";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
 import { createArcAppKitService, ArcAppKitService } from "./arc-app-kit.js";
@@ -165,12 +166,14 @@ export class CircleHostedWalletFacade {
     const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
     const validParams = CircleHostedTransferInputSchema.parse(input);
 
+    const tokenId = validParams.tokenId ?? ARC_HOSTED_USDC_TOKEN_ADDRESS;
+
     try {
       return await this.adapter.createDeveloperTransfer({
         walletId: circleWalletId,
         destinationAddress: validParams.toAddress,
         amount: validParams.amount,
-        tokenId: validParams.tokenId,
+        tokenId,
         idempotencyKey: validParams.idempotencyKey,
       });
     } catch (err) {
@@ -219,12 +222,19 @@ export class CircleHostedWalletFacade {
     };
   }
 
-  createAppKitAdapter(authority: ArcHostedAuthority): ArcAppKitService {
-    const validAuth = ArcHostedAuthoritySchema.parse(authority);
-    if (validAuth.accountStatus !== "ACTIVE") {
-      throw new Error("Hosted authority account status must be ACTIVE");
-    }
-    return createArcAppKitService();
+  async createAppKitAdapter(authority: ArcHostedAuthority): Promise<ArcAppKitService> {
+    const { walletAddress } = await this.validateAndResolvePrivateWalletId(authority);
+    const baseService = createArcAppKitService();
+
+    return {
+      ...baseService,
+      async getUnifiedBalances(rawAddress: string, includePending?: boolean) {
+        if (!rawAddress || rawAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+          throw new Error("Access denied: address does not match tenant-bound wallet address");
+        }
+        return baseService.getUnifiedBalances(rawAddress, includePending ?? false);
+      },
+    };
   }
 
   getCapabilityMatrix(): readonly HostedToolCapability[] {

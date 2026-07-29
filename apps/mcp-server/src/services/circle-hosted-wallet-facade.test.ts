@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CircleHostedWalletFacade, ARC_HOSTED_TOOL_CAPABILITY_MATRIX } from "./circle-hosted-wallet-facade.ts";
-import { CircleDeveloperWalletsAdapter, CircleDeveloperSdkClient } from "./circle-developer-wallets.ts";
+import { CircleDeveloperWalletsAdapter, CircleDeveloperSdkClient, ARC_HOSTED_USDC_TOKEN_ADDRESS } from "./circle-developer-wallets.ts";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.ts";
 import { ArcHostedAuthority } from "@agentpay-ai/shared-arc";
 
@@ -22,8 +22,8 @@ describe("CircleHostedWalletFacade", () => {
     authEpoch: 1,
   };
 
-  const createTestContext = (customSdk?: Partial<CircleDeveloperSdkClient>) => {
-    const mockSdk: CircleDeveloperSdkClient = {
+  const createTestContext = (customSdk?: Record<string, any>) => {
+    const mockSdk = {
       listWalletSets: async () => ({ data: { walletSets: [] } }),
       createWalletSet: async () => ({ data: {} }),
       listWallets: async () => ({ data: { wallets: [] } }),
@@ -34,7 +34,7 @@ describe("CircleHostedWalletFacade", () => {
 
     const adapter = new CircleDeveloperWalletsAdapter(
       { apiKey: MOCK_API_KEY, entitySecret: TEST_SECRET },
-      mockSdk,
+      mockSdk as unknown as CircleDeveloperSdkClient,
     );
 
     const mockRepo: ArcHostedAccountRepository = {
@@ -126,7 +126,7 @@ describe("CircleHostedWalletFacade", () => {
         return {
           data: {
             tokenBalances: [
-              { token: { symbol: "USDC", address: "0x3333333333333333333333333333333333333333" }, amount: "250.00" },
+              { token: { symbol: "USDC", address: ARC_HOSTED_USDC_TOKEN_ADDRESS }, amount: "250.00" },
             ],
           },
         };
@@ -136,11 +136,11 @@ describe("CircleHostedWalletFacade", () => {
     const balances = await facade.getBalances(validAuthority);
     assert.equal(queriedId, "w-valid-1");
     assert.deepEqual(balances, [
-      { symbol: "USDC", amount: "250.00", address: "0x3333333333333333333333333333333333333333" },
+      { symbol: "USDC", amount: "250.00", address: ARC_HOSTED_USDC_TOKEN_ADDRESS },
     ]);
   });
 
-  it("transfers tokens resolving private wallet ID internally", async () => {
+  it("transfers tokens resolving private wallet ID and default Arc USDC token ID", async () => {
     let txInput: any = null;
     const { facade } = createTestContext({
       createTransaction: async (input: any) => {
@@ -156,14 +156,31 @@ describe("CircleHostedWalletFacade", () => {
     });
 
     assert.deepEqual(res, { transactionId: "tx-facade-1", state: "PENDING" });
-    assert.deepEqual(txInput, {
-      walletId: "w-valid-1",
-      destinationAddress: "0x2222222222222222222222222222222222222222",
-      amounts: ["10.0"],
-      tokenId: undefined,
-      fee: { type: "level", config: { feeLevel: "MEDIUM" } },
+    assert.deepEqual(txInput.walletId, "w-valid-1");
+    assert.deepEqual(txInput.destinationAddress, "0x2222222222222222222222222222222222222222");
+    assert.deepEqual(txInput.amount, ["10.0"]);
+    assert.deepEqual(txInput.tokenId, ARC_HOSTED_USDC_TOKEN_ADDRESS);
+  });
+
+  it("executes contract functions resolving private wallet ID", async () => {
+    let contractInput: any = null;
+    const { facade } = createTestContext({
+      createContractExecutionTransaction: async (input: any) => {
+        contractInput = input;
+        return { data: { id: "tx-contract-1", state: "PENDING" } };
+      },
+    });
+
+    const res = await facade.executeContract(validAuthority, {
+      contractAddress: "0x3333333333333333333333333333333333333333",
+      abiFunctionSignature: "transfer(address,uint256)",
+      args: ["0x2222222222222222222222222222222222222222", "100"],
       idempotencyKey: "55555555-5555-4555-8555-555555555555",
     });
+
+    assert.deepEqual(res, { transactionId: "tx-contract-1", state: "PENDING" });
+    assert.equal(contractInput.walletId, "w-valid-1");
+    assert.equal(contractInput.contractAddress, "0x3333333333333333333333333333333333333333");
   });
 
   it("gets transaction status for caller wallet transaction", async () => {
@@ -227,11 +244,31 @@ describe("CircleHostedWalletFacade", () => {
     );
   });
 
-  it("creates real ArcAppKitService adapter instance", () => {
+  it("creates tenant-bound ArcAppKitService adapter instance", async () => {
     const { facade } = createTestContext();
-    const appKitService = facade.createAppKitAdapter(validAuthority);
-    assert.equal(typeof appKitService.getSupportedChains, "function");
+    const appKitService = await facade.createAppKitAdapter(validAuthority);
     assert.equal(typeof appKitService.getUnifiedBalances, "function");
+
+    await assert.rejects(
+      appKitService.getUnifiedBalances("0x9999999999999999999999999999999999999999", false),
+      /Access denied: address does not match tenant-bound wallet address/,
+    );
+  });
+
+  it("rejects createAppKitAdapter for malicious foreign tenant authority", async () => {
+    const { facade } = createTestContext();
+    const maliciousAuthority: ArcHostedAuthority = {
+      authUserId: VALID_USER_ID,
+      tenantId: ATTACKER_TENANT_ID,
+      walletAddress: "0x1111111111111111111111111111111111111111",
+      accountStatus: "ACTIVE",
+      authEpoch: 1,
+    };
+
+    await assert.rejects(
+      facade.createAppKitAdapter(maliciousAuthority),
+      /Cross-tenant or missing private wallet binding/,
+    );
   });
 
   it("returns capability matrix matching real test-backed capabilities", () => {
