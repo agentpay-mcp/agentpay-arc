@@ -92,9 +92,9 @@ create policy arc_circle_wallet_bindings_service_role_all on public.arc_circle_w
 do $$
 begin
   if not exists (
-    select 1 from pg_policies where schemaname = 'public' and tablename = 'tenants' and policyname = 'tenants_service_role_all'
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'tenants' and policyname = 'arc_tenants_service_role_all'
   ) then
-    create policy tenants_service_role_all on public.tenants for all to service_role using (true) with check (true);
+    create policy arc_tenants_service_role_all on public.tenants for all to service_role using (true) with check (true);
   end if;
 end $$;
 

@@ -734,13 +734,20 @@ describe("production setup migration on disposable PostgreSQL", () => {
     assert.equal(await scalar(`select count(*) from public.arc_hosted_accounts where auth_user_id = '${newUserId}'::uuid;`), "1");
   });
 
-  it("reverses Task 13A migration cleanly when running the rollback script", async () => {
+  it("reverses Task 13A migration cleanly and idempotently when running the rollback script", async () => {
     const rollbackSql = await readFile("supabase/rollbacks/20260729020000_arc_hosted_identity_rollback.sql", "utf8");
     const rollbackRes = await dockerPsql(rollbackSql, { tuplesOnly: false });
     assert.equal(rollbackRes.code, 0, "Rollback SQL script must execute cleanly");
 
-    // Verify tables and functions no longer exist
+    // Verify tables, functions, and tenant RLS policy no longer exist
     const tableCount = await scalar("select count(*) from information_schema.tables where table_name in ('arc_hosted_accounts', 'arc_circle_wallet_bindings');");
     assert.equal(tableCount, "0", "Task 13A tables must be dropped by rollback script");
+
+    const policyCount = await scalar("select count(*) from pg_policies where schemaname = 'public' and tablename = 'tenants' and policyname = 'arc_tenants_service_role_all';");
+    assert.equal(policyCount, "0", "Task 13A tenant policy must be dropped by rollback script");
+
+    // Verify rollback script is idempotent (can be executed a second time without error)
+    const secondRollbackRes = await dockerPsql(rollbackSql, { tuplesOnly: false });
+    assert.equal(secondRollbackRes.code, 0, "Rollback SQL script must execute idempotently on second run");
   });
 });
