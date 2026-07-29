@@ -26,11 +26,13 @@ export interface ArcHostedAccountRepository {
     authUserId: string;
     tenantId: string;
     provisioningIdempotencyKey: string;
+    fencingToken: string;
     provisioningState: ArcWalletProvisioningState;
   } | null>;
 
   completeProvisioning(input: {
     authUserId: string;
+    fencingToken: string;
     circleWalletSetId: string;
     circleWalletId: string;
     walletAddress: string;
@@ -38,6 +40,7 @@ export interface ArcHostedAccountRepository {
 
   failProvisioning(input: {
     authUserId: string;
+    fencingToken: string;
     errorCode: string;
   }): Promise<void>;
 
@@ -54,21 +57,52 @@ const WalletAddressSchema = z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Inva
 const BoundedIdentifierSchema = z.string().trim().min(1).max(256).regex(/^[a-zA-Z0-9_-]+$/, "Invalid Circle ID format");
 const BoundedErrorCodeSchema = z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/, "Invalid errorCode format");
 
+const ClaimHostedAccountRpcRowSchema = z.object({
+  auth_user_id: UuidSchema,
+  tenant_id: UuidSchema,
+  account_status: z.enum(["ACTIVE", "PAUSED", "CLOSED"]),
+  consent_version: z.literal(ARC_AUTONOMY_CONSENT_VERSION),
+  consent_timestamp: z.string().or(z.date()),
+  wallet_address: WalletAddressSchema.optional().nullable(),
+  wallet_status: z.enum(["PENDING", "PROVISIONING", "LIVE", "FAILED", "CLOSED"]),
+  created_at: z.string().or(z.date()),
+  updated_at: z.string().or(z.date()),
+});
+
+const ClaimProvisioningJobRpcRowSchema = z.object({
+  auth_user_id: UuidSchema,
+  tenant_id: UuidSchema,
+  provisioning_idempotency_key: UuidSchema,
+  fencing_token: UuidSchema,
+  provisioning_state: z.enum(["PENDING", "PROVISIONING", "LIVE", "FAILED", "CLOSED"]),
+});
+
 function formatRepositoryError(context: string, error: { message: string }): Error {
   const msg = error.message;
-  // Preserve expected business exceptions thrown by PL/pgSQL functions
-  if (
-    msg.includes("Cannot fail provisioning") ||
-    msg.includes("Cannot complete provisioning") ||
-    msg.includes("Cannot re-complete LIVE provisioning") ||
-    msg.includes("Hosted account not found") ||
-    msg.includes("Invalid account status") ||
-    msg.includes("Invalid consent version") ||
-    msg.includes("Binding record not found")
-  ) {
-    // Extract PL/pgSQL error message without internal Postgres context
-    const cleanMsg = msg.split("\n")[0].replace(/^ERROR:\s*/i, "");
-    return new Error(`${context}: ${cleanMsg}`);
+  // Map expected PL/pgSQL exceptions to clean application errors
+  if (msg.includes("Stale or invalid fencing token")) {
+    return new Error(`${context}: Stale or invalid fencing token`);
+  }
+  if (msg.includes("Cannot fail provisioning")) {
+    return new Error(`${context}: Cannot fail provisioning from current state`);
+  }
+  if (msg.includes("Cannot complete provisioning")) {
+    return new Error(`${context}: Cannot complete provisioning from current state`);
+  }
+  if (msg.includes("Cannot re-complete LIVE provisioning")) {
+    return new Error(`${context}: Cannot re-complete LIVE provisioning with conflicting parameters`);
+  }
+  if (msg.includes("Hosted account not found")) {
+    return new Error(`${context}: Hosted account not found`);
+  }
+  if (msg.includes("Invalid account status")) {
+    return new Error(`${context}: Invalid account status`);
+  }
+  if (msg.includes("Invalid consent version")) {
+    return new Error(`${context}: Invalid consent version`);
+  }
+  if (msg.includes("Binding record not found")) {
+    return new Error(`${context}: Binding record not found`);
   }
   return new Error(`${context}: Database request failed`);
 }
@@ -100,17 +134,17 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       throw new Error("Failed to claim hosted account: Empty RPC result");
     }
 
-    const row = data[0];
+    const validatedRow = ClaimHostedAccountRpcRowSchema.parse(data[0]);
     return ArcHostedAccountSchema.parse({
-      authUserId: row.auth_user_id,
-      tenantId: row.tenant_id,
-      accountStatus: row.account_status,
-      consentVersion: row.consent_version,
-      consentTimestamp: new Date(row.consent_timestamp).toISOString(),
-      walletAddress: row.wallet_address ?? undefined,
-      walletStatus: row.wallet_status,
-      createdAt: new Date(row.created_at).toISOString(),
-      updatedAt: new Date(row.updated_at).toISOString(),
+      authUserId: validatedRow.auth_user_id,
+      tenantId: validatedRow.tenant_id,
+      accountStatus: validatedRow.account_status,
+      consentVersion: validatedRow.consent_version,
+      consentTimestamp: new Date(validatedRow.consent_timestamp).toISOString(),
+      walletAddress: validatedRow.wallet_address ?? undefined,
+      walletStatus: validatedRow.wallet_status,
+      createdAt: new Date(validatedRow.created_at).toISOString(),
+      updatedAt: new Date(validatedRow.updated_at).toISOString(),
     });
   }
 
@@ -130,16 +164,17 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       return null;
     }
 
+    const validatedRow = ClaimHostedAccountRpcRowSchema.parse(data);
     return ArcHostedAccountSchema.parse({
-      authUserId: data.auth_user_id,
-      tenantId: data.tenant_id,
-      accountStatus: data.account_status,
-      consentVersion: data.consent_version,
-      consentTimestamp: new Date(data.consent_timestamp).toISOString(),
-      walletAddress: data.wallet_address ?? undefined,
-      walletStatus: data.wallet_status,
-      createdAt: new Date(data.created_at).toISOString(),
-      updatedAt: new Date(data.updated_at).toISOString(),
+      authUserId: validatedRow.auth_user_id,
+      tenantId: validatedRow.tenant_id,
+      accountStatus: validatedRow.account_status,
+      consentVersion: validatedRow.consent_version,
+      consentTimestamp: new Date(validatedRow.consent_timestamp).toISOString(),
+      walletAddress: validatedRow.wallet_address ?? undefined,
+      walletStatus: validatedRow.wallet_status,
+      createdAt: new Date(validatedRow.created_at).toISOString(),
+      updatedAt: new Date(validatedRow.updated_at).toISOString(),
     });
   }
 
@@ -167,24 +202,25 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       return null;
     }
 
+    const validatedAccount = ClaimHostedAccountRpcRowSchema.parse(data);
     const tenantInfo = (data as any).tenants;
     const tenantStatus = tenantInfo?.status;
     const authEpoch = Number(tenantInfo?.auth_epoch ?? 0);
 
     if (
-      data.account_status !== "ACTIVE" ||
+      validatedAccount.account_status !== "ACTIVE" ||
       tenantStatus !== "ACTIVE" ||
-      data.wallet_status !== "LIVE" ||
-      !data.wallet_address
+      validatedAccount.wallet_status !== "LIVE" ||
+      !validatedAccount.wallet_address
     ) {
       return null;
     }
 
     return ArcHostedAuthoritySchema.parse({
-      authUserId: data.auth_user_id,
-      tenantId: data.tenant_id,
-      walletAddress: data.wallet_address,
-      accountStatus: data.account_status,
+      authUserId: validatedAccount.auth_user_id,
+      tenantId: validatedAccount.tenant_id,
+      walletAddress: validatedAccount.wallet_address,
+      accountStatus: validatedAccount.account_status,
       authEpoch,
       oauthClientId: validOAuthClientId,
     });
@@ -194,6 +230,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     authUserId: string;
     tenantId: string;
     provisioningIdempotencyKey: string;
+    fencingToken: string;
     provisioningState: ArcWalletProvisioningState;
   } | null> {
     const validUserId = UuidSchema.parse(authUserId);
@@ -210,28 +247,32 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       return null;
     }
 
-    const row = data[0];
+    const validatedRow = ClaimProvisioningJobRpcRowSchema.parse(data[0]);
     return {
-      authUserId: row.auth_user_id,
-      tenantId: row.tenant_id,
-      provisioningIdempotencyKey: row.provisioning_idempotency_key,
-      provisioningState: row.provisioning_state,
+      authUserId: validatedRow.auth_user_id,
+      tenantId: validatedRow.tenant_id,
+      provisioningIdempotencyKey: validatedRow.provisioning_idempotency_key,
+      fencingToken: validatedRow.fencing_token,
+      provisioningState: validatedRow.provisioning_state,
     };
   }
 
   async completeProvisioning(input: {
     authUserId: string;
+    fencingToken: string;
     circleWalletSetId: string;
     circleWalletId: string;
     walletAddress: string;
   }): Promise<void> {
     const validUserId = UuidSchema.parse(input.authUserId);
+    const validFencingToken = UuidSchema.parse(input.fencingToken);
     const validWalletSetId = BoundedIdentifierSchema.parse(input.circleWalletSetId);
     const validWalletId = BoundedIdentifierSchema.parse(input.circleWalletId);
     const validAddress = WalletAddressSchema.parse(input.walletAddress);
 
     const { error } = await this.supabaseClient.rpc("arc_complete_provisioning", {
       p_auth_user_id: validUserId,
+      p_fencing_token: validFencingToken,
       p_circle_wallet_set_id: validWalletSetId,
       p_circle_wallet_id: validWalletId,
       p_wallet_address: validAddress,
@@ -244,13 +285,16 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
 
   async failProvisioning(input: {
     authUserId: string;
+    fencingToken: string;
     errorCode: string;
   }): Promise<void> {
     const validUserId = UuidSchema.parse(input.authUserId);
+    const validFencingToken = UuidSchema.parse(input.fencingToken);
     const validErrorCode = BoundedErrorCodeSchema.parse(input.errorCode);
 
     const { error } = await this.supabaseClient.rpc("arc_fail_provisioning", {
       p_auth_user_id: validUserId,
+      p_fencing_token: validFencingToken,
       p_error_code: validErrorCode,
     });
 
@@ -264,10 +308,11 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     status: ArcHostedAccountStatus;
   }): Promise<void> {
     const validUserId = UuidSchema.parse(input.authUserId);
+    const validStatus = z.enum(["ACTIVE", "PAUSED", "CLOSED"]).parse(input.status);
 
     const { error } = await this.supabaseClient.rpc("arc_set_account_status", {
       p_auth_user_id: validUserId,
-      p_status: input.status,
+      p_status: validStatus,
     });
 
     if (error) {

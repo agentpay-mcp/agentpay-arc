@@ -520,7 +520,7 @@ describe("production setup migration on disposable PostgreSQL", () => {
     assert.notEqual(forbiddenRpc.code, 0, "authenticated role must be denied arc_claim_hosted_account RPC");
   });
 
-  it("handles provisioning lifecycle atomically and enforces monotonic state transitions", async () => {
+  it("handles provisioning lifecycle atomically, fencing tokens, and enforces monotonic state transitions", async () => {
     const user1 = "a0000000-0000-4000-8000-000000000001";
 
     // 1. Claim provisioning job
@@ -530,6 +530,9 @@ describe("production setup migration on disposable PostgreSQL", () => {
     ));
     assert.equal(claimJob.auth_user_id, user1);
     assert.equal(claimJob.provisioning_state, "PROVISIONING");
+    assert.ok(claimJob.fencing_token, "Claim job must return fencing token");
+
+    const originalFencingToken = claimJob.fencing_token;
 
     // Concurrent claim while PROVISIONING returns empty result
     const secondClaim = await scalar(
@@ -538,13 +541,20 @@ describe("production setup migration on disposable PostgreSQL", () => {
     );
     assert.equal(secondClaim, "");
 
-    // 2. Complete provisioning
+    // Stale fencing token is rejected on complete
     const walletSet = "ws-arc-001";
     const walletId = "w-arc-001";
     const address = "0x1111111111111111111111111111111111111111";
 
+    const staleComplete = await dockerPsql(
+      `select public.arc_complete_provisioning('${user1}'::uuid, '00000000-0000-4000-8000-000000000000'::uuid, '${walletSet}', '${walletId}', '${address}');`,
+      { role: "service_role", allowFailure: true },
+    );
+    assert.notEqual(staleComplete.code, 0, "Stale fencing token must be rejected");
+
+    // 2. Complete provisioning with valid fencing token
     await scalar(
-      `select public.arc_complete_provisioning('${user1}'::uuid, '${walletSet}', '${walletId}', '${address}');`,
+      `select public.arc_complete_provisioning('${user1}'::uuid, '${originalFencingToken}'::uuid, '${walletSet}', '${walletId}', '${address}');`,
       { role: "service_role" },
     );
 
@@ -558,32 +568,44 @@ describe("production setup migration on disposable PostgreSQL", () => {
 
     // Idempotent re-complete with exact same parameters succeeds
     await scalar(
-      `select public.arc_complete_provisioning('${user1}'::uuid, '${walletSet}', '${walletId}', '${address}');`,
+      `select public.arc_complete_provisioning('${user1}'::uuid, '${originalFencingToken}'::uuid, '${walletSet}', '${walletId}', '${address}');`,
       { role: "service_role" },
     );
 
     // Failing a LIVE account is rejected
     const invalidFail = await dockerPsql(
-      `select public.arc_fail_provisioning('${user1}'::uuid, 'SOME_ERROR');`,
+      `select public.arc_fail_provisioning('${user1}'::uuid, '${originalFencingToken}'::uuid, 'SOME_ERROR');`,
       { role: "service_role", allowFailure: true },
     );
     assert.notEqual(invalidFail.code, 0, "Cannot fail a LIVE provisioning job");
   });
 
-  it("enforces global Circle ID and address uniqueness across users", async () => {
+  it("enforces global Circle ID and address uniqueness across users and idempotent fail replays", async () => {
     const user2 = "a0000000-0000-4000-8000-000000000002";
 
-    // Attempt to claim & complete User 2 with duplicate wallet_address
-    await scalar(
-      `select public.arc_claim_provisioning_job('${user2}'::uuid);`,
+    // Attempt to claim User 2
+    const claimUser2 = JSON.parse(await scalar(
+      `select row_to_json(r)::text from public.arc_claim_provisioning_job('${user2}'::uuid) r;`,
       { role: "service_role" },
-    );
+    ));
 
     const duplicateComplete = await dockerPsql(
-      `select public.arc_complete_provisioning('${user2}'::uuid, 'ws-arc-002', 'w-arc-002', '0x1111111111111111111111111111111111111111');`,
+      `select public.arc_complete_provisioning('${user2}'::uuid, '${claimUser2.fencing_token}'::uuid, 'ws-arc-002', 'w-arc-002', '0x1111111111111111111111111111111111111111');`,
       { role: "service_role", allowFailure: true },
     );
     assert.notEqual(duplicateComplete.code, 0, "Duplicate wallet address must violate unique constraint");
+
+    // Fail user 2 with valid fencing token
+    await scalar(
+      `select public.arc_fail_provisioning('${user2}'::uuid, '${claimUser2.fencing_token}'::uuid, 'UPSTREAM_ERROR');`,
+      { role: "service_role" },
+    );
+
+    // Idempotent fail replay with exact same fencing token & error code succeeds
+    await scalar(
+      `select public.arc_fail_provisioning('${user2}'::uuid, '${claimUser2.fencing_token}'::uuid, 'UPSTREAM_ERROR');`,
+      { role: "service_role" },
+    );
   });
 
   it("sets account status and increments tenant auth_epoch", async () => {

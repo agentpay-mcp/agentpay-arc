@@ -54,9 +54,49 @@ export class SupabaseUserVerifierImpl implements SupabaseUserVerifier {
 
   constructor(config: ArcSupabaseUserConfig, customClient?: SupabaseClient) {
     this.config = config;
+
+    const expectedUrl = new URL(config.supabaseUrl);
+    const timeoutMs = 10_000;
+
+    const pinnedFetch: typeof fetch = async (url, options) => {
+      const urlString = typeof url === "string" ? url : url instanceof URL ? url.toString() : (url as Request).url;
+      const parsedUrl = new URL(urlString);
+
+      if (parsedUrl.origin !== expectedUrl.origin) {
+        throw new Error(`Fetch destination origin mismatch: expected ${expectedUrl.origin}, received ${parsedUrl.origin}`);
+      }
+
+      if (parsedUrl.protocol !== "https:") {
+        throw new Error("Fetch destination must use HTTPS protocol");
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const customFetch = (options as any)?.fetch ?? fetch;
+        const response = await customFetch(urlString, {
+          ...options,
+          redirect: "error",
+          signal: controller.signal,
+        });
+        return response;
+      } catch (err: any) {
+        if (err.name === "AbortError") {
+          throw new Error(`Supabase network request timed out after ${timeoutMs}ms`);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
     this.supabaseClient =
       customClient ??
       createClient(config.supabaseUrl, config.publishableKey, {
+        global: {
+          fetch: pinnedFetch,
+        },
         auth: {
           persistSession: false,
           autoRefreshToken: false,

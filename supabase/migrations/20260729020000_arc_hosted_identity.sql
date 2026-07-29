@@ -34,6 +34,7 @@ create table if not exists public.arc_circle_wallet_bindings (
   auth_user_id uuid not null unique references auth.users(id) on delete cascade,
   tenant_id uuid not null unique references public.tenants(id) on delete cascade,
   provisioning_idempotency_key uuid not null unique,
+  fencing_token uuid not null default gen_random_uuid(),
   circle_wallet_set_id text unique,
   circle_wallet_id text unique,
   wallet_address text unique check (wallet_address is null or wallet_address ~ '^0x[0-9a-f]{40}$'),
@@ -41,7 +42,7 @@ create table if not exists public.arc_circle_wallet_bindings (
   account_type text check (account_type is null or account_type = 'SCA'),
   custody_type text check (custody_type is null or custody_type = 'DEVELOPER'),
   provisioning_state text not null check (provisioning_state in ('PENDING', 'PROVISIONING', 'LIVE', 'FAILED', 'CLOSED')),
-  error_code text,
+  error_code text check (error_code is null or (length(trim(error_code)) > 0 and length(error_code) <= 128 and error_code ~ '^[a-zA-Z0-9_-]+$')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   foreign key (auth_user_id, tenant_id) references public.arc_hosted_accounts(auth_user_id, tenant_id) on delete cascade,
@@ -125,8 +126,8 @@ security definer
 set search_path = public
 as $$
 declare
-  v_tenant_id uuid;
   v_account_exists boolean;
+  v_tenant_id uuid;
 begin
   if p_consent_version != 'arc-hosted-autonomy-v1' then
     raise exception 'Invalid consent version: %', p_consent_version;
@@ -140,12 +141,10 @@ begin
   ) into v_account_exists;
 
   if not v_account_exists then
-    -- Create new production tenant conforming to public.tenants schema
-    insert into public.tenants (id, environment, status, auth_epoch, created_at, updated_at)
-    values (gen_random_uuid(), 'production', 'ACTIVE', 0, now(), now())
+    insert into public.tenants (environment, status, auth_epoch, created_at, updated_at)
+    values ('production', 'ACTIVE', 0, now(), now())
     returning id into v_tenant_id;
 
-    -- Create hosted account record
     insert into public.arc_hosted_accounts (
       auth_user_id,
       tenant_id,
@@ -173,6 +172,7 @@ begin
       auth_user_id,
       tenant_id,
       provisioning_idempotency_key,
+      fencing_token,
       circle_wallet_set_id,
       circle_wallet_id,
       wallet_address,
@@ -186,6 +186,7 @@ begin
     ) values (
       p_auth_user_id,
       v_tenant_id,
+      gen_random_uuid(),
       gen_random_uuid(),
       null,
       null,
@@ -239,6 +240,7 @@ returns table (
   auth_user_id uuid,
   tenant_id uuid,
   provisioning_idempotency_key uuid,
+  fencing_token uuid,
   provisioning_state text
 )
 language plpgsql
@@ -247,8 +249,9 @@ set search_path = public
 as $$
 declare
   v_binding record;
+  v_fencing_token uuid;
 begin
-  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state, b.updated_at
+  select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.fencing_token, b.provisioning_state, b.updated_at
   into v_binding
   from public.arc_circle_wallet_bindings b
   where b.auth_user_id = p_auth_user_id
@@ -261,8 +264,11 @@ begin
   if v_binding.provisioning_state in ('PENDING', 'FAILED') or (
      v_binding.provisioning_state = 'PROVISIONING' and v_binding.updated_at < now() - interval '5 minutes'
   ) then
+    v_fencing_token := gen_random_uuid();
+
     update public.arc_circle_wallet_bindings
     set provisioning_state = 'PROVISIONING',
+        fencing_token = v_fencing_token,
         updated_at = now()
     where arc_circle_wallet_bindings.auth_user_id = p_auth_user_id;
 
@@ -275,18 +281,18 @@ begin
       insert into public.arc_agent_activity (tenant_id, id, activity_type, status, reference_id, metadata, created_at)
       values (
         v_binding.tenant_id,
-        'provisioning_claimed:' || v_binding.provisioning_idempotency_key::text,
+        'provisioning_claimed:' || v_binding.provisioning_idempotency_key::text || ':' || v_fencing_token::text,
         'CIRCLE_WALLET_PROVISIONING',
         'PROVISIONING',
         p_auth_user_id::text,
-        jsonb_build_object('idempotency_key', v_binding.provisioning_idempotency_key),
+        jsonb_build_object('idempotency_key', v_binding.provisioning_idempotency_key, 'fencing_token', v_fencing_token),
         now()
       )
       on conflict on constraint arc_agent_activity_pkey do nothing;
     end if;
 
     return query
-    select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.provisioning_state
+    select b.auth_user_id, b.tenant_id, b.provisioning_idempotency_key, b.fencing_token, b.provisioning_state
     from public.arc_circle_wallet_bindings b
     where b.auth_user_id = p_auth_user_id;
   end if;
@@ -296,6 +302,7 @@ $$;
 -- 3. Complete provisioning
 create or replace function public.arc_complete_provisioning(
   p_auth_user_id uuid,
+  p_fencing_token uuid,
   p_circle_wallet_set_id text,
   p_circle_wallet_id text,
   p_wallet_address text
@@ -311,7 +318,7 @@ declare
 begin
   v_address := lower(trim(p_wallet_address));
 
-  select b.tenant_id, b.circle_wallet_set_id, b.circle_wallet_id, b.wallet_address, b.provisioning_state
+  select b.tenant_id, b.circle_wallet_set_id, b.circle_wallet_id, b.wallet_address, b.provisioning_state, b.fencing_token
   into v_binding
   from public.arc_circle_wallet_bindings b
   where b.auth_user_id = p_auth_user_id
@@ -321,15 +328,20 @@ begin
     raise exception 'Binding record not found for user: %', p_auth_user_id;
   end if;
 
-  -- Idempotent replay check if already LIVE with exact matching parameters
+  -- Idempotent replay check if already LIVE with exact matching parameters and fencing token
   if v_binding.provisioning_state = 'LIVE' then
     if v_binding.circle_wallet_set_id = p_circle_wallet_set_id and
        v_binding.circle_wallet_id = p_circle_wallet_id and
-       v_binding.wallet_address = v_address then
+       v_binding.wallet_address = v_address and
+       v_binding.fencing_token = p_fencing_token then
       return;
     else
       raise exception 'Cannot re-complete LIVE provisioning with conflicting Circle IDs or address';
     end if;
+  end if;
+
+  if v_binding.fencing_token != p_fencing_token then
+    raise exception 'Stale or invalid fencing token for provisioning completion';
   end if;
 
   if v_binding.provisioning_state != 'PROVISIONING' then
@@ -375,6 +387,7 @@ $$;
 -- 4. Fail provisioning
 create or replace function public.arc_fail_provisioning(
   p_auth_user_id uuid,
+  p_fencing_token uuid,
   p_error_code text
 )
 returns void
@@ -385,7 +398,7 @@ as $$
 declare
   v_binding record;
 begin
-  select b.tenant_id, b.provisioning_state
+  select b.tenant_id, b.provisioning_state, b.fencing_token, b.error_code
   into v_binding
   from public.arc_circle_wallet_bindings b
   where b.auth_user_id = p_auth_user_id
@@ -393,6 +406,17 @@ begin
 
   if not found then
     raise exception 'Binding record not found for user: %', p_auth_user_id;
+  end if;
+
+  -- Idempotent replay check if already FAILED with matching error_code and fencing_token
+  if v_binding.provisioning_state = 'FAILED' and
+     v_binding.fencing_token = p_fencing_token and
+     v_binding.error_code = p_error_code then
+    return;
+  end if;
+
+  if v_binding.fencing_token != p_fencing_token then
+    raise exception 'Stale or invalid fencing token for provisioning failure';
   end if;
 
   if v_binding.provisioning_state not in ('PENDING', 'PROVISIONING') then
@@ -477,15 +501,15 @@ $$;
 -- Revoke execution from public, anon, and authenticated
 revoke all on function public.arc_claim_hosted_account(uuid, text) from public, anon, authenticated;
 revoke all on function public.arc_claim_provisioning_job(uuid) from public, anon, authenticated;
-revoke all on function public.arc_complete_provisioning(uuid, text, text, text) from public, anon, authenticated;
-revoke all on function public.arc_fail_provisioning(uuid, text) from public, anon, authenticated;
+revoke all on function public.arc_complete_provisioning(uuid, uuid, text, text, text) from public, anon, authenticated;
+revoke all on function public.arc_fail_provisioning(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.arc_set_account_status(uuid, text) from public, anon, authenticated;
 
 -- Grant execution strictly to service_role
 grant execute on function public.arc_claim_hosted_account(uuid, text) to service_role;
 grant execute on function public.arc_claim_provisioning_job(uuid) to service_role;
-grant execute on function public.arc_complete_provisioning(uuid, text, text, text) to service_role;
-grant execute on function public.arc_fail_provisioning(uuid, text) to service_role;
+grant execute on function public.arc_complete_provisioning(uuid, uuid, text, text, text) to service_role;
+grant execute on function public.arc_fail_provisioning(uuid, uuid, text) to service_role;
 grant execute on function public.arc_set_account_status(uuid, text) to service_role;
 
 commit;

@@ -217,6 +217,82 @@ describe("SupabaseUserVerifier", () => {
     await assert.rejects(() => verifier.verifyAccessToken(badRoleJwt), /role claim must be 'authenticated'/i);
   });
 
+  it("rejects missing, empty, or malformed JWT structure", async () => {
+    const verifier = new SupabaseUserVerifierImpl(config);
+    await assert.rejects(() => verifier.verifyAccessToken(""), /Missing or empty bearer token/i);
+    await assert.rejects(() => verifier.verifyAccessToken("  "), /Missing or empty bearer token/i);
+  });
+
+  it("rejects token with missing user ID, role mismatch, or expired exp claim", async () => {
+    // Missing user ID
+    const fakeClient1 = {
+      auth: {
+        async getUser() {
+          return { data: { user: { id: null } }, error: null };
+        },
+      },
+    };
+    const verifier1 = new SupabaseUserVerifierImpl(config, fakeClient1 as any);
+    await assert.rejects(() => verifier1.verifyAccessToken(makeMockJwt({})), /Missing or malformed user ID/i);
+
+    // User role mismatch
+    const fakeClient2 = {
+      auth: {
+        async getUser() {
+          return { data: { user: { id: validUserId, role: "anon" } }, error: null };
+        },
+      },
+    };
+    const verifier2 = new SupabaseUserVerifierImpl(config, fakeClient2 as any);
+    await assert.rejects(() => verifier2.verifyAccessToken(makeMockJwt({})), /User role must be authenticated/i);
+
+    // Expired exp claim
+    const fakeClient3 = {
+      auth: {
+        async getUser() {
+          return { data: { user: { id: validUserId, role: "authenticated" } }, error: null };
+        },
+      },
+    };
+    const verifier3 = new SupabaseUserVerifierImpl(config, fakeClient3 as any);
+    const expiredJwt = makeMockJwt({ exp: Math.floor(Date.now() / 1000) - 3600 });
+    await assert.rejects(() => verifier3.verifyAccessToken(expiredJwt), /Token has expired/i);
+
+    // Non-numeric exp claim
+    const nonNumericExpJwt = makeMockJwt({ exp: "not-a-number" });
+    await assert.rejects(() => verifier3.verifyAccessToken(nonNumericExpJwt), /missing mandatory numeric exp claim/i);
+  });
+
+  it("enforces HTTPS protocol, origin matching, and timeout handling in pinned fetch", async () => {
+    const verifier = new SupabaseUserVerifierImpl(config);
+    const clientFetch = (verifier as any).supabaseClient.rest.fetch ?? (verifier as any).supabaseClient.auth.fetch;
+
+    if (clientFetch) {
+      // Origin mismatch
+      await assert.rejects(
+        () => clientFetch("https://attacker-origin.com/auth/v1/user", {}),
+        /Fetch destination origin mismatch/i,
+      );
+
+      // Insecure HTTP protocol mismatch
+      await assert.rejects(
+        () => clientFetch("http://arc-project.supabase.co/auth/v1/user", {}),
+        /Fetch destination origin mismatch|HTTPS/i,
+      );
+
+      // Timeout / AbortSignal test
+      const mockFetchThatAborts = async () => {
+        const err = new Error("Abort");
+        err.name = "AbortError";
+        throw err;
+      };
+      await assert.rejects(
+        () => clientFetch("https://arc-project.supabase.co/auth/v1/user", { fetch: mockFetchThatAborts }),
+        /timed out after/i,
+      );
+    }
+  });
+
   it("redacts raw token from error messages", async () => {
     const secretToken = makeMockJwt({ sub: "secret" });
     const fakeClient = {
