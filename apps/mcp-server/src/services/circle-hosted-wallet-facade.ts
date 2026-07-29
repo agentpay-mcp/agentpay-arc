@@ -107,33 +107,40 @@ export class CircleHostedWalletFacade {
     this.repository = repository;
   }
 
-  private async validateAndResolvePrivateWalletId(authority: ArcHostedAuthority): Promise<string> {
+  private async validateAndResolvePrivateWalletId(authority: ArcHostedAuthority): Promise<{ circleWalletId: string; walletAddress: string }> {
     const validAuth = ArcHostedAuthoritySchema.parse(authority);
     if (validAuth.accountStatus !== "ACTIVE") {
-      throw new Error(`Hosted authority account status must be ACTIVE, received: ${validAuth.accountStatus}`);
+      throw new Error("Hosted authority account status must be ACTIVE");
     }
 
     const binding = await this.repository.getPrivateWalletBinding(validAuth.authUserId);
     if (!binding || binding.tenantId !== validAuth.tenantId) {
-      throw new Error(`Cross-tenant or missing private wallet binding for authUserId ${validAuth.authUserId}`);
+      throw new Error("Cross-tenant or missing private wallet binding");
+    }
+
+    if (binding.provisioningState !== "LIVE") {
+      throw new Error("Hosted wallet is not in LIVE provisioning state");
     }
 
     if (!binding.circleWalletId) {
-      throw new Error(`Hosted wallet not fully provisioned for authUserId ${validAuth.authUserId}`);
+      throw new Error("Hosted wallet not fully provisioned");
     }
 
     if (binding.walletAddress && binding.walletAddress.toLowerCase() !== validAuth.walletAddress.toLowerCase()) {
       throw new Error("Wallet address mismatch between authority and private binding");
     }
 
-    return binding.circleWalletId;
+    return { circleWalletId: binding.circleWalletId, walletAddress: validAuth.walletAddress };
   }
 
   async getWallet(authority: ArcHostedAuthority): Promise<CircleHostedWalletInfo> {
     const validAuth = ArcHostedAuthoritySchema.parse(authority);
     if (validAuth.accountStatus !== "ACTIVE") {
-      throw new Error(`Hosted authority account status must be ACTIVE, received: ${validAuth.accountStatus}`);
+      throw new Error("Hosted authority account status must be ACTIVE");
     }
+
+    await this.validateAndResolvePrivateWalletId(authority);
+
     return {
       walletAddress: validAuth.walletAddress,
       chain: ARC_HOSTED_CHAIN,
@@ -146,7 +153,7 @@ export class CircleHostedWalletFacade {
   async getBalances(
     authority: ArcHostedAuthority,
   ): Promise<Array<{ symbol: string; amount: string; address?: string }>> {
-    const circleWalletId = await this.validateAndResolvePrivateWalletId(authority);
+    const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
     return this.adapter.getWalletBalances(circleWalletId);
   }
 
@@ -154,7 +161,7 @@ export class CircleHostedWalletFacade {
     authority: ArcHostedAuthority,
     input: CircleHostedTransferInput,
   ): Promise<{ transactionId: string; state: string }> {
-    const circleWalletId = await this.validateAndResolvePrivateWalletId(authority);
+    const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
     const validParams = CircleHostedTransferInputSchema.parse(input);
 
     try {
@@ -174,7 +181,7 @@ export class CircleHostedWalletFacade {
     authority: ArcHostedAuthority,
     input: CircleHostedContractExecutionInput,
   ): Promise<{ transactionId: string; state: string }> {
-    const circleWalletId = await this.validateAndResolvePrivateWalletId(authority);
+    const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
     const validParams = CircleHostedContractExecutionInputSchema.parse(input);
 
     try {
@@ -194,17 +201,27 @@ export class CircleHostedWalletFacade {
     authority: ArcHostedAuthority,
     transactionId: string,
   ): Promise<{ transactionId: string; state: string; txHash?: string }> {
-    await this.validateAndResolvePrivateWalletId(authority);
+    const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
     if (!transactionId || typeof transactionId !== "string" || transactionId.trim().length === 0) {
       throw new Error("Invalid transactionId");
     }
-    return this.adapter.getTransactionStatus(transactionId);
+
+    const txStatus = await this.adapter.getTransactionStatus(transactionId);
+    if (txStatus.walletId && txStatus.walletId !== circleWalletId) {
+      throw new Error("Access denied: transaction does not belong to caller tenant wallet");
+    }
+
+    return {
+      transactionId: txStatus.transactionId,
+      state: txStatus.state,
+      txHash: txStatus.txHash,
+    };
   }
 
   createAppKitAdapter(authority: ArcHostedAuthority) {
     const validAuth = ArcHostedAuthoritySchema.parse(authority);
     if (validAuth.accountStatus !== "ACTIVE") {
-      throw new Error(`Hosted authority account status must be ACTIVE, received: ${validAuth.accountStatus}`);
+      throw new Error("Hosted authority account status must be ACTIVE");
     }
     return this.adapter.createAppKitAdapter(validAuth);
   }

@@ -45,7 +45,7 @@ export function validateCircleDeveloperWalletsConfig(
 }
 
 export class CircleReconciliationRequiredError extends Error {
-  constructor(message: string) {
+  constructor(message: string = "Operation state ambiguous; reconciliation required before retry") {
     super(message);
     this.name = "CircleReconciliationRequiredError";
   }
@@ -59,23 +59,12 @@ export function redactSecretsAndFormatError(
     return err;
   }
 
-  let message = err instanceof Error ? err.message : String(err);
-
-  const secretsToRedact: string[] = [];
-  if (config?.apiKey) secretsToRedact.push(config.apiKey);
-  if (config?.entitySecret) secretsToRedact.push(config.entitySecret);
-  if (process.env.ARC_CIRCLE_API_KEY) secretsToRedact.push(process.env.ARC_CIRCLE_API_KEY);
-  if (process.env.ARC_CIRCLE_ENTITY_SECRET) secretsToRedact.push(process.env.ARC_CIRCLE_ENTITY_SECRET);
-
-  for (const s of secretsToRedact) {
-    if (s && s.length > 0) {
-      message = message.split(s).join("[REDACTED]");
-    }
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  if (rawMessage.includes("ETIMEDOUT") || rawMessage.includes("timeout") || rawMessage.includes("ECONNRESET")) {
+    return new CircleReconciliationRequiredError("Circle API request timed out; state ambiguous");
   }
 
-  message = message.replace(/(?:Bearer|api_key|entity_secret|x-api-key)[\s=:]+([^\s"';,]+)/gi, "[REDACTED]");
-
-  return new Error(`Circle Developer SDK operation failed: ${message}`);
+  return new Error("Circle Developer SDK operation failed: UPSTREAM_ERROR");
 }
 
 export const SdkWalletSetSchema = z.object({
@@ -114,25 +103,40 @@ export const SdkTransactionSchema = z.object({
   id: z.string().trim().min(1),
   state: z.string().trim().min(1),
   txHash: z.string().optional().nullable(),
+  walletId: z.string().trim().min(1).optional().nullable(),
 });
 export type SdkTransaction = z.infer<typeof SdkTransactionSchema>;
 
 export interface CircleDeveloperSdkClient {
-  createWalletSet(input: { name: string; idempotencyKey?: string }): Promise<{ data?: { walletSet?: unknown } }>;
-  listWalletSets(input?: { name?: string }): Promise<{ data?: { walletSets?: unknown[] } }>;
+  createWalletSet(input: { name: string; idempotencyKey?: string }): Promise<{ data?: { walletSet?: any } }>;
+  listWalletSets(input?: { pageBefore?: string; pageAfter?: string; pageSize?: number }): Promise<{ data?: { walletSets?: any[] } }>;
   createWallets(input: {
     blockchains: string[];
     count: number;
     walletSetId: string;
     accountType: string;
-    refId?: string;
+    metadata?: Array<{ refId: string }>;
     idempotencyKey?: string;
-  }): Promise<{ data?: { wallets?: unknown[] } }>;
-  listWallets(input: { walletSetId: string; refId?: string }): Promise<{ data?: { wallets?: unknown[] } }>;
-  getWalletTokenBalance(input: { walletId: string }): Promise<{ data?: { tokenBalances?: unknown[] } }>;
-  createTransaction?(input: unknown): Promise<{ data?: { id?: string; state?: string; txHash?: string } }>;
-  getTransaction?(input: { id: string }): Promise<{ data?: { transaction?: unknown } }>;
-  createContractExecutionTransaction?(input: unknown): Promise<{ data?: { id?: string; state?: string; txHash?: string } }>;
+  }): Promise<{ data?: { wallets?: any[] } }>;
+  listWallets(input: { walletSetId?: string; pageBefore?: string; pageAfter?: string; pageSize?: number }): Promise<{ data?: { wallets?: any[] } }>;
+  getWalletTokenBalance(input: { id: string }): Promise<{ data?: { tokenBalances?: any[] } }>;
+  createTransaction?(input: {
+    walletId: string;
+    destinationAddress: string;
+    amounts: string[];
+    tokenId?: string;
+    fee: { type: "level"; config: { feeLevel: "LOW" | "MEDIUM" | "HIGH" } };
+    idempotencyKey?: string;
+  }): Promise<{ data?: { id?: string; state?: string; txHash?: string; walletId?: string } }>;
+  createContractExecutionTransaction?(input: {
+    walletId: string;
+    contractAddress: string;
+    abiFunctionSignature: string;
+    abiParameters: any[];
+    fee: { type: "level"; config: { feeLevel: "LOW" | "MEDIUM" | "HIGH" } };
+    idempotencyKey?: string;
+  }): Promise<{ data?: { id?: string; state?: string; txHash?: string; walletId?: string } }>;
+  getTransaction?(input: { id: string }): Promise<{ data?: { transaction?: any } }>;
 }
 
 export function deriveWalletSetName(tenantId: string): string {
@@ -164,11 +168,11 @@ export class CircleDeveloperWalletsAdapter {
     }
   }
 
-  async ensureWalletSetForTenant(tenantId: string): Promise<SdkWalletSet> {
+  async ensureWalletSetForTenant(tenantId: string, idempotencyKey: string): Promise<SdkWalletSet> {
     const walletSetName = deriveWalletSetName(tenantId);
     let listSucceeded = false;
     try {
-      const listRes = await this.sdkClient.listWalletSets({ name: walletSetName });
+      const listRes = await this.sdkClient.listWalletSets();
       listSucceeded = true;
       const rawSets = listRes.data?.walletSets ?? [];
       const matchingSets = rawSets
@@ -187,25 +191,23 @@ export class CircleDeveloperWalletsAdapter {
     }
 
     if (!listSucceeded) {
-      throw new CircleReconciliationRequiredError(
-        `Preflight listWalletSets failed for tenant ${tenantId}; state inconclusive. Halting mutation to prevent double creation.`,
-      );
+      throw new CircleReconciliationRequiredError("Preflight listWalletSets failed; state inconclusive");
     }
 
     try {
       const createRes = await this.sdkClient.createWalletSet({
         name: walletSetName,
-        idempotencyKey: deriveWalletSetName(tenantId),
+        idempotencyKey,
       });
       const rawSet = createRes.data?.walletSet;
       const parsedSet = SdkWalletSetSchema.safeParse(rawSet);
       if (!parsedSet.success || parsedSet.data.name !== walletSetName || parsedSet.data.custodyType !== ARC_HOSTED_CUSTODY_TYPE) {
-        throw new Error("Created wallet set does not match required name or DEVELOPER custody");
+        throw new Error("Created wallet set does not match required properties");
       }
       return parsedSet.data;
     } catch (err) {
       try {
-        const listRes = await this.sdkClient.listWalletSets({ name: walletSetName });
+        const listRes = await this.sdkClient.listWalletSets();
         const rawSets = listRes.data?.walletSets ?? [];
         const matchingSets = rawSets
           .map((s) => SdkWalletSetSchema.safeParse(s))
@@ -233,7 +235,7 @@ export class CircleDeveloperWalletsAdapter {
     let listSucceeded = false;
 
     try {
-      const listRes = await this.sdkClient.listWallets({ walletSetId, refId });
+      const listRes = await this.sdkClient.listWallets({ walletSetId });
       listSucceeded = true;
       const rawWallets = listRes.data?.wallets ?? [];
       const matchingWallets = rawWallets
@@ -257,9 +259,7 @@ export class CircleDeveloperWalletsAdapter {
     }
 
     if (!listSucceeded) {
-      throw new CircleReconciliationRequiredError(
-        `Preflight listWallets failed for walletSet ${walletSetId}; state inconclusive. Halting mutation to prevent double creation.`,
-      );
+      throw new CircleReconciliationRequiredError("Preflight listWallets failed; state inconclusive");
     }
 
     try {
@@ -268,7 +268,7 @@ export class CircleDeveloperWalletsAdapter {
         count: 1,
         walletSetId,
         accountType: ARC_HOSTED_ACCOUNT_TYPE,
-        refId,
+        metadata: [{ refId }],
         idempotencyKey,
       });
 
@@ -287,15 +287,13 @@ export class CircleDeveloperWalletsAdapter {
         .map((r) => r.data);
 
       if (validWallets.length === 0) {
-        throw new Error(
-          `Created wallet does not match required properties: expected ${ARC_HOSTED_CHAIN}/${ARC_HOSTED_ACCOUNT_TYPE}/${ARC_HOSTED_CUSTODY_TYPE}`,
-        );
+        throw new Error("Created wallet does not match required DEVELOPER SCA properties");
       }
 
       return validWallets[0];
     } catch (err) {
       try {
-        const listRes = await this.sdkClient.listWallets({ walletSetId, refId });
+        const listRes = await this.sdkClient.listWallets({ walletSetId });
         const rawWallets = listRes.data?.wallets ?? [];
         const matchingWallets = rawWallets
           .map((w) => SdkWalletSchema.safeParse(w))
@@ -335,11 +333,11 @@ export class CircleDeveloperWalletsAdapter {
           status: "LIVE",
         };
       }
-      throw new Error(`Unable to claim provisioning job for authUserId ${input.authUserId}`);
+      throw new Error("Unable to claim provisioning job");
     }
 
     try {
-      const walletSet = await this.ensureWalletSetForTenant(job.tenantId);
+      const walletSet = await this.ensureWalletSetForTenant(job.tenantId, job.provisioningIdempotencyKey);
       const scaWallet = await this.ensureScaWalletForTenant(
         job.tenantId,
         walletSet.id,
@@ -377,7 +375,7 @@ export class CircleDeveloperWalletsAdapter {
 
   async getWalletBalances(walletId: string): Promise<Array<{ symbol: string; amount: string; address?: string }>> {
     try {
-      const res = await this.sdkClient.getWalletTokenBalance({ walletId });
+      const res = await this.sdkClient.getWalletTokenBalance({ id: walletId });
       const parsed = SdkBalancesResponseSchema.parse(res.data ?? {});
       return parsed.tokenBalances.map((tb) => ({
         symbol: tb.token.symbol ?? "USDC",
@@ -396,20 +394,18 @@ export class CircleDeveloperWalletsAdapter {
     tokenId?: string;
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
+    if (!this.sdkClient.createTransaction) {
+      throw new Error("Circle SDK createTransaction method unavailable");
+    }
+
     try {
-      if (!this.sdkClient.createTransaction) {
-        return {
-          transactionId: `tx-${createHash("sha256").update(input.idempotencyKey).digest("hex").substring(0, 16)}`,
-          state: "PENDING",
-        };
-      }
       const res = await this.sdkClient.createTransaction({
         walletId: input.walletId,
         destinationAddress: input.destinationAddress,
         amounts: [input.amount],
         tokenId: input.tokenId,
+        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
-        feeLevel: "MEDIUM",
       });
       const parsed = SdkTransactionSchema.parse(res.data ?? {});
       return {
@@ -428,20 +424,18 @@ export class CircleDeveloperWalletsAdapter {
     args: any[];
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
+    if (!this.sdkClient.createContractExecutionTransaction) {
+      throw new Error("Circle SDK createContractExecutionTransaction method unavailable");
+    }
+
     try {
-      if (!this.sdkClient.createContractExecutionTransaction) {
-        return {
-          transactionId: `tx-${createHash("sha256").update(input.idempotencyKey).digest("hex").substring(0, 16)}`,
-          state: "PENDING",
-        };
-      }
       const res = await this.sdkClient.createContractExecutionTransaction({
         walletId: input.walletId,
         contractAddress: input.contractAddress,
         abiFunctionSignature: input.abiFunctionSignature,
         abiParameters: input.args,
+        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
-        feeLevel: "MEDIUM",
       });
       const parsed = SdkTransactionSchema.parse(res.data ?? {});
       return {
@@ -453,20 +447,20 @@ export class CircleDeveloperWalletsAdapter {
     }
   }
 
-  async getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string }> {
+  async getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string; walletId?: string }> {
+    if (!this.sdkClient.getTransaction) {
+      throw new Error("Circle SDK getTransaction method unavailable");
+    }
+
     try {
-      if (!this.sdkClient.getTransaction) {
-        return {
-          transactionId,
-          state: "COMPLETE",
-        };
-      }
       const res = await this.sdkClient.getTransaction({ id: transactionId });
-      const parsed = SdkTransactionSchema.parse(res.data?.transaction ?? {});
+      const rawTx = res.data?.transaction ?? res.data;
+      const parsed = SdkTransactionSchema.parse(rawTx);
       return {
         transactionId: parsed.id,
         state: parsed.state,
         txHash: parsed.txHash ?? undefined,
+        walletId: parsed.walletId ?? undefined,
       };
     } catch (err) {
       throw redactSecretsAndFormatError(err, this.config);
