@@ -274,34 +274,59 @@ export async function verifyArtifactManifest(
   await verifyArtifactDistFiles(distDir, manifest);
 }
 
-async function verifyArtifactDistFiles(
+async function scanArtifactDistFiles(
   distDir,
   manifest,
+  foundValues,
 ) {
   const placeholderPattern = /%VITE_ARC_[A-Z_]+%/;
-  const distFiles = await readdir(distDir, { withFileTypes: true });
-  for (const entry of distFiles) {
+
+  const entries = await readdir(distDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const filePath = resolve(distDir, entry.name);
+    if (entry.isDirectory()) {
+      await scanArtifactDistFiles(filePath, manifest, foundValues);
+      continue;
+    }
     if (!entry.isFile()) {
       continue;
     }
-    const filePath = resolve(distDir, entry.name);
+
+    if (entry.name === "arc-artifact-manifest.json") {
+      continue;
+    }
+
     const content = await readFile(filePath, "utf8");
 
     if (placeholderPattern.test(content)) {
       throw new Error(
-        `Artifact dist file ${entry.name} contains unresolved VITE_ARC_ placeholder`,
+        `Artifact dist file ${filePath.replace(distDir + "/", "")} contains unresolved VITE_ARC_ placeholder`,
       );
     }
 
     for (const key of MANIFEST_KEYS) {
       const value = manifest[key];
       if (typeof value === "string" && value.length > 0) {
-        if (!content.includes(value)) {
-          throw new Error(
-            `Artifact dist file ${entry.name} does not contain manifest value for ${key} (${JSON.stringify(value)})`,
-          );
+        if (content.includes(value)) {
+          foundValues[key] = true;
         }
       }
+    }
+  }
+}
+
+async function verifyArtifactDistFiles(
+  distDir,
+  manifest,
+) {
+  const foundValues = {};
+  await scanArtifactDistFiles(distDir, manifest, foundValues);
+
+  for (const key of MANIFEST_KEYS) {
+    if (!foundValues[key]) {
+      throw new Error(
+        `Manifest value for ${key} (${JSON.stringify(manifest[key])}) was not found in any artifact file`,
+      );
     }
   }
 }

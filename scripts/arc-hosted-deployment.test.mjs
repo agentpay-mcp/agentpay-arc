@@ -333,7 +333,7 @@ describe("Arc-only hosted deployment artifacts", () => {
   });
 
   it("generates and verifies the artifact manifest from the Vite build environment", async () => {
-    const { writeFile, mkdtemp } = await import("node:fs/promises");
+    const { writeFile, mkdtemp, mkdir } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const { tmpdir } = await import("node:os");
     const tmpDir = await mkdtemp(join(tmpdir(), "arc-artifact-test-"));
@@ -377,7 +377,10 @@ describe("Arc-only hosted deployment artifacts", () => {
       );
       await verifyArtifactManifest(process.env, manifestPath);
 
-      const extraManifestPath = join(tmpDir, "extra-keys.json");
+      const extraManifestDir = join(tmpDir, "extra-test");
+      await mkdir(extraManifestDir, { recursive: true });
+
+      const extraManifestPath = join(extraManifestDir, "extra-keys.json");
       await writeFile(
         extraManifestPath,
         JSON.stringify({ ...manifest, EXTRA_KEY: "should-be-rejected" }),
@@ -387,14 +390,14 @@ describe("Arc-only hosted deployment artifacts", () => {
         /unexpected key/,
       );
 
-      const emptyManifestPath = join(tmpDir, "empty.json");
+      const emptyManifestPath = join(extraManifestDir, "empty.json");
       await writeFile(emptyManifestPath, "{}");
       await assert.rejects(
         verifyArtifactManifest(process.env, emptyManifestPath),
         /exactly 4 keys/,
       );
 
-      const partialManifestPath = join(tmpDir, "partial.json");
+      const partialManifestPath = join(extraManifestDir, "partial.json");
       await writeFile(
         partialManifestPath,
         JSON.stringify({ VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site" }),
@@ -418,19 +421,48 @@ describe("Arc-only hosted deployment artifacts", () => {
       );
 
       const { rm } = await import("node:fs/promises");
-      await rm(distWithPlaceholder);
 
-      const distWithoutOrigin = join(tmpDir, "chunk.js");
+      const noValueDir = await mkdtemp(join(tmpdir(), "arc-no-value-"));
+      const noValueManifest = join(noValueDir, "arc-artifact-manifest.json");
+      await writeFile(noValueManifest, JSON.stringify(manifest));
       await writeFile(
-        distWithoutOrigin,
-        "const data = JSON.parse('{}');",
+        join(noValueDir, "empty.txt"),
+        "no manifest values here",
       );
       await assert.rejects(
-        verifyArtifactManifest(
-          process.env,
-          manifestPath,
-        ),
-        /does not contain manifest value/,
+        verifyArtifactManifest(process.env, noValueManifest),
+        /was not found in any artifact file/,
+      );
+      await rm(noValueDir, { recursive: true });
+
+      await rm(distWithPlaceholder);
+      await rm(distFilePath);
+      await rm(extraManifestDir, { recursive: true });
+
+      await mkdir(join(tmpDir, "assets"), { recursive: true });
+      await writeFile(
+        join(tmpDir, "assets", "bundle.js"),
+        `const apiOrigin = "${testEnv.VITE_ARC_API_ORIGIN}"; const supabaseUrl = "${testEnv.VITE_ARC_SUPABASE_URL}";`,
+      );
+      await writeFile(
+        join(tmpDir, "index.html"),
+        `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"></head><body><script>window.__PUBLISHABLE_KEY__ = "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}";</script></body></html>`,
+      );
+      await verifyArtifactManifest(process.env, manifestPath);
+
+      const attackerDistDir = join(tmpDir, "attacker-dist");
+      await mkdir(attackerDistDir, { recursive: true });
+      await writeFile(
+        join(attackerDistDir, "arc-artifact-manifest.json"),
+        JSON.stringify(manifest),
+      );
+      await writeFile(
+        join(attackerDistDir, "index.html"),
+        `<html><head><meta http-equiv="Content-Security-Policy" content="connect-src ${testEnv.VITE_ARC_SUPABASE_URL};" /></head><body><script>const api = "https://attacker.invalid";</script></body></html>`,
+      );
+      await assert.rejects(
+        verifyArtifactManifest(process.env, join(attackerDistDir, "arc-artifact-manifest.json")),
+        /was not found in any artifact file/,
       );
     } finally {
       process.env = originalEnv;
