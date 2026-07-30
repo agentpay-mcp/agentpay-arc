@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { SafeAccountInfo, SafeActivityItem } from "../api.ts";
+import { prepareWithdrawal } from "../withdrawal.ts";
 
 export interface DashboardProps {
   readonly account: SafeAccountInfo;
@@ -29,12 +30,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [withdrawDest, setWithdrawDest] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawConfirmed, setWithdrawConfirmed] = useState(false);
+  const [withdrawValidationError, setWithdrawValidationError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const isWalletReady = account.wallet.status === "LIVE" && Boolean(account.wallet.address);
   const isPaused = account.status === "PAUSED";
-  const balanceDisplay = account.balanceUsdc ?? "0.00";
-  const activityList = account.activity ?? [];
+  const hasBalance = account.balanceUsdc !== undefined;
+  const balanceDisplay = hasBalance ? account.balanceUsdc : "Balance projection unavailable";
+  const activityList = account.activity;
 
   const handleCopyAddress = () => {
     if (account.wallet.address) {
@@ -46,9 +49,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const handleWithdrawSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!withdrawDest.trim() || !withdrawAmount.trim() || !withdrawConfirmed) return;
-    const idempotencyKey = crypto.randomUUID();
-    onWithdraw(withdrawDest.trim(), withdrawAmount.trim(), idempotencyKey);
+    setWithdrawValidationError("");
+    if (isPaused) {
+      setWithdrawValidationError("Resume the account before requesting a withdrawal.");
+      return;
+    }
+
+    if (!withdrawConfirmed) {
+      setWithdrawValidationError("You must explicitly confirm the withdrawal.");
+      return;
+    }
+
+    try {
+      const prepared = prepareWithdrawal(withdrawDest, withdrawAmount);
+      void onWithdraw(prepared.destination, prepared.amount, prepared.idempotencyKey);
+    } catch (error: unknown) {
+      setWithdrawValidationError(
+        error instanceof Error
+          ? error.message
+          : "Unable to prepare a safe withdrawal. Please try again.",
+      );
+    }
   };
 
   return (
@@ -146,7 +167,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="card" id="budget-card">
           <h3 className="card-title">Available Agent Budget</h3>
           <div style={{ fontSize: "2.2rem", fontWeight: 700, color: "var(--primary-accent)", margin: "0.75rem 0" }} id="budget-amount">
-            {balanceDisplay} <span style={{ fontSize: "1rem", color: "var(--text-muted)" }}>USDC</span>
+            {balanceDisplay}
+            {hasBalance && <span style={{ fontSize: "1rem", color: "var(--text-muted)" }}> USDC</span>}
           </div>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             Funded balance represents your agent's total available payment capacity on Arc Testnet.
@@ -156,7 +178,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Activity & History */}
         <div className="card" id="activity-card">
           <h3 className="card-title">Recent Activity</h3>
-          {activityList.length === 0 ? (
+          {activityList === undefined ? (
+            <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginTop: "0.75rem" }} id="unloaded-activity-msg">
+              Activity projection unavailable.
+            </p>
+          ) : activityList.length === 0 ? (
             <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginTop: "0.75rem" }} id="empty-activity-msg">
               No recent transactions recorded for this account.
             </p>
@@ -182,6 +208,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1.25rem" }}>
             Withdraw USDC from your agent's hosted wallet to an external EVM address. Requires explicit confirmation.
           </p>
+
+          {withdrawValidationError && (
+            <div className="alert alert-danger" id="withdrawal-input-error-alert" role="alert">
+              <span>{withdrawValidationError}</span>
+            </div>
+          )}
 
           {withdrawalResult && (
             <div className={`alert ${withdrawalResult.reconciliationRequired ? "alert-info" : "alert-success"}`} id="withdrawal-result-alert">

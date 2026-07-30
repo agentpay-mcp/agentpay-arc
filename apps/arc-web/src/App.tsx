@@ -18,22 +18,54 @@ import { ConsentModal } from "./components/ConsentModal.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
 
+export function sanitizeErrorMessage(msg: string): string {
+  const safeMessages = new Set([
+    "Network error. Unable to reach Arc server.",
+    "Invalid response from Arc server.",
+    "The Arc request could not be completed.",
+    "The Arc server could not complete the request. Please try again.",
+  ]);
+  return safeMessages.has(msg)
+    ? msg
+    : "An unexpected error occurred. Please try again.";
+}
+
 export interface AppProps {
   readonly config?: PublicConfig;
   readonly supabaseClient?: SupabaseClient;
   readonly customFetch?: typeof fetch;
+  readonly initialSession?: Session | null;
+  readonly initialAccount?: SafeAccountInfo | null;
+  readonly initialIsUnclaimed?: boolean;
+  readonly initialAccountFetchError?: string;
+  readonly initialIsInitializing?: boolean;
+  readonly initialIsOAuthPath?: boolean;
+  readonly initialAuthorizationId?: string;
+  readonly initialIsFetchingAccount?: boolean;
 }
 
-export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch }) => {
+export const App: React.FC<AppProps> = ({
+  config,
+  supabaseClient,
+  customFetch,
+  initialSession = null,
+  initialAccount = null,
+  initialIsUnclaimed = false,
+  initialAccountFetchError = "",
+  initialIsInitializing = true,
+  initialIsOAuthPath,
+  initialAuthorizationId,
+  initialIsFetchingAccount = false,
+}) => {
   const activeConfig = config ?? getPublicConfig();
   const supabase = supabaseClient ?? getSupabaseClient(activeConfig, customFetch);
 
-  const [session, setSession] = useState<Session | null>(null);
-  const [account, setAccount] = useState<SafeAccountInfo | null>(null);
-  const [isUnclaimed, setIsUnclaimed] = useState(false);
-  const [accountFetchError, setAccountFetchError] = useState("");
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [isFetchingAccount, setIsFetchingAccount] = useState(false);
+  const [session, setSession] = useState<Session | null>(initialSession);
+  const [account, setAccount] = useState<SafeAccountInfo | null>(initialAccount);
+  const [isUnclaimed, setIsUnclaimed] = useState(initialIsUnclaimed);
+  const [accountFetchError, setAccountFetchError] = useState(initialAccountFetchError);
+  const [isInitializing, setIsInitializing] = useState(initialIsInitializing);
+  const [isFetchingAccount, setIsFetchingAccount] = useState(initialIsFetchingAccount);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [withdrawalResult, setWithdrawalResult] = useState<{
@@ -43,8 +75,10 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
   } | null>(null);
 
   const searchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-  const isOAuthPath = typeof window !== "undefined" && (window.location.pathname === "/oauth/consent" || searchParams.has("authorization_id"));
-  const authorizationId = searchParams.get("authorization_id") || undefined;
+  const isOAuthPath = initialIsOAuthPath ?? (
+    typeof window !== "undefined" && window.location.pathname === "/oauth/consent"
+  );
+  const authorizationId = initialAuthorizationId ?? (searchParams.get("authorization_id") || undefined);
 
   useEffect(() => {
     async function initAuth() {
@@ -101,7 +135,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       } else {
         setIsUnclaimed(false);
         const msg = err instanceof Error ? err.message : "Failed to load account information.";
-        setAccountFetchError(msg);
+        setAccountFetchError(sanitizeErrorMessage(msg));
       }
     } finally {
       setIsFetchingAccount(false);
@@ -118,7 +152,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
     if (error) {
       setIsSubmitting(false);
-      throw new Error(error.message);
+      throw new Error("Sign in failed. Check your email and password.");
     }
     setSession(data.session);
     setIsSubmitting(false);
@@ -130,7 +164,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
     const { data, error } = await supabase.auth.signUp({ email, password: pass });
     if (error) {
       setIsSubmitting(false);
-      throw new Error(error.message);
+      throw new Error("Sign up failed. Check the entered details and try again.");
     }
     if (data.session) {
       setSession(data.session);
@@ -138,7 +172,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password: pass });
       if (signInErr) {
         setIsSubmitting(false);
-        throw new Error(signInErr.message);
+        throw new Error("Account created, but sign in failed. Please sign in again.");
       }
       setSession(signInData.session);
     }
@@ -163,7 +197,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       setIsUnclaimed(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to claim hosted account.";
-      setErrorMessage(msg);
+      setErrorMessage(sanitizeErrorMessage(msg));
     } finally {
       setIsSubmitting(false);
     }
@@ -188,7 +222,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to provision wallet.";
-      setErrorMessage(msg);
+      setErrorMessage(sanitizeErrorMessage(msg));
     } finally {
       setIsSubmitting(false);
     }
@@ -203,7 +237,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       setAccount(res.account);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to pause account.";
-      setErrorMessage(msg);
+      setErrorMessage(sanitizeErrorMessage(msg));
     } finally {
       setIsSubmitting(false);
     }
@@ -218,7 +252,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       setAccount(res.account);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to resume account.";
-      setErrorMessage(msg);
+      setErrorMessage(sanitizeErrorMessage(msg));
     } finally {
       setIsSubmitting(false);
     }
@@ -241,11 +275,15 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
         },
         customFetch,
       );
-      setWithdrawalResult(res.withdrawal);
+      setWithdrawalResult({
+        status: res.withdrawal.status,
+        transactionHash: res.withdrawal.transactionHash,
+        reconciliationRequired: res.withdrawal.reconciliationRequired,
+      });
       void loadAccountData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to execute withdrawal.";
-      setErrorMessage(msg);
+      setErrorMessage(sanitizeErrorMessage(msg));
     } finally {
       setIsSubmitting(false);
     }

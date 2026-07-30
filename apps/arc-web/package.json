@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "test": "tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
+    "test:coverage": "node scripts/verify-coverage.mjs",
     "test:e2e": "playwright test --config playwright.config.ts",
     "typecheck": "tsc -p ../../tsconfig.json --noEmit"
   },

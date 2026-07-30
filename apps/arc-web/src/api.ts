@@ -1,48 +1,52 @@
-import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc";
+import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc/arc-hosted-auth";
+import { z } from "zod";
 
-export interface SafeWalletInfo {
-  readonly status: "PENDING" | "PROVISIONING" | "LIVE" | "FAILED" | "CLOSED";
-  readonly address?: string;
-}
+const EvmAddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
+const SafeWalletInfoSchema = z.object({
+  status: z.enum(["PENDING", "PROVISIONING", "LIVE", "FAILED", "CLOSED"]),
+  address: EvmAddressSchema.optional(),
+});
+const SafeActivityItemSchema = z.object({
+  id: z.string().min(1).max(128),
+  type: z.string().min(1).max(128),
+  amount: z.string().min(1).max(128).optional(),
+  status: z.string().min(1).max(64),
+  timestamp: z.string().min(1).max(64),
+});
+const SafeAccountInfoSchema = z.object({
+  status: z.enum(["ACTIVE", "PAUSED", "CLOSED"]),
+  consentVersion: z.literal(ARC_AUTONOMY_CONSENT_VERSION),
+  wallet: SafeWalletInfoSchema,
+  balanceUsdc: z.string().min(1).max(128).optional(),
+  activity: z.array(SafeActivityItemSchema).max(100).optional(),
+});
+const HostedAccountApiResponseSchema = z.object({
+  success: z.literal(true),
+  account: SafeAccountInfoSchema,
+});
+const ProvisionWalletApiResponseSchema = z.object({
+  success: z.literal(true),
+  wallet: z.object({
+    address: EvmAddressSchema,
+    status: z.literal("LIVE"),
+  }),
+});
+const WithdrawalApiResponseSchema = z.object({
+  success: z.literal(true),
+  withdrawal: z.object({
+    status: z.string().min(1).max(64),
+    transactionId: z.string().min(1).max(128).optional(),
+    transactionHash: z.string().min(1).max(128).optional(),
+    reconciliationRequired: z.boolean(),
+  }),
+});
 
-export interface SafeActivityItem {
-  readonly id: string;
-  readonly type: string;
-  readonly amount?: string;
-  readonly status: string;
-  readonly timestamp: string;
-}
-
-export interface SafeAccountInfo {
-  readonly status: "ACTIVE" | "PAUSED" | "CLOSED";
-  readonly consentVersion: typeof ARC_AUTONOMY_CONSENT_VERSION;
-  readonly wallet: SafeWalletInfo;
-  readonly balanceUsdc?: string;
-  readonly activity?: readonly SafeActivityItem[];
-}
-
-export interface HostedAccountApiResponse {
-  readonly success: boolean;
-  readonly account: SafeAccountInfo;
-}
-
-export interface ProvisionWalletApiResponse {
-  readonly success: boolean;
-  readonly wallet: {
-    readonly address: string;
-    readonly status: "LIVE";
-  };
-}
-
-export interface WithdrawalApiResponse {
-  readonly success: boolean;
-  readonly withdrawal: {
-    readonly status: string;
-    readonly transactionId?: string;
-    readonly transactionHash?: string;
-    readonly reconciliationRequired: boolean;
-  };
-}
+export type SafeWalletInfo = z.infer<typeof SafeWalletInfoSchema>;
+export type SafeActivityItem = z.infer<typeof SafeActivityItemSchema>;
+export type SafeAccountInfo = z.infer<typeof SafeAccountInfoSchema>;
+export type HostedAccountApiResponse = z.infer<typeof HostedAccountApiResponseSchema>;
+export type ProvisionWalletApiResponse = z.infer<typeof ProvisionWalletApiResponseSchema>;
+export type WithdrawalApiResponse = z.infer<typeof WithdrawalApiResponseSchema>;
 
 export class ArcApiError extends Error {
   readonly status: number;
@@ -55,35 +59,44 @@ export class ArcApiError extends Error {
 async function requestJson<T>(
   url: string,
   options: RequestInit & { accessToken: string; customFetch?: typeof fetch },
+  responseSchema: z.ZodType<T>,
 ): Promise<T> {
-  const fetchImpl = options.customFetch || fetch;
-  const headers = new Headers(options.headers);
-  headers.set("Authorization", `Bearer ${options.accessToken}`);
+  const { accessToken, customFetch, ...requestOptions } = options;
+  const fetchImpl = customFetch || fetch;
+  const headers = new Headers(requestOptions.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
   headers.set("Content-Type", "application/json");
 
   let res: Response;
   try {
     res = await fetchImpl(url, {
-      ...options,
+      ...requestOptions,
       headers,
     });
   } catch (err: unknown) {
     throw new ArcApiError(503, "Network error. Unable to reach Arc server.");
   }
 
-  let body: Record<string, unknown>;
+  let body: unknown;
   try {
-    body = (await res.json()) as Record<string, unknown>;
+    body = await res.json();
   } catch {
     throw new ArcApiError(res.status, "Invalid response from Arc server.");
   }
 
-  if (!res.ok || body.success === false) {
-    const errorMsg = typeof body.error === "string" ? body.error : `Request failed with status ${res.status}`;
-    throw new ArcApiError(res.status, errorMsg);
+  const responseEnvelope = z.object({ success: z.boolean().optional() }).safeParse(body);
+  if (!res.ok || (responseEnvelope.success && responseEnvelope.data.success === false)) {
+    const message = res.status >= 500
+      ? "The Arc server could not complete the request. Please try again."
+      : "The Arc request could not be completed.";
+    throw new ArcApiError(res.status, message);
   }
 
-  return body as unknown as T;
+  const parsed = responseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ArcApiError(res.status, "Invalid response from Arc server.");
+  }
+  return parsed.data;
 }
 
 export async function fetchHostedAccount(
@@ -95,7 +108,7 @@ export async function fetchHostedAccount(
     method: "GET",
     accessToken,
     customFetch,
-  });
+  }, HostedAccountApiResponseSchema);
 }
 
 export async function claimHostedAccount(
@@ -108,7 +121,7 @@ export async function claimHostedAccount(
     body: JSON.stringify({ consentVersion: ARC_AUTONOMY_CONSENT_VERSION }),
     accessToken,
     customFetch,
-  });
+  }, HostedAccountApiResponseSchema);
 }
 
 export async function provisionWallet(
@@ -121,7 +134,7 @@ export async function provisionWallet(
     body: JSON.stringify({}),
     accessToken,
     customFetch,
-  });
+  }, ProvisionWalletApiResponseSchema);
 }
 
 export async function pauseHostedAccount(
@@ -134,7 +147,7 @@ export async function pauseHostedAccount(
     body: JSON.stringify({}),
     accessToken,
     customFetch,
-  });
+  }, HostedAccountApiResponseSchema);
 }
 
 export async function resumeHostedAccount(
@@ -147,7 +160,7 @@ export async function resumeHostedAccount(
     body: JSON.stringify({}),
     accessToken,
     customFetch,
-  });
+  }, HostedAccountApiResponseSchema);
 }
 
 export async function withdrawHostedAccount(
@@ -171,5 +184,5 @@ export async function withdrawHostedAccount(
     }),
     accessToken,
     customFetch,
-  });
+  }, WithdrawalApiResponseSchema);
 }

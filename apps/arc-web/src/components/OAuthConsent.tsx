@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { uuidV4Schema } from "@agentpay-ai/shared-arc";
+import { uuidV4Schema } from "@agentpay-ai/shared-arc/batch-payout";
 import {
   fetchOAuthAuthorizationDetails,
   approveOAuthAuthorization,
@@ -10,15 +10,21 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export interface OAuthConsentProps {
   readonly supabaseClient: SupabaseClient;
   readonly authorizationId?: string;
+  readonly initialDetails?: { clientName: string; redirectUri: string; scopes: readonly string[] } | null;
+  readonly initialErrorMsg?: string;
+  readonly initialLoading?: boolean;
 }
 
 export const OAuthConsent: React.FC<OAuthConsentProps> = ({
   supabaseClient,
   authorizationId,
+  initialDetails = null,
+  initialErrorMsg = "",
+  initialLoading = true,
 }) => {
-  const [details, setDetails] = useState<{ clientName: string; redirectUri: string; scopes: readonly string[] } | null>(null);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
+  const [details, setDetails] = useState<{ clientName: string; redirectUri: string; scopes: readonly string[] } | null>(initialDetails);
+  const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
+  const [isLoading, setIsLoading] = useState(initialLoading);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -41,7 +47,15 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
 
       try {
         const info = await fetchOAuthAuthorizationDetails(supabaseClient, authorizationId);
-        setDetails(info);
+        if (info.kind === "redirect") {
+          window.location.href = info.redirectUrl;
+          return;
+        }
+        setDetails({
+          clientName: info.clientName,
+          redirectUri: info.redirectUri,
+          scopes: info.scopes,
+        });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to load OAuth authorization request.";
         setErrorMsg(msg);

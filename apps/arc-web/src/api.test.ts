@@ -9,7 +9,7 @@ import {
   withdrawHostedAccount,
   ArcApiError,
 } from "./api.ts";
-import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc";
+import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc/arc-hosted-auth";
 
 const API_ORIGIN = "https://mcp.arc.agentpay.site";
 const MOCK_ACCESS_TOKEN = "mock_access_token_value_for_testing";
@@ -18,6 +18,8 @@ test("fetchHostedAccount retrieves safe account info", async () => {
   const mockFetch = (async (url: string | URL | Request, init?: RequestInit) => {
     assert.equal(url.toString(), `${API_ORIGIN}/api/account`);
     assert.equal((init?.headers as Headers).get("Authorization"), `Bearer ${MOCK_ACCESS_TOKEN}`);
+    assert.equal("accessToken" in (init ?? {}), false);
+    assert.equal("customFetch" in (init ?? {}), false);
     return new Response(
       JSON.stringify({
         success: true,
@@ -173,8 +175,77 @@ test("handles error response without explicit error message", async () => {
     (err: unknown) => {
       assert(err instanceof ArcApiError);
       assert.equal(err.status, 400);
-      assert.equal(err.message, "Request failed with status 400");
+      assert.equal(err.message, "The Arc request could not be completed.");
       return true;
     },
   );
+});
+
+test("never exposes an upstream error message to the browser", async () => {
+  const rawError = 'relation "private.circle_wallets" does not exist; service_role=secret';
+  const mockFetch = (async () =>
+    new Response(JSON.stringify({ success: false, error: rawError }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    })) as typeof fetch;
+
+  await assert.rejects(
+    () => fetchHostedAccount(API_ORIGIN, MOCK_ACCESS_TOKEN, mockFetch),
+    (err: unknown) => {
+      assert(err instanceof ArcApiError);
+      assert.equal(err.status, 500);
+      assert.equal(err.message, "The Arc server could not complete the request. Please try again.");
+      assert.equal(err.message.includes(rawError), false);
+      return true;
+    },
+  );
+});
+
+test("rejects malformed success payloads instead of trusting TypeScript casts", async () => {
+  const mockFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        success: true,
+        account: {
+          status: "ACTIVE",
+          consentVersion: ARC_AUTONOMY_CONSENT_VERSION,
+          wallet: { status: "LIVE", address: "not-an-evm-address" },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+
+  await assert.rejects(
+    () => fetchHostedAccount(API_ORIGIN, MOCK_ACCESS_TOKEN, mockFetch),
+    (err: unknown) => {
+      assert(err instanceof ArcApiError);
+      assert.equal(err.status, 200);
+      assert.equal(err.message, "Invalid response from Arc server.");
+      return true;
+    },
+  );
+});
+
+test("strips unexpected success fields from safe browser projections", async () => {
+  const mockFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        success: true,
+        account: {
+          status: "ACTIVE",
+          consentVersion: ARC_AUTONOMY_CONSENT_VERSION,
+          wallet: {
+            status: "LIVE",
+            address: "0x1111111111111111111111111111111111111111",
+            walletId: "must-not-reach-browser-state",
+          },
+          tenantId: "must-not-reach-browser-state",
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+
+  const response = await fetchHostedAccount(API_ORIGIN, MOCK_ACCESS_TOKEN, mockFetch);
+  assert.equal("tenantId" in response.account, false);
+  assert.equal("walletId" in response.account.wallet, false);
 });

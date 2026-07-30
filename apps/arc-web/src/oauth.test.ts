@@ -16,15 +16,25 @@ const TEST_CONFIG = {
   supabasePublishableKey: "public-key-123",
 };
 
-test("validateAuthorizationId checks UUID v4 format", () => {
-  assert.equal(validateAuthorizationId(VALID_AUTH_ID), VALID_AUTH_ID);
+type OAuthClient = Parameters<typeof fetchOAuthAuthorizationDetails>[0];
+
+function fakeOAuthClient(oauth: Record<string, unknown>): OAuthClient {
+  return { auth: { oauth } } as unknown as OAuthClient;
+}
+
+test("validateAuthorizationId accepts only a bounded UUID v4", () => {
+  assert.equal(validateAuthorizationId(`  ${VALID_AUTH_ID}  `), VALID_AUTH_ID);
   assert.throws(
     () => validateAuthorizationId("not-a-uuid"),
-    (err: Error) => err.message.includes("Must be a valid UUID v4"),
+    (err: Error) => err.message === "Invalid authorization request.",
+  );
+  assert.throws(
+    () => validateAuthorizationId(`${VALID_AUTH_ID}${"x".repeat(200)}`),
+    (err: Error) => err.message === "Invalid authorization request.",
   );
 });
 
-test("getSupabaseClient initializes client singleton and accepts customFetch", () => {
+test("getSupabaseClient initializes a singleton and permits an isolated test transport", () => {
   const client1 = getSupabaseClient(TEST_CONFIG);
   const client2 = getSupabaseClient(TEST_CONFIG);
   assert.equal(client1, client2);
@@ -33,235 +43,181 @@ test("getSupabaseClient initializes client singleton and accepts customFetch", (
   assert.notEqual(client1, customClient);
 });
 
-test("fetchOAuthAuthorizationDetails parses client, redirect_url, and space-separated scope or array scopes", async () => {
-  const fakeClient = {
-    auth: {
-      oauth: {
-        async getAuthorizationDetails(id: string) {
-          assert.equal(id, VALID_AUTH_ID);
-          return {
-            data: {
-              client: { name: "Agentic Tool" },
-              redirect_url: "https://client.example.com/oauth/callback",
-              scope: "openid profile email",
-            },
-            error: null,
-          };
+test("fetchOAuthAuthorizationDetails consumes the exact Supabase consent shape", async () => {
+  const client = fakeOAuthClient({
+    async getAuthorizationDetails(id: string) {
+      assert.equal(id, VALID_AUTH_ID);
+      return {
+        data: {
+          authorization_id: VALID_AUTH_ID,
+          redirect_uri: "https://client.example.com/oauth/callback",
+          client: {
+            id: "22222222-2222-4222-8222-222222222222",
+            name: "Agentic Tool",
+            uri: "https://client.example.com",
+            logo_uri: "https://client.example.com/logo.png",
+          },
+          user: {
+            id: "33333333-3333-4333-8333-333333333333",
+            email: "agent@example.com",
+          },
+          scope: "openid profile email",
         },
-      },
+        error: null,
+      };
     },
-  } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
+  });
 
-  const details = await fetchOAuthAuthorizationDetails(fakeClient, VALID_AUTH_ID);
-  assert.equal(details.clientName, "Agentic Tool");
-  assert.equal(details.redirectUri, "https://client.example.com/oauth/callback");
-  assert.deepEqual(details.scopes, ["openid", "profile", "email"]);
-
-  const arrayScopesClient = {
-    auth: {
-      oauth: {
-        async getAuthorizationDetails() {
-          return {
-            data: {
-              client_name: "Fallback App",
-              redirect_uri: "https://client.example.com/cb",
-              scopes: ["openid", "offline_access"],
-            },
-            error: null,
-          };
-        },
-      },
-    },
-  } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
-
-  const details2 = await fetchOAuthAuthorizationDetails(arrayScopesClient, VALID_AUTH_ID);
-  assert.equal(details2.clientName, "Fallback App");
-  assert.equal(details2.redirectUri, "https://client.example.com/cb");
-  assert.deepEqual(details2.scopes, ["openid", "offline_access"]);
-
-  const emptyDataClient = {
-    auth: {
-      oauth: {
-        async getAuthorizationDetails() {
-          return {
-            data: {},
-            error: null,
-          };
-        },
-      },
-    },
-  } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
-
-  const details3 = await fetchOAuthAuthorizationDetails(emptyDataClient, VALID_AUTH_ID);
-  assert.equal(details3.clientName, "Unknown Application");
-  assert.equal(details3.redirectUri, "");
-  assert.deepEqual(details3.scopes, ["openid"]);
+  assert.deepEqual(await fetchOAuthAuthorizationDetails(client, VALID_AUTH_ID), {
+    kind: "consent",
+    clientName: "Agentic Tool",
+    redirectUri: "https://client.example.com/oauth/callback",
+    scopes: ["openid", "profile", "email"],
+  });
 });
 
-test("fetchOAuthAuthorizationDetails fails closed on missing oauth capabilities, thrown error, or API error", async () => {
-  const noOauthClient = { auth: {} } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
-  await assert.rejects(
-    () => fetchOAuthAuthorizationDetails(noOauthClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Supabase OAuth 2.1 server capabilities are not initialized"),
-  );
-
-  const missingMethodClient = { auth: { oauth: {} } } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
-  await assert.rejects(
-    () => fetchOAuthAuthorizationDetails(missingMethodClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("getAuthorizationDetails is unavailable"),
-  );
-
-  const throwClient = {
-    auth: {
-      oauth: {
-        async getAuthorizationDetails() {
-          throw new Error("Network crash");
-        },
-      },
+test("fetchOAuthAuthorizationDetails follows an exact Supabase already-consented redirect", async () => {
+  const client = fakeOAuthClient({
+    async getAuthorizationDetails() {
+      return {
+        data: { redirect_url: "https://client.example.com/oauth/callback?code=approved&state=abc" },
+        error: null,
+      };
     },
-  } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
-  await assert.rejects(
-    () => fetchOAuthAuthorizationDetails(throwClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Network crash"),
-  );
+  });
 
-  const errorClient = {
-    auth: {
-      oauth: {
-        async getAuthorizationDetails() {
-          return { data: null, error: { message: "Request expired" } };
-        },
-      },
-    },
-  } as unknown as Parameters<typeof fetchOAuthAuthorizationDetails>[0];
-
-  await assert.rejects(
-    () => fetchOAuthAuthorizationDetails(errorClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Request expired"),
-  );
+  assert.deepEqual(await fetchOAuthAuthorizationDetails(client, VALID_AUTH_ID), {
+    kind: "redirect",
+    redirectUrl: "https://client.example.com/oauth/callback?code=approved&state=abc",
+  });
 });
 
-test("approveOAuthAuthorization returns redirect_url and fails closed on error or missing url", async () => {
-  const fakeClient = {
-    auth: {
-      oauth: {
-        async approveAuthorization(id: string, opts?: { skipBrowserRedirect?: boolean }) {
-          assert.equal(id, VALID_AUTH_ID);
-          assert.equal(opts?.skipBrowserRedirect, true);
-          return {
-            data: {
-              redirect_url: "https://client.example.com/oauth/callback?code=approved_123",
-            },
-            error: null,
-          };
-        },
+test("OAuth detail failures are generic and reject legacy or unsafe response shapes", async () => {
+  const rawError = "authorization row leaked for tenant secret";
+  const failingClients = [
+    fakeOAuthClient({
+      async getAuthorizationDetails() {
+        throw new Error(rawError);
       },
-    },
-  } as unknown as Parameters<typeof approveOAuthAuthorization>[0];
-
-  const redirectUrl = await approveOAuthAuthorization(fakeClient, VALID_AUTH_ID);
-  assert.equal(redirectUrl, "https://client.example.com/oauth/callback?code=approved_123");
-
-  const urlFallbackClient = {
-    auth: {
-      oauth: {
-        async approveAuthorization() {
-          return { data: { url: "https://client.example.com/oauth/callback?code=url_fallback" }, error: null };
-        },
+    }),
+    fakeOAuthClient({
+      async getAuthorizationDetails() {
+        return { data: null, error: { message: rawError } };
       },
-    },
-  } as unknown as Parameters<typeof approveOAuthAuthorization>[0];
-  const redirectUrl2 = await approveOAuthAuthorization(urlFallbackClient, VALID_AUTH_ID);
-  assert.equal(redirectUrl2, "https://client.example.com/oauth/callback?code=url_fallback");
-
-  const missingMethodClient = { auth: { oauth: {} } } as unknown as Parameters<typeof approveOAuthAuthorization>[0];
-  await assert.rejects(
-    () => approveOAuthAuthorization(missingMethodClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("approveAuthorization is unavailable"),
-  );
-
-  const throwClient = {
-    auth: {
-      oauth: {
-        async approveAuthorization() {
-          throw new Error("Network timeout");
-        },
+    }),
+    fakeOAuthClient({
+      async getAuthorizationDetails() {
+        return {
+          data: {
+            client: { name: "Legacy Shape" },
+            redirect_uri: "https://client.example.com/callback",
+            scopes: ["openid"],
+          },
+          error: null,
+        };
       },
-    },
-  } as unknown as Parameters<typeof approveOAuthAuthorization>[0];
-  await assert.rejects(
-    () => approveOAuthAuthorization(throwClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Network timeout"),
-  );
-
-  const failClient = {
-    auth: {
-      oauth: {
-        async approveAuthorization() {
-          return { data: null, error: { message: "Approval rejected" } };
-        },
+    }),
+    fakeOAuthClient({
+      async getAuthorizationDetails() {
+        return { data: { redirect_url: "javascript:alert(document.domain)" }, error: null };
       },
-    },
-  } as unknown as Parameters<typeof approveOAuthAuthorization>[0];
+    }),
+    fakeOAuthClient({
+      async getAuthorizationDetails() {
+        return {
+          data: { redirect_url: "https://user:password@client.example.com/oauth/callback" },
+          error: null,
+        };
+      },
+    }),
+    fakeOAuthClient({
+      async getAuthorizationDetails() {
+        return {
+          data: { redirect_url: "http://user:password@localhost:7777/oauth/callback" },
+          error: null,
+        };
+      },
+    }),
+  ];
 
-  await assert.rejects(
-    () => approveOAuthAuthorization(failClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Approval rejected"),
-  );
+  for (const client of failingClients) {
+    await assert.rejects(
+      () => fetchOAuthAuthorizationDetails(client, VALID_AUTH_ID),
+      (err: Error) => {
+        assert.equal(err.message, "Unable to load this authorization request. It may be invalid or expired.");
+        assert.equal(err.message.includes(rawError), false);
+        return true;
+      },
+    );
+  }
 });
 
-test("denyOAuthAuthorization returns redirect_url and fails closed on error or missing url", async () => {
-  const fakeClient = {
-    auth: {
-      oauth: {
-        async denyAuthorization(id: string) {
-          assert.equal(id, VALID_AUTH_ID);
-          return {
-            data: {
-              redirect_url: "https://client.example.com/oauth/callback?error=access_denied",
-            },
-            error: null,
-          };
-        },
-      },
+test("approve and deny use exact SDK arguments and only Supabase redirect_url", async () => {
+  const calls: string[] = [];
+  const client = fakeOAuthClient({
+    async approveAuthorization(id: string, options: { skipBrowserRedirect?: boolean }) {
+      calls.push(`approve:${id}:${String(options.skipBrowserRedirect)}`);
+      return {
+        data: { redirect_url: "https://client.example.com/oauth/callback?code=approved" },
+        error: null,
+      };
     },
-  } as unknown as Parameters<typeof denyOAuthAuthorization>[0];
-
-  const redirectUrl = await denyOAuthAuthorization(fakeClient, VALID_AUTH_ID);
-  assert.equal(redirectUrl, "https://client.example.com/oauth/callback?error=access_denied");
-
-  const missingMethodClient = { auth: { oauth: {} } } as unknown as Parameters<typeof denyOAuthAuthorization>[0];
-  await assert.rejects(
-    () => denyOAuthAuthorization(missingMethodClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("denyAuthorization is unavailable"),
-  );
-
-  const throwClient = {
-    auth: {
-      oauth: {
-        async denyAuthorization() {
-          throw new Error("Connection reset");
-        },
-      },
+    async denyAuthorization(id: string, options: { skipBrowserRedirect?: boolean }) {
+      calls.push(`deny:${id}:${String(options.skipBrowserRedirect)}`);
+      return {
+        data: { redirect_url: "https://client.example.com/oauth/callback?error=access_denied" },
+        error: null,
+      };
     },
-  } as unknown as Parameters<typeof denyOAuthAuthorization>[0];
-  await assert.rejects(
-    () => denyOAuthAuthorization(throwClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Connection reset"),
-  );
+  });
 
-  const failClient = {
-    auth: {
-      oauth: {
-        async denyAuthorization() {
-          return { data: null, error: { message: "Denial error" } };
-        },
+  assert.equal(
+    await approveOAuthAuthorization(client, VALID_AUTH_ID),
+    "https://client.example.com/oauth/callback?code=approved",
+  );
+  assert.equal(
+    await denyOAuthAuthorization(client, VALID_AUTH_ID),
+    "https://client.example.com/oauth/callback?error=access_denied",
+  );
+  assert.deepEqual(calls, [
+    `approve:${VALID_AUTH_ID}:true`,
+    `deny:${VALID_AUTH_ID}:true`,
+  ]);
+});
+
+test("approve and deny never expose upstream failures or accept fallback URL fields", async () => {
+  const rawError = "database token and code verifier leaked";
+  const operations = [
+    () => approveOAuthAuthorization(fakeOAuthClient({
+      async approveAuthorization() {
+        throw new Error(rawError);
       },
-    },
-  } as unknown as Parameters<typeof denyOAuthAuthorization>[0];
+    }), VALID_AUTH_ID),
+    () => approveOAuthAuthorization(fakeOAuthClient({
+      async approveAuthorization() {
+        return { data: { url: "https://client.example.com/legacy" }, error: null };
+      },
+    }), VALID_AUTH_ID),
+    () => denyOAuthAuthorization(fakeOAuthClient({
+      async denyAuthorization() {
+        return { data: null, error: { message: rawError } };
+      },
+    }), VALID_AUTH_ID),
+    () => denyOAuthAuthorization(fakeOAuthClient({
+      async denyAuthorization() {
+        return { data: { redirect_url: "data:text/html,unsafe" }, error: null };
+      },
+    }), VALID_AUTH_ID),
+  ];
 
-  await assert.rejects(
-    () => denyOAuthAuthorization(failClient, VALID_AUTH_ID),
-    (err: Error) => err.message.includes("Denial error"),
-  );
+  for (const operation of operations) {
+    await assert.rejects(
+      operation,
+      (err: Error) => {
+        assert.match(err.message, /^Unable to (approve|deny) this authorization request\. Please try again\.$/);
+        assert.equal(err.message.includes(rawError), false);
+        return true;
+      },
+    );
+  }
 });

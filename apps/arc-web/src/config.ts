@@ -1,9 +1,28 @@
 import { z } from "zod";
 
-const SafeHttpsUrlSchema = z.string().trim().url().refine((val) => {
-  const url = new URL(val);
-  return (url.protocol === "https:" || url.hostname === "localhost" || url.hostname === "127.0.0.1") && !url.username && !url.password;
-}, { message: "Must be a valid HTTPS URL without embedded user credentials" });
+const SafeHttpsUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine((val) => {
+    const url = new URL(val);
+    return (
+      (
+        url.protocol === "https:"
+        || (
+          url.protocol === "http:"
+          && (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+        )
+      )
+      && !url.username
+      && !url.password
+    );
+  }, { message: "Must be a valid HTTPS URL without embedded user credentials" })
+  .refine((val) => {
+    const url = new URL(val);
+    return val === url.origin || val === `${url.origin}/`;
+  }, { message: "Must be an HTTPS origin without path, query, or fragment" })
+  .transform((val) => new URL(val).origin);
 
 const PublicConfigSchema = z.object({
   publicOrigin: SafeHttpsUrlSchema,
@@ -27,7 +46,20 @@ export function getPublicConfig(env?: Record<string, string | undefined>): Publi
     }
   }
 
-  const publicOrigin = activeEnv.VITE_ARC_PUBLIC_ORIGIN || (typeof window !== "undefined" ? window.location.origin : undefined);
+  const allowedViteKeys = new Set([
+    "VITE_ARC_PUBLIC_ORIGIN",
+    "VITE_ARC_API_ORIGIN",
+    "VITE_ARC_SUPABASE_URL",
+    "VITE_ARC_SUPABASE_PUBLISHABLE_KEY",
+  ]);
+
+  for (const key of Object.keys(activeEnv)) {
+    if (key.startsWith("VITE_ARC_") && !allowedViteKeys.has(key)) {
+      throw new Error(`Security Violation: Unapproved environment variable ${key} detected in client environment.`);
+    }
+  }
+
+  const publicOrigin = activeEnv.VITE_ARC_PUBLIC_ORIGIN;
   const apiOrigin = activeEnv.VITE_ARC_API_ORIGIN;
   const supabaseUrl = activeEnv.VITE_ARC_SUPABASE_URL;
   const supabasePublishableKey = activeEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY;

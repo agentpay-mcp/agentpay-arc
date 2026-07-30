@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc";
+import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc/arc-hosted-auth";
 
 export interface ConsentModalProps {
   readonly userEmail?: string;

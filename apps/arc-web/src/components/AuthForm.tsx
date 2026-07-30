@@ -5,6 +5,7 @@ export interface AuthFormProps {
   readonly onSignUp: (email: string, pass: string) => Promise<void>;
   readonly errorMessage?: string;
   readonly isLoading?: boolean;
+  readonly defaultMode?: "signin" | "signup";
 }
 
 export const AuthForm: React.FC<AuthFormProps> = ({
@@ -12,8 +13,9 @@ export const AuthForm: React.FC<AuthFormProps> = ({
   onSignUp,
   errorMessage,
   isLoading = false,
+  defaultMode = "signin",
 }) => {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(defaultMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [localError, setLocalError] = useState("");
@@ -33,8 +35,15 @@ export const AuthForm: React.FC<AuthFormProps> = ({
         await onSignUp(email.trim(), password.trim());
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Authentication failed.";
-      setLocalError(msg);
+      const allowedMessages = new Set([
+        "Sign in failed. Check your email and password.",
+        "Sign up failed. Check the entered details and try again.",
+        "Account created, but sign in failed. Please sign in again.",
+      ]);
+      const message = err instanceof Error && allowedMessages.has(err.message)
+        ? err.message
+        : "Authentication failed. Please try again.";
+      setLocalError(message);
     }
   };
 
