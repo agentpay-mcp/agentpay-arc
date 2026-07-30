@@ -3,10 +3,12 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
 const deploymentFiles = Object.freeze({
@@ -367,9 +369,14 @@ describe("Arc-only hosted deployment artifacts", () => {
       await writeFile(manifestPath, JSON.stringify(manifest));
 
       const distFilePath = join(tmpDir, "index.html");
+      await mkdir(join(tmpDir, "assets"), { recursive: true });
       await writeFile(
         distFilePath,
-        `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src ${testEnv.VITE_ARC_API_ORIGIN} ${testEnv.VITE_ARC_SUPABASE_URL};" /><meta name="api-origin" content="${testEnv.VITE_ARC_API_ORIGIN}" /></head><body><main>Arc</main><script>window.__PUBLISHABLE_KEY__ = "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}";</script></body></html>`,
+        `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${testEnv.VITE_ARC_API_ORIGIN} ${testEnv.VITE_ARC_SUPABASE_URL};" /><meta name="api-origin" content="${testEnv.VITE_ARC_API_ORIGIN}" /></head><body><main>Arc</main><script type="module" src="/assets/bundle.js"></script></body></html>`,
+      );
+      await writeFile(
+        join(tmpDir, "assets", "bundle.js"),
+        `const config = { VITE_ARC_PUBLIC_ORIGIN: "${testEnv.VITE_ARC_PUBLIC_ORIGIN}", VITE_ARC_API_ORIGIN: "${testEnv.VITE_ARC_API_ORIGIN}", VITE_ARC_SUPABASE_URL: "${testEnv.VITE_ARC_SUPABASE_URL}", VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}" };`,
       );
 
       const { verifyArtifactManifest } = await import(
@@ -442,11 +449,11 @@ describe("Arc-only hosted deployment artifacts", () => {
       await mkdir(join(tmpDir, "assets"), { recursive: true });
       await writeFile(
         join(tmpDir, "assets", "bundle.js"),
-        `const apiOrigin = "${testEnv.VITE_ARC_API_ORIGIN}"; const supabaseUrl = "${testEnv.VITE_ARC_SUPABASE_URL}";`,
+        `const config = { VITE_ARC_PUBLIC_ORIGIN: "${testEnv.VITE_ARC_PUBLIC_ORIGIN}", VITE_ARC_API_ORIGIN: "${testEnv.VITE_ARC_API_ORIGIN}", VITE_ARC_SUPABASE_URL: "${testEnv.VITE_ARC_SUPABASE_URL}", VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}" };`,
       );
       await writeFile(
         join(tmpDir, "index.html"),
-        `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"></head><body><script>window.__PUBLISHABLE_KEY__ = "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}";</script></body></html>`,
+        `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${testEnv.VITE_ARC_API_ORIGIN} ${testEnv.VITE_ARC_SUPABASE_URL};"></head><body><script type="module" src="/assets/bundle.js"></script></body></html>`,
       );
       await verifyArtifactManifest(process.env, manifestPath);
 
@@ -466,6 +473,95 @@ describe("Arc-only hosted deployment artifacts", () => {
       );
     } finally {
       process.env = originalEnv;
+    }
+  });
+
+  it("rejects a poisoned real Vite build even when its safe manifest and decoy are restored", async () => {
+    const { copyFile, mkdir } = await import("node:fs/promises");
+    const repoRoot = resolve(".");
+    const distDir = resolve("apps/arc-web/dist");
+    const safeManifestBackup = await mkdtemp(join(tmpdir(), "arc-safe-manifest-"));
+    const safeManifestPath = join(safeManifestBackup, "arc-artifact-manifest.json");
+    const testEnv = {
+      VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
+      VITE_ARC_API_ORIGIN: "https://mcp.arc.agentpay.site",
+      VITE_ARC_SUPABASE_URL: "https://project-ref.supabase.co",
+      VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_real_build_test_key",
+    };
+
+    const buildEnvironment = {
+      ...process.env,
+      ...testEnv,
+    };
+    const runBuild = (apiOrigin) => spawnSync(
+      "npm",
+      ["run", "build", "--workspace", "apps/arc-web"],
+      {
+        cwd: repoRoot,
+        env: { ...buildEnvironment, VITE_ARC_API_ORIGIN: apiOrigin },
+        encoding: "utf8",
+      },
+    );
+    const runExactWebValidation = () => spawnSync(
+      process.execPath,
+      [
+        "deploy/arc/validate-env.mjs",
+        "web",
+        "apps/arc-web/dist/arc-artifact-manifest.json",
+      ],
+      {
+        cwd: repoRoot,
+        env: buildEnvironment,
+        encoding: "utf8",
+      },
+    );
+
+    await rm(distDir, { recursive: true, force: true });
+    try {
+      const safeBuild = runBuild(testEnv.VITE_ARC_API_ORIGIN);
+      assert.equal(
+        safeBuild.status,
+        0,
+        `safe real Vite build failed:\n${safeBuild.stdout}\n${safeBuild.stderr}`,
+      );
+      await copyFile(
+        join(distDir, "arc-artifact-manifest.json"),
+        safeManifestPath,
+      );
+
+      const safeValidation = runExactWebValidation();
+      assert.equal(
+        safeValidation.status,
+        0,
+        `safe exact web validation failed:\n${safeValidation.stdout}\n${safeValidation.stderr}`,
+      );
+
+      const poisonedBuild = runBuild("https://attacker.invalid");
+      assert.equal(
+        poisonedBuild.status,
+        0,
+        `poisoned real Vite build failed before validation:\n${poisonedBuild.stdout}\n${poisonedBuild.stderr}`,
+      );
+      await copyFile(safeManifestPath, join(distDir, "arc-artifact-manifest.json"));
+      await mkdir(join(distDir, "proof"), { recursive: true });
+      await writeFile(
+        join(distDir, "proof", "release-proof.txt"),
+        `approved API origin: ${testEnv.VITE_ARC_API_ORIGIN}\n`,
+      );
+
+      const poisonedValidation = runExactWebValidation();
+      assert.notEqual(
+        poisonedValidation.status,
+        0,
+        `poisoned artifact unexpectedly passed:\n${poisonedValidation.stdout}\n${poisonedValidation.stderr}`,
+      );
+      assert.match(
+        `${poisonedValidation.stdout}\n${poisonedValidation.stderr}`,
+        /attacker\.invalid|artifact/i,
+      );
+    } finally {
+      await rm(distDir, { recursive: true, force: true });
+      await rm(safeManifestBackup, { recursive: true, force: true });
     }
   });
 });

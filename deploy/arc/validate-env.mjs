@@ -217,6 +217,171 @@ function validateMcpEnvironment(env) {
   });
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function artifactPathForReference(reference, distDir) {
+  if (
+    reference.length === 0
+    || reference.startsWith("#")
+    || /^(?:data|mailto|javascript):/i.test(reference)
+  ) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(reference, "https://arc.agentpay.site/");
+  } catch {
+    throw new Error(`Artifact reference is not a valid URL: ${reference}`);
+  }
+  if (parsed.origin !== "https://arc.agentpay.site") {
+    return null;
+  }
+
+  const decodedPath = decodeURIComponent(parsed.pathname);
+  if (decodedPath === "/") {
+    return null;
+  }
+  const artifactPath = resolve(distDir, `.${decodedPath}`);
+  if (
+    artifactPath !== distDir
+    && !artifactPath.startsWith(`${distDir}/`)
+  ) {
+    throw new Error(`Artifact reference escapes dist: ${reference}`);
+  }
+  return artifactPath;
+}
+
+function arcConfigValuePattern(key) {
+  return new RegExp(
+    escapeRegExp(key) + "\\s*[:=]\\s*[\"'`]([^\"'`\\r\\n]*)[\"'`]",
+    "g",
+  );
+}
+
+function assertNoUnexpectedArcConfigValues(filePath, content, manifest, distDir) {
+  for (const key of MANIFEST_KEYS) {
+    for (const match of content.matchAll(arcConfigValuePattern(key))) {
+      if (match[1] !== manifest[key]) {
+        throw new Error(
+          `Artifact file ${filePath.replace(`${distDir}/`, "")} contains an unapproved ${key} value`,
+        );
+      }
+    }
+  }
+}
+
+async function readServedArtifactFiles(distDir) {
+  const indexPath = resolve(distDir, "index.html");
+  let indexContent;
+  try {
+    indexContent = await readFile(indexPath, "utf8");
+  } catch {
+    throw new Error(`Served artifact is missing ${indexPath}`);
+  }
+
+  const servedPaths = new Set([indexPath]);
+  const scriptPaths = new Set();
+  const referencePattern = /\b(?:src|href)=["']([^"']+)["']/gi;
+  for (const match of indexContent.matchAll(referencePattern)) {
+    const artifactPath = artifactPathForReference(match[1], distDir);
+    if (artifactPath) {
+      servedPaths.add(artifactPath);
+    }
+  }
+
+  const scriptPattern = /<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi;
+  for (const match of indexContent.matchAll(scriptPattern)) {
+    const artifactPath = artifactPathForReference(match[1], distDir);
+    if (!artifactPath) {
+      throw new Error("Served artifact contains a non-local script reference");
+    }
+    scriptPaths.add(artifactPath);
+    servedPaths.add(artifactPath);
+  }
+  if (scriptPaths.size === 0) {
+    throw new Error("Served artifact index.html has no local executable script reference");
+  }
+
+  const files = [];
+  for (const filePath of servedPaths) {
+    let content;
+    try {
+      content = await readFile(filePath, "utf8");
+    } catch {
+      throw new Error(
+        `Served artifact reference is missing: ${filePath.replace(`${distDir}/`, "")}`,
+      );
+    }
+    files.push({ filePath, content });
+  }
+  return { indexContent, files, scriptPaths };
+}
+
+function verifyServedArtifactContent(manifest, servedArtifact) {
+  const servedContent = servedArtifact.files.map(({ content }) => content).join("\n");
+  for (const key of MANIFEST_KEYS) {
+    if (!servedContent.includes(manifest[key])) {
+      throw new Error(
+        `Manifest value for ${key} (${JSON.stringify(manifest[key])}) was not found in served browser references`,
+      );
+    }
+  }
+
+  const cspMatch = servedArtifact.indexContent.match(
+    /<meta\b[^>]*http-equiv="Content-Security-Policy"[^>]*content="([^"]+)"[^>]*>/i,
+  );
+  if (!cspMatch) {
+    throw new Error("Served artifact index.html is missing its Content-Security-Policy");
+  }
+  const connectSourceMatch = cspMatch[1].match(
+    /(?:^|;)\s*connect-src\s+([^;]+)/i,
+  );
+  if (!connectSourceMatch) {
+    throw new Error("Served artifact Content-Security-Policy is missing connect-src");
+  }
+  const allowedConnectOrigins = new Set([
+    "'self'",
+    manifest.VITE_ARC_API_ORIGIN,
+    manifest.VITE_ARC_SUPABASE_URL,
+  ]);
+  const connectSources = connectSourceMatch[1].trim().split(/\s+/);
+  for (const source of connectSources) {
+    if (/^https?:\/\//i.test(source) && !allowedConnectOrigins.has(source)) {
+      throw new Error(
+        `Served artifact CSP contains an unapproved connect-src origin: ${source}`,
+      );
+    }
+  }
+  for (const requiredOrigin of [
+    manifest.VITE_ARC_API_ORIGIN,
+    manifest.VITE_ARC_SUPABASE_URL,
+  ]) {
+    if (!connectSources.includes(requiredOrigin)) {
+      throw new Error(
+        `Served artifact CSP is missing approved connect-src origin: ${requiredOrigin}`,
+      );
+    }
+  }
+
+  const executableFiles = servedArtifact.files.filter(({ filePath }) =>
+    servedArtifact.scriptPaths.has(filePath),
+  );
+  const hasCompleteExecutableConfig = executableFiles.some(({ content }) =>
+    MANIFEST_KEYS.every((key) =>
+      [...content.matchAll(arcConfigValuePattern(key))]
+        .some((match) => match[1] === manifest[key]),
+    ),
+  );
+  if (!hasCompleteExecutableConfig) {
+    throw new Error(
+      "Served artifact executable scripts do not contain one complete approved Arc public configuration",
+    );
+  }
+}
+
 export async function verifyArtifactManifest(
   env,
   artifactManifestPath,
@@ -304,6 +469,8 @@ async function scanArtifactDistFiles(
       );
     }
 
+    assertNoUnexpectedArcConfigValues(filePath, content, manifest, distDir);
+
     for (const key of MANIFEST_KEYS) {
       const value = manifest[key];
       if (typeof value === "string" && value.length > 0) {
@@ -329,6 +496,9 @@ async function verifyArtifactDistFiles(
       );
     }
   }
+
+  const servedArtifact = await readServedArtifactFiles(distDir);
+  verifyServedArtifactContent(manifest, servedArtifact);
 }
 
 export function validateArcDeploymentEnvironment(scope, env) {
