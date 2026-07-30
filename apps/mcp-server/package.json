@@ -3,7 +3,11 @@
   "version": "0.1.11",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./hosted-arc-http": "./src/mcp/hosted-arc-http.ts",
+    "./hosted-arc-runtime": "./src/runtime/hosted-arc-wallet-runtime.ts",
+    "./default-hosted-arc-runtime": "./src/runtime/default-hosted-arc-runtime.ts",
+    "./hosted-arc-start": "./src/hosted-arc-start.ts"
   },
   "files": [
     "README.md",
@@ -14,6 +18,7 @@
     "src/auth/siwe.ts",
     "src/auth/supabase-user.ts",
     "src/index.ts",
+    "src/hosted-arc-start.ts",
     "src/mcp/agentpay-mcp.ts",
     "src/mcp/arc-agent-identity.ts",
     "src/mcp/arc-agent-jobs.ts",
@@ -24,10 +29,16 @@
     "src/mcp/consumer-auth.ts",
     "src/mcp/erc8004-registration.ts",
     "src/mcp/http.ts",
+    "src/mcp/hosted-arc-http.ts",
+    "src/mcp/hosted-arc-http-api.ts",
+    "src/mcp/hosted-arc-http-config.ts",
+    "src/mcp/hosted-arc-mutation.ts",
     "src/mcp/stdio.ts",
     "src/runtime/agentpay-runtime.ts",
     "src/runtime/arc-agent-wallet-runtime.ts",
     "src/runtime/default-arc-agent-wallet-runtime.ts",
+    "src/runtime/default-hosted-arc-runtime.ts",
+    "src/runtime/hosted-arc-wallet-runtime.ts",
     "src/runtime/paid-execution-canary-ledger.ts",
     "src/runtime/paid-execution-canary.ts",
     "src/runtime/production-readiness.ts",
@@ -86,6 +97,7 @@
   },
   "scripts": {
     "start": "tsx src/index.ts",
+    "start:hosted-arc": "tsx src/hosted-arc-start.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p ../../tsconfig.json --noEmit"
   },
