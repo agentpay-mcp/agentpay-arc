@@ -1,11 +1,7 @@
 import { z } from "zod";
-import circlePkg, {
-  CircleDeveloperControlledWalletsClient,
-  Blockchain,
-  AccountType,
-  CustodyType,
-  FeeLevel,
-} from "@circle-fin/developer-controlled-wallets";
+import type { CircleDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import {
   ARC_HOSTED_ACCOUNT_TYPE,
   ARC_HOSTED_CHAIN,
@@ -13,9 +9,12 @@ import {
   ArcEvmAddressSchema,
 } from "@agentpay-ai/shared-arc";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
-import { createHash } from "node:crypto";
 
-export const ARC_HOSTED_USDC_TOKEN_ADDRESS = "0x3333333333333333333333333333333333333333";
+export const ARC_HOSTED_USDC_TOKEN_ADDRESS = "0x3600000000000000000000000000000000000000";
+const CIRCLE_PAGE_SIZE = 50;
+const CIRCLE_MAX_PAGES = 20;
+const CIRCLE_MAX_RECORDS = CIRCLE_PAGE_SIZE * CIRCLE_MAX_PAGES;
+const CIRCLE_MAX_BALANCES = 256;
 
 export interface CircleDeveloperWalletsConfig {
   apiKey: string;
@@ -75,47 +74,46 @@ export function redactSecretsAndFormatError(
 }
 
 export const SdkWalletSetSchema = z.object({
-  id: z.string().trim().min(1),
-  name: z.string().trim().min(1),
+  id: z.string().trim().min(1).max(256),
+  name: z.string().trim().min(1).max(128),
   custodyType: z.literal(ARC_HOSTED_CUSTODY_TYPE),
 });
 export type SdkWalletSet = z.infer<typeof SdkWalletSetSchema>;
 
 export const SdkWalletSchema = z.object({
-  id: z.string().trim().min(1),
-  walletSetId: z.string().trim().min(1),
+  id: z.string().trim().min(1).max(256),
+  walletSetId: z.string().trim().min(1).max(256),
   address: ArcEvmAddressSchema,
   blockchain: z.literal(ARC_HOSTED_CHAIN),
   accountType: z.literal(ARC_HOSTED_ACCOUNT_TYPE),
   custodyType: z.literal(ARC_HOSTED_CUSTODY_TYPE),
-  refId: z.string().trim().min(1).optional().nullable(),
+  refId: z.string().trim().min(1).max(128).optional().nullable(),
 });
 export type SdkWallet = z.infer<typeof SdkWalletSchema>;
 
 export const SdkTokenBalanceSchema = z.object({
   token: z.object({
-    id: z.string().optional(),
-    symbol: z.string().optional(),
+    id: z.string().trim().min(1).max(256).optional(),
+    symbol: z.string().trim().min(1).max(64).optional(),
     decimals: z.number().optional(),
-    address: z.string().optional(),
+    tokenAddress: ArcEvmAddressSchema.optional(),
   }),
-  amount: z.string(),
+  amount: z.string().trim().min(1).max(128),
 });
 
 export const SdkBalancesResponseSchema = z.object({
-  tokenBalances: z.array(SdkTokenBalanceSchema).default([]),
+  tokenBalances: z.array(SdkTokenBalanceSchema).max(CIRCLE_MAX_BALANCES).default([]),
 });
 
 export const SdkTransactionSchema = z.object({
-  id: z.string().trim().min(1),
-  state: z.string().trim().min(1),
-  txHash: z.string().optional().nullable(),
-  walletId: z.string().trim().min(1).optional().nullable(),
+  id: z.string().trim().min(1).max(256),
+  state: z.string().trim().min(1).max(64),
+  txHash: z.string().trim().min(1).max(256).optional().nullable(),
+  walletId: z.string().trim().min(1).max(256).optional().nullable(),
 });
 export type SdkTransaction = z.infer<typeof SdkTransactionSchema>;
 
-export type CircleDeveloperSdkClient = Pick<
-  CircleDeveloperControlledWalletsClient,
+type CircleDeveloperSdkMethodName =
   | "listWalletSets"
   | "createWalletSet"
   | "listWallets"
@@ -123,8 +121,58 @@ export type CircleDeveloperSdkClient = Pick<
   | "getWalletTokenBalance"
   | "createTransaction"
   | "createContractExecutionTransaction"
-  | "getTransaction"
+  | "getTransaction";
+
+type CircleDeveloperSdkMethod<
+  TMethodName extends CircleDeveloperSdkMethodName,
+> = CircleDeveloperControlledWalletsClient[TMethodName] extends (
+  ...args: infer TArgs
+) => Promise<unknown>
+  ? (...args: TArgs) => Promise<{ readonly data?: unknown }>
+  : never;
+
+export type CircleDeveloperSdkClient = {
+  readonly [TMethodName in CircleDeveloperSdkMethodName]:
+    CircleDeveloperSdkMethod<TMethodName>;
+};
+
+type AssertTrue<TValue extends true> = TValue;
+export type CircleOfficialSdkCompatibility = AssertTrue<
+  CircleDeveloperControlledWalletsClient extends CircleDeveloperSdkClient
+    ? true
+    : false
 >;
+
+const WalletSetPageEnvelopeSchema = z.object({
+  walletSets: z.array(SdkWalletSetSchema).max(CIRCLE_PAGE_SIZE),
+}).strict();
+
+const WalletPageEnvelopeSchema = z.object({
+  wallets: z.array(SdkWalletSchema).max(CIRCLE_PAGE_SIZE),
+}).strict();
+
+const CreatedWalletSetEnvelopeSchema = z.object({
+  walletSet: SdkWalletSetSchema,
+}).strict();
+
+const CreatedWalletsEnvelopeSchema = z.object({
+  wallets: z.array(SdkWalletSchema).min(1).max(1),
+}).strict();
+
+const TransactionEnvelopeSchema = z.object({
+  transaction: SdkTransactionSchema,
+}).strict();
+
+const CIRCLE_SDK_METHOD_NAMES: readonly CircleDeveloperSdkMethodName[] = [
+  "listWalletSets",
+  "createWalletSet",
+  "listWallets",
+  "createWallets",
+  "getWalletTokenBalance",
+  "createTransaction",
+  "createContractExecutionTransaction",
+  "getTransaction",
+] as const;
 
 export function deriveWalletSetName(tenantId: string): string {
   const hash = createHash("sha256").update(`tenant-ws:${tenantId}`).digest("hex").substring(0, 16);
@@ -136,15 +184,48 @@ export function deriveWalletRefId(tenantId: string): string {
   return `arc-ref-${hash}`;
 }
 
-function resolveInitiateClientFn(): (params: { apiKey: string; entitySecret: string }) => CircleDeveloperControlledWalletsClient {
-  const c = circlePkg as any;
-  if (typeof c?.initiateDeveloperControlledWalletsClient === "function") {
-    return c.initiateDeveloperControlledWalletsClient;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isCircleDeveloperSdkClient(
+  value: unknown,
+): value is CircleDeveloperSdkClient {
+  return isRecord(value)
+    && CIRCLE_SDK_METHOD_NAMES.every(
+      (methodName) => typeof value[methodName] === "function",
+    );
+}
+
+function createProductionSdkClient(
+  config: CircleDeveloperWalletsConfig,
+): CircleDeveloperSdkClient {
+  const require = createRequire(import.meta.url);
+  const sdkModule: unknown = require("@circle-fin/developer-controlled-wallets");
+  if (
+    !isRecord(sdkModule)
+    || typeof sdkModule.initiateDeveloperControlledWalletsClient !== "function"
+  ) {
+    throw new Error("Circle SDK factory is unavailable");
   }
-  if (typeof c?.default?.initiateDeveloperControlledWalletsClient === "function") {
-    return c.default.initiateDeveloperControlledWalletsClient;
+
+  const client: unknown = sdkModule.initiateDeveloperControlledWalletsClient({
+    apiKey: config.apiKey,
+    entitySecret: config.entitySecret,
+  });
+  if (!isCircleDeveloperSdkClient(client)) {
+    throw new Error("Circle SDK client surface is incompatible");
   }
-  throw new Error("Circle SDK initiateDeveloperControlledWalletsClient is unavailable");
+  return client;
+}
+
+function hasOversizedCollection(
+  data: unknown,
+  property: "walletSets" | "wallets",
+): boolean {
+  return isRecord(data)
+    && Array.isArray(data[property])
+    && data[property].length > CIRCLE_PAGE_SIZE;
 }
 
 export class CircleDeveloperWalletsAdapter {
@@ -159,18 +240,12 @@ export class CircleDeveloperWalletsAdapter {
     if (customSdkClient) {
       this.sdkClient = customSdkClient;
     } else {
-      const initFn = resolveInitiateClientFn();
-      this.sdkClient = initFn({
-        apiKey: this.config.apiKey,
-        entitySecret: this.config.entitySecret,
-      });
+      this.sdkClient = createProductionSdkClient(this.config);
     }
   }
 
   private async fetchAllWalletSets(): Promise<SdkWalletSet[]> {
     const allSets: SdkWalletSet[] = [];
-    const pageSize = 50;
-    const MAX_PAGES = 20;
     const seenCursors = new Set<string>();
     let pageAfter: string | undefined = undefined;
     let pageCount = 0;
@@ -178,7 +253,7 @@ export class CircleDeveloperWalletsAdapter {
 
     while (hasMore) {
       pageCount++;
-      if (pageCount > MAX_PAGES) {
+      if (pageCount > CIRCLE_MAX_PAGES) {
         throw new CircleReconciliationRequiredError("Pagination max page depth exceeded; state inconclusive");
       }
 
@@ -190,31 +265,36 @@ export class CircleDeveloperWalletsAdapter {
       }
 
       const res = await this.sdkClient.listWalletSets(
-        pageAfter ? { pageAfter, pageSize } : { pageSize },
+        pageAfter
+          ? { pageAfter, pageSize: CIRCLE_PAGE_SIZE }
+          : { pageSize: CIRCLE_PAGE_SIZE },
       );
-      const rawSets = res.data?.walletSets ?? [];
-      let pageHasMalformed = false;
-
-      for (const item of rawSets) {
-        const parsed = SdkWalletSetSchema.safeParse(item);
-        if (parsed.success) {
-          allSets.push(parsed.data);
-        } else {
-          pageHasMalformed = true;
-        }
+      if (hasOversizedCollection(res.data, "walletSets")) {
+        throw new CircleReconciliationRequiredError("Circle API returned page size exceeding maximum bound");
+      }
+      const envelope = WalletSetPageEnvelopeSchema.safeParse(res.data);
+      if (!envelope.success) {
+        throw new CircleReconciliationRequiredError(
+          "Circle API returned malformed or unverified wallet-set envelope",
+        );
       }
 
-      if (pageHasMalformed) {
-        throw new CircleReconciliationRequiredError("Provider returned malformed wallet set records; state inconclusive");
+      const pageSets = envelope.data.walletSets;
+      allSets.push(...pageSets);
+      if (allSets.length > CIRCLE_MAX_RECORDS) {
+        throw new CircleReconciliationRequiredError(
+          "Pagination max record count exceeded; state inconclusive",
+        );
       }
 
-      if (rawSets.length < pageSize) {
+      if (pageSets.length < CIRCLE_PAGE_SIZE) {
         hasMore = false;
       } else {
-        const lastItem = rawSets[rawSets.length - 1];
-        pageAfter = lastItem?.id;
+        pageAfter = pageSets[pageSets.length - 1]?.id;
         if (!pageAfter) {
-          hasMore = false;
+          throw new CircleReconciliationRequiredError(
+            "Pagination cursor missing from a full wallet-set page",
+          );
         }
       }
     }
@@ -223,8 +303,6 @@ export class CircleDeveloperWalletsAdapter {
 
   private async fetchAllWallets(walletSetId: string): Promise<SdkWallet[]> {
     const allWallets: SdkWallet[] = [];
-    const pageSize = 50;
-    const MAX_PAGES = 20;
     const seenCursors = new Set<string>();
     let pageAfter: string | undefined = undefined;
     let pageCount = 0;
@@ -232,7 +310,7 @@ export class CircleDeveloperWalletsAdapter {
 
     while (hasMore) {
       pageCount++;
-      if (pageCount > MAX_PAGES) {
+      if (pageCount > CIRCLE_MAX_PAGES) {
         throw new CircleReconciliationRequiredError("Pagination max page depth exceeded; state inconclusive");
       }
 
@@ -244,31 +322,36 @@ export class CircleDeveloperWalletsAdapter {
       }
 
       const res = await this.sdkClient.listWallets(
-        pageAfter ? { walletSetId, pageAfter, pageSize } : { walletSetId, pageSize },
+        pageAfter
+          ? { walletSetId, pageAfter, pageSize: CIRCLE_PAGE_SIZE }
+          : { walletSetId, pageSize: CIRCLE_PAGE_SIZE },
       );
-      const rawWallets = res.data?.wallets ?? [];
-      let pageHasMalformed = false;
-
-      for (const item of rawWallets) {
-        const parsed = SdkWalletSchema.safeParse(item);
-        if (parsed.success) {
-          allWallets.push(parsed.data);
-        } else {
-          pageHasMalformed = true;
-        }
+      if (hasOversizedCollection(res.data, "wallets")) {
+        throw new CircleReconciliationRequiredError("Circle API returned page size exceeding maximum bound");
+      }
+      const envelope = WalletPageEnvelopeSchema.safeParse(res.data);
+      if (!envelope.success) {
+        throw new CircleReconciliationRequiredError(
+          "Circle API returned malformed or unverified wallet envelope",
+        );
       }
 
-      if (pageHasMalformed) {
-        throw new CircleReconciliationRequiredError("Provider returned malformed wallet records; state inconclusive");
+      const pageWallets = envelope.data.wallets;
+      allWallets.push(...pageWallets);
+      if (allWallets.length > CIRCLE_MAX_RECORDS) {
+        throw new CircleReconciliationRequiredError(
+          "Pagination max record count exceeded; state inconclusive",
+        );
       }
 
-      if (rawWallets.length < pageSize) {
+      if (pageWallets.length < CIRCLE_PAGE_SIZE) {
         hasMore = false;
       } else {
-        const lastItem = rawWallets[rawWallets.length - 1];
-        pageAfter = lastItem?.id;
+        pageAfter = pageWallets[pageWallets.length - 1]?.id;
         if (!pageAfter) {
-          hasMore = false;
+          throw new CircleReconciliationRequiredError(
+            "Pagination cursor missing from a full wallet page",
+          );
         }
       }
     }
@@ -286,7 +369,11 @@ export class CircleDeveloperWalletsAdapter {
         (s) => s.name === walletSetName && s.custodyType === ARC_HOSTED_CUSTODY_TYPE,
       );
 
-      if (matchingSets.length > 0) {
+      if (matchingSets.length > 1) {
+        throw new CircleReconciliationRequiredError("Multiple wallet sets found matching tenant ID; state inconclusive");
+      }
+
+      if (matchingSets.length === 1) {
         return matchingSets[0];
       }
     } catch (err) {
@@ -305,23 +392,31 @@ export class CircleDeveloperWalletsAdapter {
         name: walletSetName,
         idempotencyKey,
       });
-      const rawSet = createRes.data?.walletSet;
-      const parsedSet = SdkWalletSetSchema.safeParse(rawSet);
-      if (!parsedSet.success || parsedSet.data.name !== walletSetName || parsedSet.data.custodyType !== ARC_HOSTED_CUSTODY_TYPE) {
+      const parsedEnvelope = CreatedWalletSetEnvelopeSchema.safeParse(createRes.data);
+      if (
+        !parsedEnvelope.success
+        || parsedEnvelope.data.walletSet.name !== walletSetName
+        || parsedEnvelope.data.walletSet.custodyType !== ARC_HOSTED_CUSTODY_TYPE
+      ) {
         throw new Error("Created wallet set does not match required properties");
       }
-      return parsedSet.data;
+      return parsedEnvelope.data.walletSet;
     } catch {
       try {
         const walletSets = await this.fetchAllWalletSets();
         const matchingSets = walletSets.filter(
           (s) => s.name === walletSetName && s.custodyType === ARC_HOSTED_CUSTODY_TYPE,
         );
-        if (matchingSets.length > 0) {
+        if (matchingSets.length > 1) {
+          throw new CircleReconciliationRequiredError("Multiple wallet sets found matching tenant ID during reconciliation");
+        }
+        if (matchingSets.length === 1) {
           return matchingSets[0];
         }
-      } catch {
-        // ignore list error during reconciliation
+      } catch (err) {
+        if (err instanceof CircleReconciliationRequiredError) {
+          throw err;
+        }
       }
       throw new CircleReconciliationRequiredError("Wallet set creation outcome ambiguous; reconciliation required");
     }
@@ -347,7 +442,11 @@ export class CircleDeveloperWalletsAdapter {
           w.custodyType === ARC_HOSTED_CUSTODY_TYPE,
       );
 
-      if (matchingWallets.length > 0) {
+      if (matchingWallets.length > 1) {
+        throw new CircleReconciliationRequiredError("Multiple wallets found matching tenant refId; state inconclusive");
+      }
+
+      if (matchingWallets.length === 1) {
         return matchingWallets[0];
       }
     } catch (err) {
@@ -363,33 +462,31 @@ export class CircleDeveloperWalletsAdapter {
 
     try {
       const createRes = await this.sdkClient.createWallets({
-        blockchains: [ARC_HOSTED_CHAIN as Blockchain],
+        blockchains: [ARC_HOSTED_CHAIN],
         count: 1,
         walletSetId,
-        accountType: ARC_HOSTED_ACCOUNT_TYPE as AccountType,
+        accountType: ARC_HOSTED_ACCOUNT_TYPE,
         metadata: [{ refId }],
         idempotencyKey,
       });
 
-      const rawWallets = createRes.data?.wallets ?? [];
-      const validWallets = rawWallets
-        .map((w) => SdkWalletSchema.safeParse(w))
-        .filter(
-          (r): r is { success: true; data: SdkWallet } =>
-            r.success &&
-            r.data.walletSetId === walletSetId &&
-            r.data.refId === refId &&
-            r.data.blockchain === ARC_HOSTED_CHAIN &&
-            r.data.accountType === ARC_HOSTED_ACCOUNT_TYPE &&
-            r.data.custodyType === ARC_HOSTED_CUSTODY_TYPE,
+      const parsedEnvelope = CreatedWalletsEnvelopeSchema.safeParse(createRes.data);
+      const validWallet = parsedEnvelope.success
+        ? parsedEnvelope.data.wallets.find(
+          (wallet) =>
+            wallet.walletSetId === walletSetId
+            && wallet.refId === refId
+            && wallet.blockchain === ARC_HOSTED_CHAIN
+            && wallet.accountType === ARC_HOSTED_ACCOUNT_TYPE
+            && wallet.custodyType === ARC_HOSTED_CUSTODY_TYPE,
         )
-        .map((r) => r.data);
+        : undefined;
 
-      if (validWallets.length === 0) {
+      if (!validWallet) {
         throw new Error("Created wallet does not match required DEVELOPER SCA properties");
       }
 
-      return validWallets[0];
+      return validWallet;
     } catch {
       try {
         const wallets = await this.fetchAllWallets(walletSetId);
@@ -402,11 +499,17 @@ export class CircleDeveloperWalletsAdapter {
             w.custodyType === ARC_HOSTED_CUSTODY_TYPE,
         );
 
-        if (matchingWallets.length > 0) {
+        if (matchingWallets.length > 1) {
+          throw new CircleReconciliationRequiredError("Multiple wallets found matching tenant refId during reconciliation");
+        }
+
+        if (matchingWallets.length === 1) {
           return matchingWallets[0];
         }
-      } catch {
-        // ignore list error during reconciliation
+      } catch (err) {
+        if (err instanceof CircleReconciliationRequiredError) {
+          throw err;
+        }
       }
 
       throw new CircleReconciliationRequiredError("SCA wallet creation outcome ambiguous; reconciliation required");
@@ -470,11 +573,11 @@ export class CircleDeveloperWalletsAdapter {
   async getWalletBalances(walletId: string): Promise<Array<{ symbol: string; amount: string; address?: string }>> {
     try {
       const res = await this.sdkClient.getWalletTokenBalance({ id: walletId });
-      const parsed = SdkBalancesResponseSchema.parse(res.data ?? {});
+      const parsed = SdkBalancesResponseSchema.parse(res.data);
       return parsed.tokenBalances.map((tb) => ({
         symbol: tb.token.symbol ?? "USDC",
         amount: tb.amount,
-        address: tb.token.address,
+        address: tb.token.tokenAddress,
       }));
     } catch (err) {
       throw redactSecretsAndFormatError(err, this.config);
@@ -482,23 +585,22 @@ export class CircleDeveloperWalletsAdapter {
   }
 
   async createDeveloperTransfer(input: {
-    walletId: string;
+    walletAddress: string;
     destinationAddress: string;
     amount: string;
-    tokenId?: string;
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
     try {
-      const targetTokenId = input.tokenId ?? ARC_HOSTED_USDC_TOKEN_ADDRESS;
       const res = await this.sdkClient.createTransaction({
-        walletId: input.walletId,
+        walletAddress: input.walletAddress,
         destinationAddress: input.destinationAddress,
         amount: [input.amount],
-        tokenId: targetTokenId,
-        fee: { type: "level", config: { feeLevel: FeeLevel.Medium } },
+        tokenAddress: ARC_HOSTED_USDC_TOKEN_ADDRESS,
+        blockchain: ARC_HOSTED_CHAIN,
+        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
       });
-      const parsed = SdkTransactionSchema.parse(res.data ?? {});
+      const parsed = SdkTransactionSchema.parse(res.data);
       return {
         transactionId: parsed.id,
         state: parsed.state,
@@ -512,7 +614,7 @@ export class CircleDeveloperWalletsAdapter {
     walletId: string;
     contractAddress: string;
     abiFunctionSignature: string;
-    args: any[];
+    args: readonly unknown[];
     idempotencyKey: string;
   }): Promise<{ transactionId: string; state: string }> {
     try {
@@ -520,11 +622,11 @@ export class CircleDeveloperWalletsAdapter {
         walletId: input.walletId,
         contractAddress: input.contractAddress,
         abiFunctionSignature: input.abiFunctionSignature,
-        abiParameters: input.args,
-        fee: { type: "level", config: { feeLevel: FeeLevel.Medium } },
+        abiParameters: [...input.args],
+        fee: { type: "level", config: { feeLevel: "MEDIUM" } },
         idempotencyKey: input.idempotencyKey,
       });
-      const parsed = SdkTransactionSchema.parse(res.data ?? {});
+      const parsed = SdkTransactionSchema.parse(res.data);
       return {
         transactionId: parsed.id,
         state: parsed.state,
@@ -537,8 +639,7 @@ export class CircleDeveloperWalletsAdapter {
   async getTransactionStatus(transactionId: string): Promise<{ transactionId: string; state: string; txHash?: string; walletId?: string }> {
     try {
       const res = await this.sdkClient.getTransaction({ id: transactionId });
-      const rawTx = (res.data as any)?.transaction ?? res.data;
-      const parsed = SdkTransactionSchema.parse(rawTx);
+      const parsed = TransactionEnvelopeSchema.parse(res.data).transaction;
       return {
         transactionId: parsed.id,
         state: parsed.state,

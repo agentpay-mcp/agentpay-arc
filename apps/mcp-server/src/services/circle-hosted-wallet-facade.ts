@@ -6,31 +6,32 @@ import {
   ArcEvmAddressSchema,
   ArcHostedAuthority,
   ArcHostedAuthoritySchema,
-  circleAmountSchema,
   circleIdempotencyKeySchema,
+  circlePositiveAmountSchema,
 } from "@agentpay-ai/shared-arc";
 import {
   CircleDeveloperWalletsAdapter,
   redactSecretsAndFormatError,
-  ARC_HOSTED_USDC_TOKEN_ADDRESS,
 } from "./circle-developer-wallets.js";
 import { ArcHostedAccountRepository } from "./arc-hosted-accounts.js";
-import { createArcAppKitService, ArcAppKitService } from "./arc-app-kit.js";
+import {
+  createArcAppKitService,
+  type ArcAppKitService,
+} from "./arc-app-kit.js";
 
 export const CircleHostedTransferInputSchema = z.object({
   toAddress: ArcEvmAddressSchema,
-  amount: circleAmountSchema,
-  tokenId: z.string().trim().optional(),
+  amount: circlePositiveAmountSchema,
   idempotencyKey: circleIdempotencyKeySchema,
-});
+}).strict();
 export type CircleHostedTransferInput = z.infer<typeof CircleHostedTransferInputSchema>;
 
 export const CircleHostedContractExecutionInputSchema = z.object({
   contractAddress: ArcEvmAddressSchema,
-  abiFunctionSignature: z.string().trim().min(1),
-  args: z.array(z.any()).default([]),
+  abiFunctionSignature: z.string().trim().min(1).max(256),
+  args: z.array(z.unknown()).max(64).default([]),
   idempotencyKey: circleIdempotencyKeySchema,
-});
+}).strict();
 export type CircleHostedContractExecutionInput = z.infer<typeof CircleHostedContractExecutionInputSchema>;
 
 export interface CircleHostedWalletInfo {
@@ -47,66 +48,84 @@ export interface HostedToolCapability {
   description: string;
 }
 
-export const ARC_HOSTED_TOOL_CAPABILITY_MATRIX: readonly HostedToolCapability[] = [
-  {
-    toolName: "get_balance",
-    hostedStatus: "SUPPORTED",
-    description: "Reads stablecoin and token balances bound to the user's hosted authority wallet address.",
-  },
-  {
-    toolName: "execute_payment",
-    hostedStatus: "SUPPORTED",
-    description: "Executes approved payments via the hosted Developer-Controlled SCA wallet.",
-  },
-  {
-    toolName: "wallet_setup",
-    hostedStatus: "SUPPORTED",
-    description: "Verifies and manages hosted user wallet setup and status.",
-  },
-  {
-    toolName: "prepare_payment",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "Prepares payment intents locally. Delegated to local CLI runtime only; not supported in hosted server mode.",
-  },
-  {
-    toolName: "quote_payment_route",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "Quotes payment routes locally. Delegated to local CLI runtime only; not supported in hosted server mode.",
-  },
-  {
-    toolName: "route_target_allowance",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "Route target allowance management. Delegated to local CLI runtime only; not supported in hosted server mode.",
-  },
-  {
-    toolName: "x402_bazaar_search",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "x402 Bazaar search. Delegated to local CLI runtime only; not supported in hosted server mode.",
-  },
-  {
-    toolName: "x402_bazaar_prepare",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "x402 Bazaar request preparation. Delegated to local CLI runtime only; not supported in hosted server mode.",
-  },
-  {
-    toolName: "account_admin",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "Local account administration. Delegated to local CLI runtime only; not supported in hosted server mode.",
-  },
-  {
-    toolName: "circle_agent_wallet",
-    hostedStatus: "DELEGATED_LOCAL_ONLY",
-    description: "App Kit / local Circle CLI session management. Delegated to local CLI runtime; not used in hosted Developer-Controlled server mode.",
-  },
+export const ALL_ARC_MCP_TOOL_NAMES = [
+  "setup_agent_wallet",
+  "get_agent_budget",
+  "fund_agent_wallet",
+  "withdraw_agent_budget",
+  "send_usdc",
+  "create_payment_request",
+  "pay_invoice",
+  "batch_payout",
+  "list_agent_activity",
+  "get_payment_receipt",
+  "search_paid_services",
+  "inspect_paid_service",
+  "pay_paid_service",
+  "get_unified_balance",
+  "fund_from_any_chain",
+  "bridge_usdc",
+  "swap_tokens",
+  "swap_and_pay",
+  "register_agent_identity",
+  "get_agent_identity",
+  "give_agent_feedback",
+  "request_agent_validation",
+  "respond_agent_validation",
+  "get_agent_trust",
+  "create_agent_job",
+  "set_agent_job_budget",
+  "fund_agent_job",
+  "submit_agent_deliverable",
+  "complete_agent_job",
+  "reject_agent_job",
+  "get_agent_job",
 ] as const;
+
+type ArcMcpToolName = (typeof ALL_ARC_MCP_TOOL_NAMES)[number];
+
+const HOSTED_TOOL_DESCRIPTIONS: Readonly<
+  Partial<Record<ArcMcpToolName, string>>
+> = Object.freeze({
+  setup_agent_wallet:
+    "Provisions and reports the authenticated tenant's Developer-Controlled Arc SCA wallet.",
+  get_agent_budget:
+    "Reads balances only from the authenticated tenant's private wallet binding.",
+  send_usdc:
+    "Transfers canonical Arc Testnet USDC from the authenticated tenant wallet.",
+  get_payment_receipt:
+    "Reads a transaction only when Circle reports the authenticated tenant wallet ID.",
+  get_unified_balance:
+    "Reads App Kit unified balances only for the authenticated tenant wallet address.",
+});
+
+export const ARC_HOSTED_TOOL_CAPABILITY_MATRIX: readonly HostedToolCapability[] =
+  Object.freeze(
+    ALL_ARC_MCP_TOOL_NAMES.map((toolName): HostedToolCapability =>
+      Object.freeze({
+        toolName,
+        hostedStatus: HOSTED_TOOL_DESCRIPTIONS[toolName]
+          ? "SUPPORTED"
+          : "DELEGATED_LOCAL_ONLY",
+        description:
+          HOSTED_TOOL_DESCRIPTIONS[toolName]
+          ?? "Not implemented by the hosted Developer-Controlled wallet facade; remains on the isolated local Arc runtime.",
+      })),
+  );
 
 export class CircleHostedWalletFacade {
   private readonly adapter: CircleDeveloperWalletsAdapter;
   private readonly repository: ArcHostedAccountRepository;
+  private readonly appKitServiceFactory: () => ArcAppKitService;
 
-  constructor(adapter: CircleDeveloperWalletsAdapter, repository: ArcHostedAccountRepository) {
+  constructor(
+    adapter: CircleDeveloperWalletsAdapter,
+    repository: ArcHostedAccountRepository,
+    appKitServiceFactory: () => ArcAppKitService = createArcAppKitService,
+  ) {
     this.adapter = adapter;
     this.repository = repository;
+    this.appKitServiceFactory = appKitServiceFactory;
   }
 
   private async validateAndResolvePrivateWalletId(authority: ArcHostedAuthority): Promise<{ circleWalletId: string; walletAddress: string }> {
@@ -124,15 +143,18 @@ export class CircleHostedWalletFacade {
       throw new Error("Hosted wallet is not in LIVE provisioning state");
     }
 
-    if (!binding.circleWalletId) {
+    if (!binding.circleWalletId || !binding.walletAddress) {
       throw new Error("Hosted wallet not fully provisioned");
     }
 
-    if (binding.walletAddress && binding.walletAddress.toLowerCase() !== validAuth.walletAddress.toLowerCase()) {
+    if (binding.walletAddress.toLowerCase() !== validAuth.walletAddress.toLowerCase()) {
       throw new Error("Wallet address mismatch between authority and private binding");
     }
 
-    return { circleWalletId: binding.circleWalletId, walletAddress: validAuth.walletAddress };
+    return {
+      circleWalletId: binding.circleWalletId,
+      walletAddress: binding.walletAddress,
+    };
   }
 
   async getWallet(authority: ArcHostedAuthority): Promise<CircleHostedWalletInfo> {
@@ -163,17 +185,14 @@ export class CircleHostedWalletFacade {
     authority: ArcHostedAuthority,
     input: CircleHostedTransferInput,
   ): Promise<{ transactionId: string; state: string }> {
-    const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
+    const { walletAddress } = await this.validateAndResolvePrivateWalletId(authority);
     const validParams = CircleHostedTransferInputSchema.parse(input);
-
-    const tokenId = validParams.tokenId ?? ARC_HOSTED_USDC_TOKEN_ADDRESS;
 
     try {
       return await this.adapter.createDeveloperTransfer({
-        walletId: circleWalletId,
+        walletAddress,
         destinationAddress: validParams.toAddress,
         amount: validParams.amount,
-        tokenId,
         idempotencyKey: validParams.idempotencyKey,
       });
     } catch (err) {
@@ -206,7 +225,12 @@ export class CircleHostedWalletFacade {
     transactionId: string,
   ): Promise<{ transactionId: string; state: string; txHash?: string }> {
     const { circleWalletId } = await this.validateAndResolvePrivateWalletId(authority);
-    if (!transactionId || typeof transactionId !== "string" || transactionId.trim().length === 0) {
+    if (
+      !transactionId
+      || typeof transactionId !== "string"
+      || transactionId.trim().length === 0
+      || transactionId.length > 256
+    ) {
       throw new Error("Invalid transactionId");
     }
 
@@ -224,17 +248,37 @@ export class CircleHostedWalletFacade {
 
   async createAppKitAdapter(authority: ArcHostedAuthority): Promise<ArcAppKitService> {
     const { walletAddress } = await this.validateAndResolvePrivateWalletId(authority);
-    const baseService = createArcAppKitService();
+    const baseService = this.appKitServiceFactory();
+    const boundAddressLower = walletAddress.toLowerCase();
 
-    return {
+    const tenantBoundService: ArcAppKitService = {
       ...baseService,
-      async getUnifiedBalances(rawAddress: string, includePending?: boolean) {
-        if (!rawAddress || rawAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      async getUnifiedBalances(rawAddress, includePending) {
+        if (!rawAddress || rawAddress.toLowerCase() !== boundAddressLower) {
           throw new Error("Access denied: address does not match tenant-bound wallet address");
         }
-        return baseService.getUnifiedBalances(rawAddress, includePending ?? false);
+        return baseService.getUnifiedBalances(walletAddress, includePending);
+      },
+      async estimateBridge(params) {
+        if (params.sourceAddress.toLowerCase() !== boundAddressLower) {
+          throw new Error("Access denied: sourceAddress does not match tenant-bound wallet address");
+        }
+        return baseService.estimateBridge({
+          ...params,
+          sourceAddress: walletAddress,
+        });
+      },
+      async estimateSwap(params) {
+        if (params.walletAddress.toLowerCase() !== boundAddressLower) {
+          throw new Error("Access denied: walletAddress does not match tenant-bound wallet address");
+        }
+        return baseService.estimateSwap({
+          ...params,
+          walletAddress,
+        });
       },
     };
+    return tenantBoundService;
   }
 
   getCapabilityMatrix(): readonly HostedToolCapability[] {
