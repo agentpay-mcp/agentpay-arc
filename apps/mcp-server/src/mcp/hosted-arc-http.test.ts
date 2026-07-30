@@ -468,13 +468,18 @@ function createPaymentRepositoryFake(options: {
 
 function createMutationFacade(options: {
   readonly balance?: string;
+  readonly beforeBalancesReturn?: (
+    call: number,
+  ) => Promise<void>;
   readonly transfer?: (
     call: number,
   ) => Promise<{ transactionId: string; state: string }>;
 } = {}): {
   readonly facade: HostedArcWalletFacade;
+  readonly balanceCalls: () => number;
   readonly transferCalls: () => number;
 } {
+  let balanceCalls = 0;
   let transferCalls = 0;
   const facade: HostedArcWalletFacade = {
     async getWallet(authority) {
@@ -487,6 +492,8 @@ function createMutationFacade(options: {
       };
     },
     async getBalances() {
+      balanceCalls += 1;
+      await options.beforeBalancesReturn?.(balanceCalls);
       return [
         {
           symbol: "USDC",
@@ -515,6 +522,7 @@ function createMutationFacade(options: {
   };
   return {
     facade,
+    balanceCalls: () => balanceCalls,
     transferCalls: () => transferCalls,
   };
 }
@@ -1139,9 +1147,18 @@ describe("hosted Arc Streamable MCP surface", () => {
     const mcpTransferGate = new Promise<void>((resolveGate) => {
       releaseMcpTransfer = resolveGate;
     });
+    let releaseApiBalance = () => {};
+    const apiBalanceGate = new Promise<void>((resolveGate) => {
+      releaseApiBalance = resolveGate;
+    });
     let authorityRevoked = false;
     const payment = createPaymentRepositoryFake();
     const wallet = createMutationFacade({
+      async beforeBalancesReturn(call) {
+        if (call === 2) {
+          await apiBalanceGate;
+        }
+      },
       async transfer(call) {
         if (call === 1) {
           await mcpTransferGate;
@@ -1220,8 +1237,14 @@ describe("hosted Arc Streamable MCP surface", () => {
       );
       await new Promise<void>((resolveImmediate) =>
         setImmediate(resolveImmediate));
-      authorityRevoked = true;
       releaseMcpTransfer();
+      await waitFor(
+        () =>
+          payment.calls.claims.length === 2
+          && wallet.balanceCalls() === 2,
+      );
+      authorityRevoked = true;
+      releaseApiBalance();
 
       const [mcpResult, apiResult] = await Promise.all([
         mcpSend,
@@ -1234,9 +1257,14 @@ describe("hosted Arc Streamable MCP surface", () => {
         error: "Hosted Arc request failed",
       });
       assert.equal(wallet.transferCalls(), 1);
-      assert.equal(payment.calls.claims.length, 1);
+      assert.equal(payment.calls.claims.length, 2);
+      assert.equal(
+        payment.receipts.get(SECOND_IDEMPOTENCY_KEY)?.status,
+        "FAILED",
+      );
     } finally {
       releaseMcpTransfer();
+      releaseApiBalance();
       await client.close();
       await server.close();
     }
@@ -2058,6 +2086,137 @@ describe("hosted Arc durable mutation coordinator", () => {
       assert.equal(wallet.transferCalls(), 1, name);
       assert.equal(payment.calls.claims.length, 1, name);
     }
+  });
+
+  it("revalidates after balance preflight and fails the claimed receipt before any transfer on authority drift", async () => {
+    const staleAuthorities: ReadonlyArray<
+      readonly [string, ArcHostedAuthority | null]
+    > = [
+      [
+        "paused",
+        { ...baseAuthority, accountStatus: "PAUSED" },
+      ],
+      [
+        "closed",
+        { ...baseAuthority, accountStatus: "CLOSED" },
+      ],
+      ["missing", null],
+      [
+        "auth epoch drift",
+        { ...baseAuthority, authEpoch: baseAuthority.authEpoch + 1 },
+      ],
+    ];
+
+    for (const [name, staleAuthority] of staleAuthorities) {
+      let releaseBalance = () => {};
+      const balanceGate = new Promise<void>((resolveGate) => {
+        releaseBalance = resolveGate;
+      });
+      let freshAuthority: ArcHostedAuthority | null = {
+        ...baseAuthority,
+      };
+      const payment = createPaymentRepositoryFake();
+      const wallet = createMutationFacade({
+        async beforeBalancesReturn() {
+          await balanceGate;
+        },
+      });
+      const coordinator = createHostedArcMutationCoordinator({
+        facade: wallet.facade,
+        resolveFreshAuthority: async () =>
+          freshAuthority ? { ...freshAuthority } : null,
+        paymentsForTenant: () => payment.repository,
+        hasConflictingUnresolvedMutation: (
+          authority,
+          idempotencyKey,
+        ) =>
+          hasConflictingUnresolvedMutation(
+            payment,
+            authority,
+            idempotencyKey,
+          ),
+      });
+
+      const mutation = coordinator.sendUsdc(baseAuthority, {
+        destination: RECIPIENT_ADDRESS,
+        amount: "1",
+        idempotencyKey: IDEMPOTENCY_KEY,
+        purpose: `${name}-post-balance-check`,
+      });
+      await waitFor(
+        () =>
+          payment.calls.claims.length === 1
+          && wallet.balanceCalls() === 1,
+      );
+      freshAuthority = staleAuthority;
+      releaseBalance();
+
+      await assert.rejects(
+        mutation,
+        /authority is stale, inactive, or unavailable/,
+        name,
+      );
+      assert.equal(wallet.transferCalls(), 0, name);
+      assert.equal(
+        payment.receipts.get(IDEMPOTENCY_KEY)?.status,
+        "FAILED",
+        name,
+      );
+      assert.deepEqual(
+        payment.calls.transitions.map(({ status }) => status),
+        ["FAILED"],
+        name,
+      );
+    }
+  });
+
+  it("returns reconciliation without transfer when stale-authority failure cannot be recorded durably", async () => {
+    let authorityChecks = 0;
+    const payment = createPaymentRepositoryFake({
+      async beforeTransition(receipt) {
+        if (receipt.status === "FAILED") {
+          throw new Error("durable transition unavailable");
+        }
+      },
+    });
+    const wallet = createMutationFacade();
+    const coordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      async resolveFreshAuthority(trustedAuthority) {
+        authorityChecks += 1;
+        return authorityChecks === 1
+          ? { ...trustedAuthority }
+          : null;
+      },
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: (
+        authority,
+        idempotencyKey,
+      ) =>
+        hasConflictingUnresolvedMutation(
+          payment,
+          authority,
+          idempotencyKey,
+        ),
+    });
+
+    const result = await coordinator.sendUsdc(baseAuthority, {
+      destination: RECIPIENT_ADDRESS,
+      amount: "1",
+      idempotencyKey: IDEMPOTENCY_KEY,
+      purpose: "stale authority with undurable failure",
+    });
+
+    assert.deepEqual(result, {
+      status: "RECONCILIATION_REQUIRED",
+      reconciliationRequired: true,
+    });
+    assert.equal(authorityChecks, 2);
+    assert.equal(wallet.transferCalls(), 0);
+    assert.equal(
+      payment.receipts.get(IDEMPOTENCY_KEY)?.status,
+      "SUBMITTING",
+    );
   });
 
   it("records timeout ambiguity before releasing the user queue and never retries a replay", async () => {

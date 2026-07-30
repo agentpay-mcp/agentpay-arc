@@ -104,7 +104,11 @@ export function createHostedArcMutationCoordinator(
           freshAuthority,
           input.idempotencyKey,
         );
-        return executeMutation(freshAuthority, input);
+        return executeMutation(
+          authority,
+          freshAuthority,
+          input,
+        );
       });
     },
   };
@@ -165,15 +169,17 @@ export function createHostedArcMutationCoordinator(
   }
 
   async function executeMutation(
-    authority: ArcHostedAuthority,
+    trustedAuthority: ArcHostedAuthority,
+    claimedAuthority: ArcHostedAuthority,
     input: z.output<typeof hostedMutationInputSchema>,
   ): Promise<HostedArcMutationOutput> {
-    const payments = options.paymentsForTenant(authority.tenantId);
+    const payments =
+      options.paymentsForTenant(claimedAuthority.tenantId);
     const claimedAt = clock().toISOString();
     const claim = await payments.claimReceipt({
       id: input.idempotencyKey,
       idempotencyKey: input.idempotencyKey,
-      walletAddress: authority.walletAddress,
+      walletAddress: claimedAuthority.walletAddress,
       recipient: input.destination,
       amount: input.amount,
       token: "USDC",
@@ -191,7 +197,7 @@ export function createHostedArcMutationCoordinator(
     try {
       await assertCanonicalBalance(
         options.facade,
-        authority,
+        claimedAuthority,
         input.amount,
       );
     } catch {
@@ -211,12 +217,36 @@ export function createHostedArcMutationCoordinator(
       throw new Error("Canonical USDC balance preflight failed");
     }
 
+    let transferAuthority: ArcHostedAuthority;
+    try {
+      transferAuthority =
+        await resolveFreshAuthority(trustedAuthority);
+    } catch {
+      const failed = await transitionSafely(
+        payments,
+        {
+          ...claim.receipt,
+          status: "FAILED",
+          errorMessage:
+            "Hosted authority changed before transfer",
+          updatedAt: clock().toISOString(),
+        },
+        "SUBMITTING",
+      );
+      if (!failed) {
+        return reconciliationOutput(claim.receipt);
+      }
+      throw new Error(
+        "Hosted authority is stale, inactive, or unavailable",
+      );
+    }
+
     let transfer:
       | { readonly transactionId: string; readonly state: string }
       | undefined;
     try {
       transfer = await withTimeout(
-        options.facade.transferTokens(authority, {
+        options.facade.transferTokens(transferAuthority, {
           toAddress: input.destination,
           amount: input.amount,
           idempotencyKey: input.idempotencyKey,
