@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node ../../deploy/arc/generate-artifact-manifest.mjs",
     "test": "tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
     "test:coverage": "node scripts/verify-coverage.mjs",
     "test:e2e": "playwright test --config playwright.config.ts",

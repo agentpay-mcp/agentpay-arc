@@ -10,7 +10,7 @@ Group=agentpay-arc-web
 WorkingDirectory=/opt/agentpay-arc/releases/@RELEASE_COMMIT@
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/agentpay-arc/web.env
-ExecStartPre=/usr/bin/node /opt/agentpay-arc/releases/@RELEASE_COMMIT@/deploy/arc/validate-env.mjs web
+ExecStartPre=/usr/bin/node /opt/agentpay-arc/releases/@RELEASE_COMMIT@/deploy/arc/validate-env.mjs web /opt/agentpay-arc/releases/@RELEASE_COMMIT@/apps/arc-web/dist/arc-artifact-manifest.json
 ExecStart=/usr/bin/node /opt/agentpay-arc/releases/@RELEASE_COMMIT@/deploy/arc/static-server.mjs --host 127.0.0.1 --port 3001 --root apps/arc-web/dist
 ExecStartPost=/usr/bin/curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3001/healthz
 Restart=on-failure

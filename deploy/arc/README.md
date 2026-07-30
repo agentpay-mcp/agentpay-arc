@@ -112,8 +112,8 @@ After an authorized activation, verify locally before public traffic:
 
 ```sh
 curl --fail --silent http://127.0.0.1:3001/healthz
-curl --fail --silent http://127.0.0.1:3002/healthz
-curl --fail --silent http://127.0.0.1:3002/readyz
+curl --fail --silent --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3002/healthz
+curl --fail --silent --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3002/readyz
 ```
 
 Then verify the two TLS hosts, OAuth discovery, consent, token exchange, and an

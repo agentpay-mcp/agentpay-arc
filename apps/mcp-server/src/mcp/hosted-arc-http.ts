@@ -5,6 +5,8 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
+import { isIP } from "node:net";
+import type { Socket } from "node:net";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -184,6 +186,22 @@ interface RequestContext {
   readonly readinessTimeoutMs: number;
   readonly rateLimiter: RateLimiter;
 }
+function extractClientIp(
+  socket: Socket,
+  forwardedFor: string | string[] | undefined,
+): string {
+  const remoteAddress = socket.remoteAddress ?? "unknown";
+  if (remoteAddress === "127.0.0.1" || remoteAddress === "::1" || remoteAddress === "::ffff:127.0.0.1") {
+    if (typeof forwardedFor === "string") {
+      const firstIp = forwardedFor.split(",")[0].trim();
+      if (isIP(firstIp) !== 0) {
+        return firstIp;
+      }
+    }
+  }
+  return remoteAddress;
+}
+
 async function handleRequest(context: RequestContext): Promise<void> {
   const { request, response, config } = context;
   const url = parseAndValidateRequestUrl(request, config);
@@ -192,7 +210,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
     applyCorsHeaders(response, origin);
   }
   context.rateLimiter.assertAllowed(
-    request.socket.remoteAddress ?? "unknown",
+    extractClientIp(request.socket, request.headers["x-forwarded-for"]),
   );
   if (request.method === "OPTIONS") {
     handlePreflight(request, response, origin);

@@ -13,6 +13,7 @@ const deploymentFiles = Object.freeze({
   readme: "deploy/arc/README.md",
   rollback: "deploy/arc/ROLLBACK.md",
   validator: "deploy/arc/validate-env.mjs",
+  manifestGenerator: "deploy/arc/generate-artifact-manifest.mjs",
   staticServer: "deploy/arc/static-server.mjs",
   webEnv: "deploy/arc/env/web.env.example",
   mcpEnv: "deploy/arc/env/mcp.env.example",
@@ -32,7 +33,6 @@ const validMcpEnv = Object.freeze({
   ARC_SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-value-with-32-bytes",
   ARC_CIRCLE_API_KEY: "fake-circle-api-key-with-32-bytes",
   ARC_CIRCLE_ENTITY_SECRET: "f".repeat(64),
-  ARC_APP_KIT_KEY: "fake-app-kit-key-with-32-bytes",
   ARC_MCP_HOST: "127.0.0.1",
   ARC_MCP_PORT: "3002",
 });
@@ -90,6 +90,10 @@ describe("Arc-only hosted deployment artifacts", () => {
       webService,
       /validate-env\.mjs web[\s\S]*static-server\.mjs --host 127\.0\.0\.1 --port 3001/,
     );
+    assert.match(
+      webService,
+      /arc-artifact-manifest\.json/,
+    );
     assert.match(webService, /^SocketBindAllow=tcp:3001$/m);
     assert.match(webService, /^NoNewPrivileges=true$/m);
     assert.match(webService, /^ProtectSystem=strict$/m);
@@ -117,6 +121,10 @@ describe("Arc-only hosted deployment artifacts", () => {
     assert.match(mcpService, /^RestartSec=5$/m);
     assert.match(mcpService, /^TimeoutStartSec=45$/m);
     assert.match(mcpService, /127\.0\.0\.1:3002\/healthz/);
+	    assert.match(
+	      mcpService,
+	      /Host: mcp\.arc\.agentpay\.site/,
+	    );
     assert.doesNotMatch(mcpService, /^Environment=.*(?:KEY|SECRET|TOKEN)=/m);
 
     assert.match(
@@ -195,11 +203,10 @@ describe("Arc-only hosted deployment artifacts", () => {
       assert.match(arcBlock, new RegExp(`^${key}=`, "m"));
       assert.doesNotMatch(webEnv, new RegExp(`^${key}=`, "m"));
     }
-    assert.doesNotMatch(webEnv, /SERVICE_ROLE|CIRCLE|ENTITY_SECRET|APP_KIT/);
+    assert.doesNotMatch(webEnv, /SERVICE_ROLE|CIRCLE|ENTITY_SECRET/);
     assert.match(mcpEnv, /^ARC_SUPABASE_SERVICE_ROLE_KEY=$/m);
     assert.match(mcpEnv, /^ARC_CIRCLE_API_KEY=$/m);
     assert.match(mcpEnv, /^ARC_CIRCLE_ENTITY_SECRET=$/m);
-    assert.match(mcpEnv, /^ARC_APP_KIT_KEY=$/m);
   });
 
   it("fails closed on missing, unsafe, or cross-product environment values", async () => {
@@ -322,6 +329,70 @@ describe("Arc-only hosted deployment artifacts", () => {
           }
         });
       });
+    }
+  });
+
+  it("generates and verifies the artifact manifest from the Vite build environment", async () => {
+    const { writeFile, mkdtemp } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const tmpDir = await mkdtemp(join(tmpdir(), "arc-artifact-test-"));
+    const manifestPath = join(tmpDir, "arc-artifact-manifest.json");
+
+    const testEnv = {
+      VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
+      VITE_ARC_API_ORIGIN: "https://mcp.arc.agentpay.site",
+      VITE_ARC_SUPABASE_URL: "https://project-ref.supabase.co",
+      VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fake_key",
+    };
+
+    const originalEnv = { ...process.env };
+    Object.assign(process.env, testEnv);
+
+    try {
+      const { generateArtifactManifest } = await import(
+        "../deploy/arc/generate-artifact-manifest.mjs"
+      );
+      const manifest = generateArtifactManifest();
+      assert.ok(manifest);
+      assert.equal(manifest.VITE_ARC_PUBLIC_ORIGIN, testEnv.VITE_ARC_PUBLIC_ORIGIN);
+      assert.equal(manifest.VITE_ARC_API_ORIGIN, testEnv.VITE_ARC_API_ORIGIN);
+      assert.equal(manifest.VITE_ARC_SUPABASE_URL, testEnv.VITE_ARC_SUPABASE_URL);
+      assert.equal(
+        manifest.VITE_ARC_SUPABASE_PUBLISHABLE_KEY,
+        testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY,
+      );
+      assert.equal(Object.keys(manifest).length, 4);
+
+      await writeFile(manifestPath, JSON.stringify(manifest));
+
+      const { verifyArtifactManifest } = await import(
+        "../deploy/arc/validate-env.mjs"
+      );
+      await verifyArtifactManifest(process.env, manifestPath);
+
+      const badManifestPath = join(tmpDir, "bad-manifest.json");
+      await writeFile(
+        badManifestPath,
+        JSON.stringify({
+          VITE_ARC_API_ORIGIN: "https://attacker.invalid",
+          VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
+          VITE_ARC_SUPABASE_URL: "https://project-ref.supabase.co",
+          VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fake_key",
+        }),
+      );
+      await assert.rejects(
+        verifyArtifactManifest(process.env, badManifestPath),
+        /mismatch/,
+      );
+
+      const missingPath = join(tmpDir, "nonexistent.json");
+      await assert.rejects(
+        verifyArtifactManifest(process.env, missingPath),
+        /not found/,
+      );
+    } finally {
+      process.env = originalEnv;
     }
   });
 });

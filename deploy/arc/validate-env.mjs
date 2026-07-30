@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -24,7 +25,6 @@ const MCP_KEYS = Object.freeze([
   "ARC_SUPABASE_SERVICE_ROLE_KEY",
   "ARC_CIRCLE_API_KEY",
   "ARC_CIRCLE_ENTITY_SECRET",
-  "ARC_APP_KIT_KEY",
   "ARC_MCP_HOST",
   "ARC_MCP_PORT",
 ]);
@@ -185,14 +185,12 @@ function validateMcpEnvironment(env) {
     "ARC_CIRCLE_ENTITY_SECRET",
     64,
   );
-  const appKitKey = requiredValue(env, "ARC_APP_KIT_KEY", 16);
   if (!/^[a-fA-F0-9]{64}$/.test(circleEntitySecret)) {
     throw new Error("ARC_CIRCLE_ENTITY_SECRET must be a 32-byte hex value");
   }
   if (
     publishableKey === serviceRoleKey
     || circleApiKey === circleEntitySecret
-    || circleApiKey === appKitKey
   ) {
     throw new Error("Arc public and secret credentials must be distinct");
   }
@@ -207,10 +205,40 @@ function validateMcpEnvironment(env) {
     ARC_SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
     ARC_CIRCLE_API_KEY: circleApiKey,
     ARC_CIRCLE_ENTITY_SECRET: circleEntitySecret,
-    ARC_APP_KIT_KEY: appKitKey,
     ARC_MCP_HOST: MCP_HOST,
     ARC_MCP_PORT: MCP_PORT,
   });
+}
+
+export async function verifyArtifactManifest(
+  env,
+  artifactManifestPath,
+) {
+  let manifestContent;
+  try {
+    manifestContent = await readFile(artifactManifestPath, "utf8");
+  } catch {
+    throw new Error(
+      `Artifact manifest not found at ${artifactManifestPath}`,
+    );
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestContent);
+  } catch {
+    throw new Error(
+      `Artifact manifest at ${artifactManifestPath} is not valid JSON`,
+    );
+  }
+  for (const key of Object.keys(manifest)) {
+    const expected = manifest[key];
+    const actual = env[key]?.trim();
+    if (actual !== expected) {
+      throw new Error(
+        `Artifact manifest ${key} mismatch: manifest has ${JSON.stringify(expected)}, runtime has ${JSON.stringify(actual)}`,
+      );
+    }
+  }
 }
 
 export function validateArcDeploymentEnvironment(scope, env) {
@@ -232,10 +260,20 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
+  const scope = process.argv[2];
+  let artifactManifestPath;
+  if (scope === "web") {
+    artifactManifestPath =
+      process.argv[3]
+        ?? resolve(process.env.ARC_ARTIFACT_MANIFEST_PATH ?? "./dist/arc-artifact-manifest.json");
+  }
   try {
-    validateArcDeploymentEnvironment(process.argv[2], process.env);
+    await validateArcDeploymentEnvironment(scope, process.env);
+    if (artifactManifestPath) {
+      await verifyArtifactManifest(process.env, artifactManifestPath);
+    }
     process.stdout.write(
-      `${JSON.stringify({ event: "arc_config_valid", scope: process.argv[2] })}\n`,
+      `${JSON.stringify({ event: "arc_config_valid", scope, verifiedArtifacts: Boolean(artifactManifestPath) })}\n`,
     );
   } catch (error) {
     process.stderr.write(

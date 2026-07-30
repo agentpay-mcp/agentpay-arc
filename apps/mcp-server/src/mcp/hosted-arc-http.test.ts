@@ -1824,6 +1824,60 @@ describe("hosted Arc HTTP protocol hardening", () => {
       await server.close();
     }
   });
+
+  it("gives independent rate-limit buckets to distinct forwarded clients from loopback", async () => {
+    const { server } = await startTestServer(
+      createHttpTestContext(),
+      { rateLimitMaxRequests: 2 },
+    );
+    try {
+      const options = (ip: string) => ({
+        headers: { "x-forwarded-for": ip },
+      });
+
+      assert.equal(
+        (await fetch(server.healthUrl, options("198.51.100.10"))).status,
+        200,
+      );
+      assert.equal(
+        (await fetch(server.healthUrl, options("198.51.100.10"))).status,
+        200,
+      );
+      assert.equal(
+        (await fetch(server.healthUrl, options("198.51.100.10"))).status,
+        429,
+      );
+
+      assert.equal(
+        (await fetch(server.healthUrl, options("203.0.113.20"))).status,
+        200,
+      );
+      assert.equal(
+        (await fetch(server.healthUrl, options("203.0.113.20"))).status,
+        200,
+      );
+      assert.equal(
+        (await fetch(server.healthUrl, options("203.0.113.20"))).status,
+        429,
+      );
+
+      assert.equal(
+        (await fetch(server.healthUrl)).status,
+        200,
+        "a request without X-Forwarded-For uses socket address and gets a fresh bucket",
+      );
+      assert.equal(
+        (await fetch(server.healthUrl)).status,
+        200,
+      );
+      assert.equal(
+        (await fetch(server.healthUrl)).status,
+        429,
+      );
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe("hosted Arc durable mutation coordinator", () => {
