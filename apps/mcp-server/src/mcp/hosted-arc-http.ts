@@ -186,7 +186,7 @@ interface RequestContext {
   readonly readinessTimeoutMs: number;
   readonly rateLimiter: RateLimiter;
 }
-function extractClientIp(
+export function extractClientIp(
   socket: Socket,
   forwardedFor: string | string[] | undefined,
 ): string {

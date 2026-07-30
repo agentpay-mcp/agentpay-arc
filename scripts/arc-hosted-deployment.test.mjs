@@ -366,30 +366,71 @@ describe("Arc-only hosted deployment artifacts", () => {
 
       await writeFile(manifestPath, JSON.stringify(manifest));
 
+      const distFilePath = join(tmpDir, "index.html");
+      await writeFile(
+        distFilePath,
+        `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src ${testEnv.VITE_ARC_API_ORIGIN} ${testEnv.VITE_ARC_SUPABASE_URL};" /><meta name="api-origin" content="${testEnv.VITE_ARC_API_ORIGIN}" /></head><body><main>Arc</main><script>window.__PUBLISHABLE_KEY__ = "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}";</script></body></html>`,
+      );
+
       const { verifyArtifactManifest } = await import(
         "../deploy/arc/validate-env.mjs"
       );
       await verifyArtifactManifest(process.env, manifestPath);
 
-      const badManifestPath = join(tmpDir, "bad-manifest.json");
+      const extraManifestPath = join(tmpDir, "extra-keys.json");
       await writeFile(
-        badManifestPath,
-        JSON.stringify({
-          VITE_ARC_API_ORIGIN: "https://attacker.invalid",
-          VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
-          VITE_ARC_SUPABASE_URL: "https://project-ref.supabase.co",
-          VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fake_key",
-        }),
+        extraManifestPath,
+        JSON.stringify({ ...manifest, EXTRA_KEY: "should-be-rejected" }),
       );
       await assert.rejects(
-        verifyArtifactManifest(process.env, badManifestPath),
-        /mismatch/,
+        verifyArtifactManifest(process.env, extraManifestPath),
+        /unexpected key/,
       );
 
-      const missingPath = join(tmpDir, "nonexistent.json");
+      const emptyManifestPath = join(tmpDir, "empty.json");
+      await writeFile(emptyManifestPath, "{}");
       await assert.rejects(
-        verifyArtifactManifest(process.env, missingPath),
-        /not found/,
+        verifyArtifactManifest(process.env, emptyManifestPath),
+        /exactly 4 keys/,
+      );
+
+      const partialManifestPath = join(tmpDir, "partial.json");
+      await writeFile(
+        partialManifestPath,
+        JSON.stringify({ VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site" }),
+      );
+      await assert.rejects(
+        verifyArtifactManifest(process.env, partialManifestPath),
+        /exactly 4 keys/,
+      );
+
+      const distWithPlaceholder = join(tmpDir, "app.js");
+      await writeFile(
+        distWithPlaceholder,
+        "const apiOrigin = '%VITE_ARC_API_ORIGIN%';",
+      );
+      await assert.rejects(
+        verifyArtifactManifest(
+          process.env,
+          manifestPath,
+        ),
+        /unresolved VITE_ARC_ placeholder/,
+      );
+
+      const { rm } = await import("node:fs/promises");
+      await rm(distWithPlaceholder);
+
+      const distWithoutOrigin = join(tmpDir, "chunk.js");
+      await writeFile(
+        distWithoutOrigin,
+        "const data = JSON.parse('{}');",
+      );
+      await assert.rejects(
+        verifyArtifactManifest(
+          process.env,
+          manifestPath,
+        ),
+        /does not contain manifest value/,
       );
     } finally {
       process.env = originalEnv;

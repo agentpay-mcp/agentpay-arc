@@ -1,6 +1,13 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
+
+const MANIFEST_KEYS = Object.freeze([
+  "VITE_ARC_PUBLIC_ORIGIN",
+  "VITE_ARC_API_ORIGIN",
+  "VITE_ARC_SUPABASE_URL",
+  "VITE_ARC_SUPABASE_PUBLISHABLE_KEY",
+]);
 
 const PUBLIC_ORIGIN = "https://arc.agentpay.site";
 const API_ORIGIN = "https://mcp.arc.agentpay.site";
@@ -230,13 +237,71 @@ export async function verifyArtifactManifest(
       `Artifact manifest at ${artifactManifestPath} is not valid JSON`,
     );
   }
-  for (const key of Object.keys(manifest)) {
+  const manifestKeys = Object.keys(manifest);
+  for (const key of manifestKeys) {
+    if (!MANIFEST_KEYS.includes(key)) {
+      throw new Error(
+        `Artifact manifest contains unexpected key: ${key}`,
+      );
+    }
+  }
+  if (manifestKeys.length !== MANIFEST_KEYS.length) {
+    throw new Error(
+      `Artifact manifest must have exactly ${MANIFEST_KEYS.length} keys, got ${manifestKeys.length}`,
+    );
+  }
+  for (const key of MANIFEST_KEYS) {
+    if (!(key in manifest)) {
+      throw new Error(
+        `Artifact manifest is missing required key: ${key}`,
+      );
+    }
     const expected = manifest[key];
+    if (typeof expected !== "string" || expected.trim().length === 0) {
+      throw new Error(
+        `Artifact manifest ${key} must be a non-empty string`,
+      );
+    }
     const actual = env[key]?.trim();
     if (actual !== expected) {
       throw new Error(
         `Artifact manifest ${key} mismatch: manifest has ${JSON.stringify(expected)}, runtime has ${JSON.stringify(actual)}`,
       );
+    }
+  }
+
+  const distDir = resolve(dirname(artifactManifestPath));
+  await verifyArtifactDistFiles(distDir, manifest);
+}
+
+async function verifyArtifactDistFiles(
+  distDir,
+  manifest,
+) {
+  const placeholderPattern = /%VITE_ARC_[A-Z_]+%/;
+  const distFiles = await readdir(distDir, { withFileTypes: true });
+  for (const entry of distFiles) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const filePath = resolve(distDir, entry.name);
+    const content = await readFile(filePath, "utf8");
+
+    if (placeholderPattern.test(content)) {
+      throw new Error(
+        `Artifact dist file ${entry.name} contains unresolved VITE_ARC_ placeholder`,
+      );
+    }
+
+    for (const key of MANIFEST_KEYS) {
+      const value = manifest[key];
+      if (typeof value === "string" && value.length > 0) {
+        if (!content.includes(value)) {
+          throw new Error(
+            `Artifact dist file ${entry.name} does not contain manifest value for ${key} (${JSON.stringify(value)})`,
+          );
+        }
+      }
     }
   }
 }

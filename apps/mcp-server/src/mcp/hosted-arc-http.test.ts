@@ -1878,6 +1878,60 @@ describe("hosted Arc HTTP protocol hardening", () => {
       await server.close();
     }
   });
+
+  it("rejects spoofed X-Forwarded-For from non-loopback peers", async () => {
+    const { extractClientIp } = await import("./hosted-arc-http.ts");
+    const mockSocket = (ip: string) =>
+      ({ remoteAddress: ip }) as import("node:net").Socket;
+
+    const loopbackResult = extractClientIp(
+      mockSocket("127.0.0.1"),
+      "198.51.100.10",
+    );
+    assert.equal(loopbackResult, "198.51.100.10");
+
+    const nonLoopbackResult = extractClientIp(
+      mockSocket("192.168.1.1"),
+      "203.0.113.20",
+    );
+    assert.equal(
+      nonLoopbackResult,
+      "192.168.1.1",
+      "non-loopback peer must use socket address, not X-Forwarded-For",
+    );
+
+    const ipv6LoopbackResult = extractClientIp(
+      mockSocket("::1"),
+      "198.51.100.10",
+    );
+    assert.equal(ipv6LoopbackResult, "198.51.100.10");
+
+    const ipv6MappedLoopbackResult = extractClientIp(
+      mockSocket("::ffff:127.0.0.1"),
+      "198.51.100.10",
+    );
+    assert.equal(ipv6MappedLoopbackResult, "198.51.100.10");
+
+    const invalidForwardedResult = extractClientIp(
+      mockSocket("127.0.0.1"),
+      "not-an-ip-address",
+    );
+    assert.equal(
+      invalidForwardedResult,
+      "127.0.0.1",
+      "invalid X-Forwarded-For must fall back to socket address",
+    );
+
+    const multipleIpsResult = extractClientIp(
+      mockSocket("127.0.0.1"),
+      "198.51.100.10, 203.0.113.20",
+    );
+    assert.equal(
+      multipleIpsResult,
+      "198.51.100.10",
+      "multiple X-Forwarded-For IPs must use the first address",
+    );
+  });
 });
 
 describe("hosted Arc durable mutation coordinator", () => {
