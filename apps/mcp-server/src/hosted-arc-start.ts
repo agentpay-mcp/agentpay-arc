@@ -85,6 +85,12 @@ export async function startHostedArcFromEnv(
   );
   const mutationCoordinator = createHostedArcMutationCoordinator({
     facade,
+    resolveFreshAuthority(authority) {
+      return repository.resolveHostedAuthority({
+        authUserId: authority.authUserId,
+        oauthClientId: authority.oauthClientId,
+      });
+    },
     paymentsForTenant(tenantId) {
       return createTenantArcPaymentRepositories(
         paymentClient,

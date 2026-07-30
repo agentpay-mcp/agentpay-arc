@@ -49,6 +49,9 @@ export interface HostedArcMutationCoordinatorOptions {
   readonly paymentsForTenant: (
     tenantId: string,
   ) => ArcPaymentRepository;
+  readonly resolveFreshAuthority: (
+    trustedAuthority: ArcHostedAuthority,
+  ) => Promise<ArcHostedAuthority | null>;
   readonly hasConflictingUnresolvedMutation: (
     authority: ArcHostedAuthority,
     idempotencyKey: string,
@@ -95,15 +98,48 @@ export function createHostedArcMutationCoordinator(
       }
       const input = hostedMutationInputSchema.parse(rawInput);
       return enqueue(authority.authUserId, async () => {
+        const freshAuthority =
+          await resolveFreshAuthority(authority);
         await assertNoConflictingUnresolvedMutation(
-          authority,
+          freshAuthority,
           input.idempotencyKey,
         );
-        return executeMutation(authority, input);
+        return executeMutation(freshAuthority, input);
       });
     },
   };
   return Object.freeze(coordinator);
+
+  async function resolveFreshAuthority(
+    trustedAuthority: ArcHostedAuthority,
+  ): Promise<ArcHostedAuthority> {
+    let resolved: ArcHostedAuthority | null;
+    try {
+      const rawResolved =
+        await options.resolveFreshAuthority(trustedAuthority);
+      resolved = rawResolved
+        ? ArcHostedAuthoritySchema.parse(rawResolved)
+        : null;
+    } catch {
+      throw new Error(
+        "Hosted authority is stale, inactive, or unavailable",
+      );
+    }
+    if (
+      !resolved
+      || resolved.accountStatus !== "ACTIVE"
+      || resolved.authUserId !== trustedAuthority.authUserId
+      || resolved.tenantId !== trustedAuthority.tenantId
+      || resolved.walletAddress !== trustedAuthority.walletAddress
+      || resolved.oauthClientId !== trustedAuthority.oauthClientId
+      || resolved.authEpoch !== trustedAuthority.authEpoch
+    ) {
+      throw new Error(
+        "Hosted authority is stale, inactive, or unavailable",
+      );
+    }
+    return Object.freeze({ ...resolved });
+  }
 
   async function assertNoConflictingUnresolvedMutation(
     authority: ArcHostedAuthority,

@@ -536,6 +536,12 @@ async function hasConflictingUnresolvedMutation(
   );
 }
 
+async function resolveUnchangedAuthority(
+  trustedAuthority: ArcHostedAuthority,
+): Promise<ArcHostedAuthority> {
+  return { ...trustedAuthority };
+}
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 1_000,
@@ -1127,6 +1133,114 @@ describe("hosted Arc Streamable MCP surface", () => {
       await server.close();
     }
   });
+
+  it("shares queued authority revalidation between MCP sends and API withdrawals", async () => {
+    let releaseMcpTransfer = () => {};
+    const mcpTransferGate = new Promise<void>((resolveGate) => {
+      releaseMcpTransfer = resolveGate;
+    });
+    let authorityRevoked = false;
+    const payment = createPaymentRepositoryFake();
+    const wallet = createMutationFacade({
+      async transfer(call) {
+        if (call === 1) {
+          await mcpTransferGate;
+        }
+        return {
+          transactionId: `circle-tx-${call}`,
+          state: "INITIATED",
+        };
+      },
+    });
+    const mutationCoordinator =
+      createHostedArcMutationCoordinator({
+        facade: wallet.facade,
+        resolveFreshAuthority: async (trustedAuthority) =>
+          authorityRevoked ? null : { ...trustedAuthority },
+        paymentsForTenant: () => payment.repository,
+        hasConflictingUnresolvedMutation: (
+          authority,
+          idempotencyKey,
+        ) =>
+          hasConflictingUnresolvedMutation(
+            payment,
+            authority,
+            idempotencyKey,
+          ),
+      });
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      mutationCoordinator,
+    });
+    const client = new Client({
+      name: "hosted-arc-shared-mutation-queue",
+      version: "1.0.0",
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(server.mcpUrl),
+      {
+        requestInit: {
+          headers: {
+            authorization: `Bearer ${MCP_TOKEN}`,
+          },
+        },
+      },
+    );
+
+    try {
+      await client.connect(transport);
+      const mcpSend = client.callTool({
+        name: "send_usdc",
+        arguments: {
+          recipient: RECIPIENT_ADDRESS,
+          amount: "1",
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
+      });
+      await waitFor(() => wallet.transferCalls() === 1);
+      context.setAuthority({
+        ...baseAuthority,
+        oauthClientId: undefined,
+      });
+      const authorityCallsBeforeApi = context.calls.authority.length;
+      const apiWithdrawal = postJson(
+        server,
+        "/api/account/withdraw",
+        BROWSER_TOKEN,
+        {
+          destination: RECIPIENT_ADDRESS,
+          amount: "1",
+          idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+          confirmed: true,
+        },
+      );
+      await waitFor(
+        () =>
+          context.calls.authority.length > authorityCallsBeforeApi,
+      );
+      await new Promise<void>((resolveImmediate) =>
+        setImmediate(resolveImmediate));
+      authorityRevoked = true;
+      releaseMcpTransfer();
+
+      const [mcpResult, apiResult] = await Promise.all([
+        mcpSend,
+        apiWithdrawal,
+      ]);
+      assert.notEqual(mcpResult.isError, true);
+      assert.equal(apiResult.status, 500);
+      assert.deepEqual(await apiResult.json(), {
+        success: false,
+        error: "Hosted Arc request failed",
+      });
+      assert.equal(wallet.transferCalls(), 1);
+      assert.equal(payment.calls.claims.length, 1);
+    } finally {
+      releaseMcpTransfer();
+      await client.close();
+      await server.close();
+    }
+  });
 });
 
 describe("hosted Arc authenticated JSON account API", () => {
@@ -1690,6 +1804,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     const wallet = createMutationFacade();
     const coordinator = createHostedArcMutationCoordinator({
       facade: wallet.facade,
+      resolveFreshAuthority: resolveUnchangedAuthority,
       paymentsForTenant(tenantId) {
         assert.equal(tenantId, TENANT_ID);
         return payment.repository;
@@ -1749,6 +1864,7 @@ describe("hosted Arc durable mutation coordinator", () => {
       const wallet = createMutationFacade({ balance });
       const coordinator = createHostedArcMutationCoordinator({
         facade: wallet.facade,
+        resolveFreshAuthority: resolveUnchangedAuthority,
         paymentsForTenant: () => payment.repository,
         hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
           hasConflictingUnresolvedMutation(
@@ -1798,6 +1914,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     });
     const coordinator = createHostedArcMutationCoordinator({
       facade: wallet.facade,
+      resolveFreshAuthority: resolveUnchangedAuthority,
       paymentsForTenant: () => payment.repository,
       hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
         hasConflictingUnresolvedMutation(
@@ -1845,6 +1962,104 @@ describe("hosted Arc durable mutation coordinator", () => {
     assert.equal(wallet.transferCalls(), 3);
   });
 
+  it("revalidates queued authority and rejects every inactive or identity-drifted mutation before transfer", async () => {
+    const staleAuthorities: ReadonlyArray<
+      readonly [string, ArcHostedAuthority | null]
+    > = [
+      [
+        "paused",
+        { ...baseAuthority, accountStatus: "PAUSED" },
+      ],
+      [
+        "closed",
+        { ...baseAuthority, accountStatus: "CLOSED" },
+      ],
+      ["missing", null],
+      [
+        "auth user drift",
+        { ...baseAuthority, authUserId: OTHER_AUTH_USER_ID },
+      ],
+      [
+        "tenant drift",
+        { ...baseAuthority, tenantId: OTHER_TENANT_ID },
+      ],
+      [
+        "wallet drift",
+        { ...baseAuthority, walletAddress: OTHER_WALLET_ADDRESS },
+      ],
+      [
+        "OAuth client drift",
+        { ...baseAuthority, oauthClientId: "other-client" },
+      ],
+      [
+        "auth epoch drift",
+        { ...baseAuthority, authEpoch: baseAuthority.authEpoch + 1 },
+      ],
+    ];
+
+    for (const [name, staleAuthority] of staleAuthorities) {
+      let releaseFirst = () => {};
+      const firstGate = new Promise<void>((resolveGate) => {
+        releaseFirst = resolveGate;
+      });
+      let freshAuthority: ArcHostedAuthority | null = {
+        ...baseAuthority,
+      };
+      const payment = createPaymentRepositoryFake();
+      const wallet = createMutationFacade({
+        async transfer(call) {
+          if (call === 1) {
+            await firstGate;
+          }
+          return {
+            transactionId: `circle-tx-${call}`,
+            state: "INITIATED",
+          };
+        },
+      });
+      const coordinator = createHostedArcMutationCoordinator({
+        facade: wallet.facade,
+        paymentsForTenant: () => payment.repository,
+        resolveFreshAuthority: async () =>
+          freshAuthority ? { ...freshAuthority } : null,
+        hasConflictingUnresolvedMutation: (
+          authority,
+          idempotencyKey,
+        ) =>
+          hasConflictingUnresolvedMutation(
+            payment,
+            authority,
+            idempotencyKey,
+          ),
+      });
+
+      const first = coordinator.sendUsdc(baseAuthority, {
+        destination: RECIPIENT_ADDRESS,
+        amount: "1",
+        idempotencyKey: IDEMPOTENCY_KEY,
+        purpose: `${name}-first`,
+      });
+      await waitFor(() => wallet.transferCalls() === 1);
+      const queued = coordinator.sendUsdc(baseAuthority, {
+        destination: RECIPIENT_ADDRESS,
+        amount: "1",
+        idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+        purpose: `${name}-queued`,
+      });
+      freshAuthority = staleAuthority;
+      releaseFirst();
+
+      await first;
+      await assert.rejects(
+        queued,
+        /authority is stale, inactive, or unavailable/,
+        name,
+      );
+      assert.equal(wallet.transferCalls(), 1, name);
+      assert.equal(payment.calls.claims.length, 1, name);
+    }
+  });
+
   it("records timeout ambiguity before releasing the user queue and never retries a replay", async () => {
     let releaseTransition = () => {};
     let transitionStarted = false;
@@ -1872,6 +2087,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     });
     const coordinator = createHostedArcMutationCoordinator({
       facade: wallet.facade,
+      resolveFreshAuthority: resolveUnchangedAuthority,
       paymentsForTenant: () => payment.repository,
       hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
         hasConflictingUnresolvedMutation(
@@ -1928,6 +2144,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     const restartedCoordinator =
       createHostedArcMutationCoordinator({
         facade: wallet.facade,
+        resolveFreshAuthority: resolveUnchangedAuthority,
         paymentsForTenant: () => payment.repository,
         hasConflictingUnresolvedMutation: (
           authority,
@@ -1973,6 +2190,7 @@ describe("hosted Arc durable mutation coordinator", () => {
       assert.throws(() =>
         createHostedArcMutationCoordinator({
           facade: wallet.facade,
+          resolveFreshAuthority: resolveUnchangedAuthority,
           paymentsForTenant: () => payment.repository,
           hasConflictingUnresolvedMutation: (
             authority,
@@ -1989,6 +2207,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     const unavailableGate =
       createHostedArcMutationCoordinator({
         facade: wallet.facade,
+        resolveFreshAuthority: resolveUnchangedAuthority,
         paymentsForTenant: () => payment.repository,
         async hasConflictingUnresolvedMutation() {
           throw new Error("raw durable query failure");
@@ -2022,6 +2241,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     });
     const bounded = createHostedArcMutationCoordinator({
       facade: boundedWallet.facade,
+      resolveFreshAuthority: resolveUnchangedAuthority,
       paymentsForTenant: () => payment.repository,
       hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
         hasConflictingUnresolvedMutation(
@@ -2086,6 +2306,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     const wallet = createMutationFacade();
     const coordinator = createHostedArcMutationCoordinator({
       facade: wallet.facade,
+      resolveFreshAuthority: resolveUnchangedAuthority,
       paymentsForTenant: () => transitionFailure.repository,
       hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
         hasConflictingUnresolvedMutation(
@@ -2132,6 +2353,7 @@ describe("hosted Arc durable mutation coordinator", () => {
     });
     const replayCoordinator = createHostedArcMutationCoordinator({
       facade: wallet.facade,
+      resolveFreshAuthority: resolveUnchangedAuthority,
       paymentsForTenant: () => replayRepository.repository,
       hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
         hasConflictingUnresolvedMutation(
