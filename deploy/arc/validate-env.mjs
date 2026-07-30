@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const MANIFEST_KEYS = Object.freeze([
@@ -8,6 +9,13 @@ const MANIFEST_KEYS = Object.freeze([
   "VITE_ARC_SUPABASE_URL",
   "VITE_ARC_SUPABASE_PUBLISHABLE_KEY",
 ]);
+const ARTIFACT_MANIFEST_FILE = "arc-artifact-manifest.json";
+const ARTIFACT_DIGESTS_KEY = "artifactDigests";
+const MANIFEST_SCHEMA_KEYS = Object.freeze([
+  ...MANIFEST_KEYS,
+  ARTIFACT_DIGESTS_KEY,
+]);
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 const PUBLIC_ORIGIN = "https://arc.agentpay.site";
 const API_ORIGIN = "https://mcp.arc.agentpay.site";
@@ -382,6 +390,78 @@ function verifyServedArtifactContent(manifest, servedArtifact) {
   }
 }
 
+async function collectArtifactFiles(distDir, directory = distDir) {
+  const files = [];
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const filePath = resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectArtifactFiles(distDir, filePath));
+      continue;
+    }
+    if (!entry.isFile() || entry.name === ARTIFACT_MANIFEST_FILE) {
+      continue;
+    }
+    files.push({
+      filePath,
+      relativePath: relative(distDir, filePath).split(sep).join("/"),
+    });
+  }
+  return files;
+}
+
+async function verifyArtifactDigests(distDir, artifactDigests) {
+  if (
+    artifactDigests === null
+    || typeof artifactDigests !== "object"
+    || Array.isArray(artifactDigests)
+  ) {
+    throw new Error("Artifact manifest artifactDigests must be an object");
+  }
+
+  const digestEntries = Object.entries(artifactDigests);
+  if (digestEntries.length === 0) {
+    throw new Error("Artifact manifest artifactDigests must not be empty");
+  }
+  for (const [relativePath, digest] of digestEntries) {
+    if (
+      relativePath.length === 0
+      || relativePath.startsWith("/")
+      || relativePath.includes("\\")
+      || relativePath.split("/").includes("..")
+    ) {
+      throw new Error(`Artifact digest path is unsafe: ${relativePath}`);
+    }
+    if (typeof digest !== "string" || !SHA256_HEX.test(digest)) {
+      throw new Error(`Artifact digest for ${relativePath} must be SHA-256 hex`);
+    }
+  }
+
+  const actualFiles = await collectArtifactFiles(distDir);
+  const actualByPath = new Map(
+    actualFiles.map(({ relativePath, filePath }) => [relativePath, filePath]),
+  );
+  for (const relativePath of Object.keys(artifactDigests)) {
+    if (!actualByPath.has(relativePath)) {
+      throw new Error(`Artifact digest references missing file: ${relativePath}`);
+    }
+  }
+  for (const relativePath of actualByPath.keys()) {
+    if (!(relativePath in artifactDigests)) {
+      throw new Error(`Artifact file is missing a signed digest: ${relativePath}`);
+    }
+  }
+
+  for (const [relativePath, filePath] of actualByPath) {
+    const actualDigest = createHash("sha256")
+      .update(await readFile(filePath))
+      .digest("hex");
+    if (actualDigest !== artifactDigests[relativePath]) {
+      throw new Error(`Artifact digest mismatch for ${relativePath}`);
+    }
+  }
+}
+
 export async function verifyArtifactManifest(
   env,
   artifactManifestPath,
@@ -404,15 +484,15 @@ export async function verifyArtifactManifest(
   }
   const manifestKeys = Object.keys(manifest);
   for (const key of manifestKeys) {
-    if (!MANIFEST_KEYS.includes(key)) {
+    if (!MANIFEST_SCHEMA_KEYS.includes(key)) {
       throw new Error(
         `Artifact manifest contains unexpected key: ${key}`,
       );
     }
   }
-  if (manifestKeys.length !== MANIFEST_KEYS.length) {
+  if (manifestKeys.length !== MANIFEST_SCHEMA_KEYS.length) {
     throw new Error(
-      `Artifact manifest must have exactly ${MANIFEST_KEYS.length} keys, got ${manifestKeys.length}`,
+      `Artifact manifest must have exactly ${MANIFEST_SCHEMA_KEYS.length} keys, got ${manifestKeys.length}`,
     );
   }
   for (const key of MANIFEST_KEYS) {
@@ -436,6 +516,7 @@ export async function verifyArtifactManifest(
   }
 
   const distDir = resolve(dirname(artifactManifestPath));
+  await verifyArtifactDigests(distDir, manifest[ARTIFACT_DIGESTS_KEY]);
   await verifyArtifactDistFiles(distDir, manifest);
 }
 
@@ -457,7 +538,7 @@ async function scanArtifactDistFiles(
       continue;
     }
 
-    if (entry.name === "arc-artifact-manifest.json") {
+    if (entry.name === ARTIFACT_MANIFEST_FILE) {
       continue;
     }
 

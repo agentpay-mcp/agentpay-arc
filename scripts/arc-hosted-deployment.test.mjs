@@ -355,19 +355,6 @@ describe("Arc-only hosted deployment artifacts", () => {
       const { generateArtifactManifest } = await import(
         "../deploy/arc/generate-artifact-manifest.mjs"
       );
-      const manifest = generateArtifactManifest();
-      assert.ok(manifest);
-      assert.equal(manifest.VITE_ARC_PUBLIC_ORIGIN, testEnv.VITE_ARC_PUBLIC_ORIGIN);
-      assert.equal(manifest.VITE_ARC_API_ORIGIN, testEnv.VITE_ARC_API_ORIGIN);
-      assert.equal(manifest.VITE_ARC_SUPABASE_URL, testEnv.VITE_ARC_SUPABASE_URL);
-      assert.equal(
-        manifest.VITE_ARC_SUPABASE_PUBLISHABLE_KEY,
-        testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY,
-      );
-      assert.equal(Object.keys(manifest).length, 4);
-
-      await writeFile(manifestPath, JSON.stringify(manifest));
-
       const distFilePath = join(tmpDir, "index.html");
       await mkdir(join(tmpDir, "assets"), { recursive: true });
       await writeFile(
@@ -378,6 +365,21 @@ describe("Arc-only hosted deployment artifacts", () => {
         join(tmpDir, "assets", "bundle.js"),
         `const config = { VITE_ARC_PUBLIC_ORIGIN: "${testEnv.VITE_ARC_PUBLIC_ORIGIN}", VITE_ARC_API_ORIGIN: "${testEnv.VITE_ARC_API_ORIGIN}", VITE_ARC_SUPABASE_URL: "${testEnv.VITE_ARC_SUPABASE_URL}", VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}" };`,
       );
+      const manifest = await generateArtifactManifest(tmpDir);
+      assert.ok(manifest);
+      assert.equal(manifest.VITE_ARC_PUBLIC_ORIGIN, testEnv.VITE_ARC_PUBLIC_ORIGIN);
+      assert.equal(manifest.VITE_ARC_API_ORIGIN, testEnv.VITE_ARC_API_ORIGIN);
+      assert.equal(manifest.VITE_ARC_SUPABASE_URL, testEnv.VITE_ARC_SUPABASE_URL);
+      assert.equal(
+        manifest.VITE_ARC_SUPABASE_PUBLISHABLE_KEY,
+        testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY,
+      );
+      assert.equal(Object.keys(manifest).length, 5);
+      assert.deepEqual(Object.keys(manifest.artifactDigests).sort(), [
+        "assets/bundle.js",
+        "index.html",
+      ]);
+      await writeFile(manifestPath, JSON.stringify(manifest));
 
       const { verifyArtifactManifest } = await import(
         "../deploy/arc/validate-env.mjs"
@@ -401,7 +403,7 @@ describe("Arc-only hosted deployment artifacts", () => {
       await writeFile(emptyManifestPath, "{}");
       await assert.rejects(
         verifyArtifactManifest(process.env, emptyManifestPath),
-        /exactly 4 keys/,
+        /exactly 5 keys/,
       );
 
       const partialManifestPath = join(extraManifestDir, "partial.json");
@@ -411,13 +413,17 @@ describe("Arc-only hosted deployment artifacts", () => {
       );
       await assert.rejects(
         verifyArtifactManifest(process.env, partialManifestPath),
-        /exactly 4 keys/,
+        /exactly 5 keys/,
       );
 
       const distWithPlaceholder = join(tmpDir, "app.js");
       await writeFile(
         distWithPlaceholder,
         "const apiOrigin = '%VITE_ARC_API_ORIGIN%';",
+      );
+      await writeFile(
+        manifestPath,
+        JSON.stringify(await generateArtifactManifest(tmpDir)),
       );
       await assert.rejects(
         verifyArtifactManifest(
@@ -438,7 +444,7 @@ describe("Arc-only hosted deployment artifacts", () => {
       );
       await assert.rejects(
         verifyArtifactManifest(process.env, noValueManifest),
-        /was not found in any artifact file/,
+        /Artifact digest|was not found in any artifact file/,
       );
       await rm(noValueDir, { recursive: true });
 
@@ -455,6 +461,8 @@ describe("Arc-only hosted deployment artifacts", () => {
         join(tmpDir, "index.html"),
         `<html><head><base href="${testEnv.VITE_ARC_PUBLIC_ORIGIN}/"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${testEnv.VITE_ARC_API_ORIGIN} ${testEnv.VITE_ARC_SUPABASE_URL};"></head><body><script type="module" src="/assets/bundle.js"></script></body></html>`,
       );
+      const refreshedManifest = await generateArtifactManifest(tmpDir);
+      await writeFile(manifestPath, JSON.stringify(refreshedManifest));
       await verifyArtifactManifest(process.env, manifestPath);
 
       const attackerDistDir = join(tmpDir, "attacker-dist");
@@ -469,7 +477,7 @@ describe("Arc-only hosted deployment artifacts", () => {
       );
       await assert.rejects(
         verifyArtifactManifest(process.env, join(attackerDistDir, "arc-artifact-manifest.json")),
-        /was not found in any artifact file/,
+        /Artifact digest|was not found in any artifact file/,
       );
     } finally {
       process.env = originalEnv;
@@ -562,6 +570,74 @@ describe("Arc-only hosted deployment artifacts", () => {
     } finally {
       await rm(distDir, { recursive: true, force: true });
       await rm(safeManifestBackup, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a computed API-origin property hidden by a safe executable decoy", async () => {
+    const { readdir } = await import("node:fs/promises");
+    const repoRoot = resolve(".");
+    const distDir = resolve("apps/arc-web/dist");
+    const testEnv = {
+      VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
+      VITE_ARC_API_ORIGIN: "https://mcp.arc.agentpay.site",
+      VITE_ARC_SUPABASE_URL: "https://project-ref.supabase.co",
+      VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_computed_test_key",
+    };
+    const buildEnvironment = { ...process.env, ...testEnv };
+    const runBuild = () => spawnSync(
+      "npm",
+      ["run", "build", "--workspace", "apps/arc-web"],
+      { cwd: repoRoot, env: buildEnvironment, encoding: "utf8" },
+    );
+    const runExactWebValidation = () => spawnSync(
+      process.execPath,
+      [
+        "deploy/arc/validate-env.mjs",
+        "web",
+        "apps/arc-web/dist/arc-artifact-manifest.json",
+      ],
+      { cwd: repoRoot, env: buildEnvironment, encoding: "utf8" },
+    );
+
+    await rm(distDir, { recursive: true, force: true });
+    try {
+      const build = runBuild();
+      assert.equal(
+        build.status,
+        0,
+        `real Vite build failed:\n${build.stdout}\n${build.stderr}`,
+      );
+      const assetNames = await readdir(join(distDir, "assets"));
+      const scriptName = assetNames.find((name) => name.endsWith(".js"));
+      assert.ok(scriptName, "real Vite build must emit a JavaScript asset");
+      const scriptPath = join(distDir, "assets", scriptName);
+      const originalScript = await readFile(scriptPath, "utf8");
+      const quote = String.fromCharCode(96);
+      const literalAssignment = `VITE_ARC_API_ORIGIN:${quote}https://mcp.arc.agentpay.site${quote}`;
+      assert.match(originalScript, new RegExp(literalAssignment.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
+      const computedAssignment = `["VITE_ARC_"+"API_ORIGIN"]:${quote}https://attacker.invalid${quote}`;
+      const safeLiteralDecoy = [
+        "",
+        "const __arcReleaseDecoy = {",
+        `  VITE_ARC_PUBLIC_ORIGIN: "${testEnv.VITE_ARC_PUBLIC_ORIGIN}",`,
+        `  VITE_ARC_API_ORIGIN: "${testEnv.VITE_ARC_API_ORIGIN}",`,
+        `  VITE_ARC_SUPABASE_URL: "${testEnv.VITE_ARC_SUPABASE_URL}",`,
+        `  VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "${testEnv.VITE_ARC_SUPABASE_PUBLISHABLE_KEY}",`,
+        "};",
+      ].join("\n");
+      await writeFile(
+        scriptPath,
+        originalScript.replace(literalAssignment, computedAssignment) + safeLiteralDecoy,
+      );
+
+      const validation = runExactWebValidation();
+      assert.notEqual(
+        validation.status,
+        0,
+        `computed-property poisoned artifact unexpectedly passed:\n${validation.stdout}\n${validation.stderr}`,
+      );
+    } finally {
+      await rm(distDir, { recursive: true, force: true });
     }
   });
 });
