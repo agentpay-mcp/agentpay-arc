@@ -50,11 +50,17 @@ async function dockerPsql(sql, { role, tuplesOnly = true, allowFailure = false }
 
 async function waitForPostgres() {
   let lastError = "";
+  let consecutiveReadyChecks = 0;
   const readinessDeadline = Date.now() + 60_000;
   while (Date.now() < readinessDeadline) {
     const result = await dockerPsql("select 1;", { allowFailure: true });
-    if (result.code === 0 && result.stdout === "1") return;
-    lastError = result.stderr || result.stdout;
+    if (result.code === 0 && result.stdout === "1") {
+      consecutiveReadyChecks += 1;
+      if (consecutiveReadyChecks >= 2) return;
+    } else {
+      consecutiveReadyChecks = 0;
+      lastError = result.stderr || result.stdout;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`PostgreSQL did not become ready: ${lastError}`);
