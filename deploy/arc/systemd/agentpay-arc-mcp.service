@@ -1,0 +1,52 @@
+[Unit]
+Description=AgentPay Arc hosted MCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentpay-arc-mcp
+Group=agentpay-arc-mcp
+WorkingDirectory=/opt/agentpay-arc/releases/@RELEASE_COMMIT@
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/agentpay-arc/mcp.env
+ExecStartPre=/usr/bin/node /opt/agentpay-arc/releases/@RELEASE_COMMIT@/deploy/arc/validate-env.mjs mcp
+ExecStart=/usr/bin/npm run start:hosted-arc --workspace apps/mcp-server
+ExecStartPost=/usr/bin/curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3002/healthz
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=45
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SocketBindDeny=any
+SocketBindAllow=tcp:3002
+ReadOnlyPaths=/opt/agentpay-arc/releases/@RELEASE_COMMIT@
+InaccessiblePaths=/etc/agentpay-arc/web.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agentpay-arc-mcp
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=500
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,327 @@
+import assert from "node:assert/strict";
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { describe, it } from "node:test";
+
+const deploymentFiles = Object.freeze({
+  readme: "deploy/arc/README.md",
+  rollback: "deploy/arc/ROLLBACK.md",
+  validator: "deploy/arc/validate-env.mjs",
+  staticServer: "deploy/arc/static-server.mjs",
+  webEnv: "deploy/arc/env/web.env.example",
+  mcpEnv: "deploy/arc/env/mcp.env.example",
+  webService: "deploy/arc/systemd/agentpay-arc-web.service",
+  mcpService: "deploy/arc/systemd/agentpay-arc-mcp.service",
+  logrotate: "deploy/arc/logrotate/agentpay-arc",
+  nginx: "deploy/arc/nginx/agentpay-arc.conf",
+});
+
+const validMcpEnv = Object.freeze({
+  ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
+  ARC_MCP_RESOURCE_URL: "https://mcp.arc.agentpay.site/mcp",
+  ARC_MCP_ALLOWED_ORIGINS: "https://arc.agentpay.site",
+  ARC_SUPABASE_URL: "https://project-ref.supabase.co",
+  ARC_SUPABASE_AUTH_ISSUER: "https://project-ref.supabase.co/auth/v1",
+  ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fake_test_value",
+  ARC_SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-value-with-32-bytes",
+  ARC_CIRCLE_API_KEY: "fake-circle-api-key-with-32-bytes",
+  ARC_CIRCLE_ENTITY_SECRET: "f".repeat(64),
+  ARC_APP_KIT_KEY: "fake-app-kit-key-with-32-bytes",
+  ARC_MCP_HOST: "127.0.0.1",
+  ARC_MCP_PORT: "3002",
+});
+
+const validWebEnv = Object.freeze({
+  VITE_ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
+  VITE_ARC_API_ORIGIN: "https://mcp.arc.agentpay.site",
+  VITE_ARC_SUPABASE_URL: "https://project-ref.supabase.co",
+  VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fake_test_value",
+});
+
+async function loadDeploymentFiles() {
+  return Object.fromEntries(
+    await Promise.all(
+      Object.entries(deploymentFiles).map(async ([name, path]) => [
+        name,
+        await readFile(path, "utf8"),
+      ]),
+    ),
+  );
+}
+
+describe("Arc-only hosted deployment artifacts", () => {
+  it("ships the complete reproducible surface without cross-product references", async () => {
+    const files = await loadDeploymentFiles();
+    const forbiddenProduct = new RegExp(["ce", "lo"].join(""), "i");
+    const forbiddenRepository = new RegExp(
+      ["agentpay", "ce", "lo"].join("-"),
+      "i",
+    );
+
+    for (const [name, content] of Object.entries(files)) {
+      assert.ok(content.trim().length > 0, `${name} must not be empty`);
+      assert.doesNotMatch(
+        content,
+        forbiddenProduct,
+        `${name} must remain Arc-only`,
+      );
+      assert.doesNotMatch(content, forbiddenRepository);
+      assert.doesNotMatch(content, /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/);
+      assert.doesNotMatch(content, /(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}/);
+    }
+  });
+
+  it("isolates web and MCP systemd services on exact loopback listeners", async () => {
+    const { webService, mcpService, logrotate } = await loadDeploymentFiles();
+
+    assert.match(webService, /^User=agentpay-arc-web$/m);
+    assert.match(webService, /^Group=agentpay-arc-web$/m);
+    assert.match(
+      webService,
+      /^EnvironmentFile=\/etc\/agentpay-arc\/web\.env$/m,
+    );
+    assert.match(
+      webService,
+      /validate-env\.mjs web[\s\S]*static-server\.mjs --host 127\.0\.0\.1 --port 3001/,
+    );
+    assert.match(webService, /^SocketBindAllow=tcp:3001$/m);
+    assert.match(webService, /^NoNewPrivileges=true$/m);
+    assert.match(webService, /^ProtectSystem=strict$/m);
+    assert.match(webService, /^Restart=on-failure$/m);
+    assert.match(webService, /^RestartSec=5$/m);
+    assert.match(webService, /^TimeoutStartSec=30$/m);
+    assert.match(webService, /127\.0\.0\.1:3001\/healthz/);
+    assert.doesNotMatch(webService, /^Environment=.*(?:KEY|SECRET|TOKEN)=/m);
+
+    assert.match(mcpService, /^User=agentpay-arc-mcp$/m);
+    assert.match(mcpService, /^Group=agentpay-arc-mcp$/m);
+    assert.match(
+      mcpService,
+      /^EnvironmentFile=\/etc\/agentpay-arc\/mcp\.env$/m,
+    );
+    assert.match(mcpService, /validate-env\.mjs mcp/);
+    assert.match(
+      mcpService,
+      /npm run start:hosted-arc --workspace apps\/mcp-server/,
+    );
+    assert.match(mcpService, /^SocketBindAllow=tcp:3002$/m);
+    assert.match(mcpService, /^NoNewPrivileges=true$/m);
+    assert.match(mcpService, /^ProtectSystem=strict$/m);
+    assert.match(mcpService, /^Restart=on-failure$/m);
+    assert.match(mcpService, /^RestartSec=5$/m);
+    assert.match(mcpService, /^TimeoutStartSec=45$/m);
+    assert.match(mcpService, /127\.0\.0\.1:3002\/healthz/);
+    assert.doesNotMatch(mcpService, /^Environment=.*(?:KEY|SECRET|TOKEN)=/m);
+
+    assert.match(
+      logrotate,
+      /^\/var\/log\/agentpay-arc\/\*\.jsonl \/var\/log\/agentpay-arc\/\*\.log \{$/m,
+    );
+    assert.match(logrotate, /^\s+rotate 14$/m);
+    assert.match(logrotate, /^\s+maxsize 32M$/m);
+    assert.match(logrotate, /^\s+compress$/m);
+  });
+
+  it("routes only the two exact TLS hosts to the intended loopback service", async () => {
+    const { nginx } = await loadDeploymentFiles();
+
+    assert.match(nginx, /server_name arc\.agentpay\.site;/);
+    assert.match(nginx, /server_name mcp\.arc\.agentpay\.site;/);
+    assert.equal((nginx.match(/listen 443 ssl http2;/g) ?? []).length, 2);
+    assert.match(
+      nginx,
+      /return 308 https:\/\/arc\.agentpay\.site\$request_uri;/,
+    );
+    assert.match(
+      nginx,
+      /return 308 https:\/\/mcp\.arc\.agentpay\.site\$request_uri;/,
+    );
+    assert.match(
+      nginx,
+      /if \(\$host != arc\.agentpay\.site\) \{ return 421; \}/,
+    );
+    assert.match(
+      nginx,
+      /if \(\$host != mcp\.arc\.agentpay\.site\) \{ return 421; \}/,
+    );
+    assert.match(
+      nginx,
+      /server_name arc\.agentpay\.site;[\s\S]*location \^~ \/api\/ \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3002;/,
+    );
+    assert.match(
+      nginx,
+      /server_name arc\.agentpay\.site;[\s\S]*location \/ \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3001;/,
+    );
+    assert.match(
+      nginx,
+      /server_name mcp\.arc\.agentpay\.site;[\s\S]*location = \/mcp \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3002\/mcp;/,
+    );
+    assert.match(
+      nginx,
+      /server_name mcp\.arc\.agentpay\.site;[\s\S]*location \^~ \/api\/ \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3002;/,
+    );
+    assert.doesNotMatch(nginx, /default_server|\bserver_name\s+_|proxy_pass\s+https?:\/\/(?!127\.0\.0\.1)/);
+    assert.doesNotMatch(nginx, /\$http_authorization|\$request_body/);
+  });
+
+  it("keeps public and server environment contracts separate and complete", async () => {
+    const { webEnv, mcpEnv } = await loadDeploymentFiles();
+    const rootEnv = await readFile(".env.example", "utf8");
+    const arcBlock = rootEnv.match(
+      /# BEGIN ARC HOSTED\n(?<body>[\s\S]*?)# END ARC HOSTED/,
+    )?.groups?.body;
+
+    assert.ok(arcBlock, "root .env.example must contain a bounded Arc block");
+    for (const assignment of arcBlock.matchAll(/^([A-Z0-9_]+)=(.*)$/gm)) {
+      assert.equal(
+        assignment[2],
+        "",
+        `${assignment[1]} must be name-only in the root example`,
+      );
+    }
+    for (const key of Object.keys(validWebEnv)) {
+      assert.match(webEnv, new RegExp(`^${key}=`, "m"));
+      assert.match(arcBlock, new RegExp(`^${key}=`, "m"));
+      assert.doesNotMatch(mcpEnv, new RegExp(`^${key}=`, "m"));
+    }
+    for (const key of Object.keys(validMcpEnv)) {
+      assert.match(mcpEnv, new RegExp(`^${key}=`, "m"));
+      assert.match(arcBlock, new RegExp(`^${key}=`, "m"));
+      assert.doesNotMatch(webEnv, new RegExp(`^${key}=`, "m"));
+    }
+    assert.doesNotMatch(webEnv, /SERVICE_ROLE|CIRCLE|ENTITY_SECRET|APP_KIT/);
+    assert.match(mcpEnv, /^ARC_SUPABASE_SERVICE_ROLE_KEY=$/m);
+    assert.match(mcpEnv, /^ARC_CIRCLE_API_KEY=$/m);
+    assert.match(mcpEnv, /^ARC_CIRCLE_ENTITY_SECRET=$/m);
+    assert.match(mcpEnv, /^ARC_APP_KIT_KEY=$/m);
+  });
+
+  it("fails closed on missing, unsafe, or cross-product environment values", async () => {
+    const { validateArcDeploymentEnvironment } = await import(
+      "../deploy/arc/validate-env.mjs"
+    );
+
+    const mcp = validateArcDeploymentEnvironment("mcp", validMcpEnv);
+    const web = validateArcDeploymentEnvironment("web", validWebEnv);
+    assert.deepEqual(Object.keys(mcp).sort(), Object.keys(validMcpEnv).sort());
+    assert.deepEqual(Object.keys(web).sort(), Object.keys(validWebEnv).sort());
+    assert.ok(Object.isFrozen(mcp));
+    assert.ok(Object.isFrozen(web));
+
+    assert.throws(
+      () => validateArcDeploymentEnvironment("mcp", {
+        ...validMcpEnv,
+        ARC_CIRCLE_API_KEY: "",
+      }),
+      /ARC_CIRCLE_API_KEY/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("mcp", {
+        ...validMcpEnv,
+        ARC_MCP_HOST: "0.0.0.0",
+      }),
+      /ARC_MCP_HOST/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("mcp", {
+        ...validMcpEnv,
+        ARC_SUPABASE_AUTH_ISSUER: "https://foreign.supabase.co/auth/v1",
+      }),
+      /ARC_SUPABASE_AUTH_ISSUER/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("mcp", {
+        ...validMcpEnv,
+        LEGACY_RPC_URL: "https://example.invalid",
+      }),
+      /cross-product environment variable/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("web", {
+        ...validWebEnv,
+        VITE_ARC_CIRCLE_API_KEY: "not-public",
+      }),
+      /unapproved Arc environment variable/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("web", {
+        ...validWebEnv,
+        ARC_SUPABASE_SERVICE_ROLE_KEY: "must-not-reach-browser-scope",
+      }),
+      /server Arc environment variable in web scope/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("mcp", {
+        ...validMcpEnv,
+        VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "must-not-reach-server-scope",
+      }),
+      /browser Arc environment variable in mcp scope/,
+    );
+    assert.throws(
+      () => validateArcDeploymentEnvironment("web", {
+        ...validWebEnv,
+        VITE_ARC_API_ORIGIN: "https://arc.agentpay.site",
+      }),
+      /VITE_ARC_API_ORIGIN/,
+    );
+  });
+
+  it("serves static assets safely and never logs URL query secrets", async () => {
+    const { startArcStaticServer } = await import(
+      "../deploy/arc/static-server.mjs"
+    );
+    const root = await mkdtemp(join(tmpdir(), "agentpay-arc-static-"));
+    await writeFile(join(root, "index.html"), "<main>Arc</main>");
+    await writeFile(join(root, "app.js"), "console.log('arc');");
+    const logs = [];
+    const server = await startArcStaticServer({
+      host: "127.0.0.1",
+      port: 0,
+      root: await realpath(root),
+      logger(entry) {
+        logs.push(entry);
+      },
+    });
+
+    try {
+      const address = server.address();
+      assert.ok(address && typeof address === "object");
+      const origin = `http://127.0.0.1:${address.port}`;
+      const index = await fetch(
+        `${origin}/oauth/consent?authorization_id=never-log-this`,
+      );
+      const asset = await fetch(`${origin}/app.js`);
+      const health = await fetch(`${origin}/healthz`);
+      const traversal = await fetch(`${origin}/..%2f..%2fetc%2fpasswd`);
+      const method = await fetch(`${origin}/`, { method: "POST" });
+
+      assert.equal(index.status, 200);
+      assert.equal(await index.text(), "<main>Arc</main>");
+      assert.equal(index.headers.get("cache-control"), "no-store");
+      assert.equal(asset.status, 200);
+      assert.match(asset.headers.get("cache-control") ?? "", /immutable/);
+      assert.deepEqual(await health.json(), { status: "ok" });
+      assert.equal(traversal.status, 404);
+      assert.equal(method.status, 405);
+      assert.match(index.headers.get("x-content-type-options") ?? "", /nosniff/);
+      assert.doesNotMatch(JSON.stringify(logs), /never-log-this/);
+      assert.match(JSON.stringify(logs), /"path":"\/oauth\/consent"/);
+    } finally {
+      await new Promise((resolveClose, rejectClose) => {
+        server.close((error) => {
+          if (error) {
+            rejectClose(error);
+          } else {
+            resolveClose();
+          }
+        });
+      });
+    }
+  });
+});
