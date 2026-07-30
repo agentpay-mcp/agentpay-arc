@@ -5,10 +5,20 @@ export interface SafeWalletInfo {
   readonly address?: string;
 }
 
+export interface SafeActivityItem {
+  readonly id: string;
+  readonly type: string;
+  readonly amount?: string;
+  readonly status: string;
+  readonly timestamp: string;
+}
+
 export interface SafeAccountInfo {
   readonly status: "ACTIVE" | "PAUSED" | "CLOSED";
   readonly consentVersion: typeof ARC_AUTONOMY_CONSENT_VERSION;
   readonly wallet: SafeWalletInfo;
+  readonly balanceUsdc?: string;
+  readonly activity?: readonly SafeActivityItem[];
 }
 
 export interface HostedAccountApiResponse {

@@ -16,7 +16,7 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
   supabaseClient,
   authorizationId,
 }) => {
-  const [details, setDetails] = useState<{ clientName: string; redirectUri: string; scopes: string[] } | null>(null);
+  const [details, setDetails] = useState<{ clientName: string; redirectUri: string; scopes: readonly string[] } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);

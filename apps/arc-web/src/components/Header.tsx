@@ -25,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({ userEmail, onSignOut }) => {
         <span className="badge-network" id="network-badge">ARC-TESTNET</span>
         {userEmail && (
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }} id="user-email-display">
+            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }} id="header-user-email">
               {userEmail}
             </span>
             {onSignOut && (

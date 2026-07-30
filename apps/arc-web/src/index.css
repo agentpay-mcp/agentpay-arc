@@ -28,7 +28,7 @@
 
 body {
   background-color: var(--bg-dark);
-  background-image: 
+  background-image:
     radial-gradient(at 20% 20%, rgba(0, 210, 255, 0.08) 0px, transparent 50%),
     radial-gradient(at 80% 80%, rgba(121, 40, 202, 0.08) 0px, transparent 50%);
   background-attachment: fixed;

@@ -23,99 +23,146 @@ export function getSupabaseClient(config?: PublicConfig, customFetch?: typeof fe
   return client;
 }
 
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function validateAuthorizationId(authorizationId: string): string {
+  const trimmed = authorizationId.trim();
+  if (!UUID_V4_REGEX.test(trimmed)) {
+    throw new Error("Invalid authorization_id format: Must be a valid UUID v4.");
+  }
+  return trimmed;
+}
+
 export interface OAuthAuthorizationDetails {
-  readonly clientName?: string;
-  readonly redirectUri?: string;
-  readonly scopes?: readonly string[];
+  readonly clientName: string;
+  readonly redirectUri: string;
+  readonly scopes: readonly string[];
+}
+
+interface SupabaseOAuthApi {
+  getAuthorizationDetails?: (authorizationId: string | { authorization_id: string; authorizationId?: string }) => Promise<{
+    data?: {
+      client?: { name?: string; icon_url?: string; uri?: string };
+      client_name?: string;
+      scope?: string;
+      scopes?: string[];
+      redirect_url?: string;
+      redirect_uri?: string;
+    } | null;
+    error?: { message?: string } | null;
+  }>;
+  approveAuthorization?: (
+    authorizationId: string | { authorization_id: string; authorizationId?: string },
+    options?: { skipBrowserRedirect?: boolean },
+  ) => Promise<{
+    data?: { redirect_url?: string; url?: string; redirect_uri?: string; redirectTo?: string } | null;
+    error?: { message?: string } | null;
+  }>;
+  denyAuthorization?: (
+    authorizationId: string | { authorization_id: string; authorizationId?: string },
+    options?: { skipBrowserRedirect?: boolean },
+  ) => Promise<{
+    data?: { redirect_url?: string; url?: string; redirect_uri?: string; redirectTo?: string } | null;
+    error?: { message?: string } | null;
+  }>;
+}
+
+function getOAuthApi(client: SupabaseClient): SupabaseOAuthApi {
+  const authObj = client.auth as unknown as { oauth?: SupabaseOAuthApi };
+  if (!authObj.oauth) {
+    throw new Error("Supabase OAuth 2.1 server capabilities are not initialized on this client.");
+  }
+  return authObj.oauth;
 }
 
 export async function fetchOAuthAuthorizationDetails(
   client: SupabaseClient,
-  authorizationId: string,
-): Promise<{ clientName: string; redirectUri: string; scopes: string[] }> {
-  const authAny = client.auth as unknown as {
-    oauth?: {
-      getAuthorizationDetails?: (opts: { authorizationId: string }) => Promise<{
-        data?: { client_name?: string; redirect_uri?: string; scopes?: string[] } | null;
-        error?: { message?: string } | null;
-      }>;
-    };
-  };
+  rawAuthorizationId: string,
+): Promise<OAuthAuthorizationDetails> {
+  const authorizationId = validateAuthorizationId(rawAuthorizationId);
+  const oauthApi = getOAuthApi(client);
 
-  if (typeof authAny.oauth?.getAuthorizationDetails === "function") {
-    try {
-      const res = await authAny.oauth.getAuthorizationDetails({ authorizationId });
-      if (!res.error && res.data) {
-        return {
-          clientName: res.data.client_name || "Unknown Application",
-          redirectUri: res.data.redirect_uri || "",
-          scopes: res.data.scopes || ["openid"],
-        };
-      }
-    } catch {
-      // Fallback for test/dev
-    }
+  if (typeof oauthApi.getAuthorizationDetails !== "function") {
+    throw new Error("OAuth server error: getAuthorizationDetails is unavailable.");
+  }
+
+  let res;
+  try {
+    res = await oauthApi.getAuthorizationDetails(authorizationId);
+  } catch (err: unknown) {
+    throw new Error(`OAuth server error: ${(err as Error)?.message || "Failed to fetch authorization details"}`);
+  }
+
+  if (res?.error || !res?.data) {
+    throw new Error(`OAuth server error: ${res?.error?.message || "Invalid authorization_id or request expired."}`);
+  }
+
+  const data = res.data;
+  const clientName = data.client?.name || data.client_name || "Unknown Application";
+  const redirectUri = data.redirect_url || data.redirect_uri || "";
+
+  let scopes: string[] = ["openid"];
+  if (typeof data.scope === "string" && data.scope.trim().length > 0) {
+    scopes = data.scope.trim().split(/\s+/);
+  } else if (Array.isArray(data.scopes) && data.scopes.length > 0) {
+    scopes = data.scopes;
   }
 
   return {
-    clientName: "AgentPay Arc MCP Client",
-    redirectUri: "http://localhost:8080/callback",
-    scopes: ["openid", "profile", "email"],
+    clientName,
+    redirectUri,
+    scopes,
   };
 }
 
 export async function approveOAuthAuthorization(
   client: SupabaseClient,
-  authorizationId: string,
+  rawAuthorizationId: string,
 ): Promise<string> {
-  const authAny = client.auth as unknown as {
-    oauth?: {
-      approveAuthorization?: (opts: { authorizationId: string }) => Promise<{
-        data?: { redirectUri?: string; redirectTo?: string } | null;
-        error?: { message?: string } | null;
-      }>;
-    };
-  };
+  const authorizationId = validateAuthorizationId(rawAuthorizationId);
+  const oauthApi = getOAuthApi(client);
 
-  if (typeof authAny.oauth?.approveAuthorization === "function") {
-    try {
-      const res = await authAny.oauth.approveAuthorization({ authorizationId });
-      const redirectUrl = res.data?.redirectUri || res.data?.redirectTo;
-      if (!res.error && redirectUrl) {
-        return redirectUrl;
-      }
-    } catch {
-      // Fallback for test/dev
-    }
+  if (typeof oauthApi.approveAuthorization !== "function") {
+    throw new Error("OAuth server error: approveAuthorization is unavailable.");
   }
 
-  return `http://localhost:8080/callback?code=mock_oauth_code_for_${authorizationId}`;
+  let res;
+  try {
+    res = await oauthApi.approveAuthorization(authorizationId, { skipBrowserRedirect: true });
+  } catch (err: unknown) {
+    throw new Error(`OAuth approval error: ${(err as Error)?.message || "Failed to approve authorization"}`);
+  }
+
+  const redirectUrl = res?.data?.redirect_url || res?.data?.url || res?.data?.redirect_uri || res?.data?.redirectTo;
+  if (res?.error || !redirectUrl) {
+    throw new Error(`OAuth approval failed: ${res?.error?.message || "No redirect URL returned by authorization server."}`);
+  }
+
+  return redirectUrl;
 }
 
 export async function denyOAuthAuthorization(
   client: SupabaseClient,
-  authorizationId: string,
+  rawAuthorizationId: string,
 ): Promise<string> {
-  const authAny = client.auth as unknown as {
-    oauth?: {
-      denyAuthorization?: (opts: { authorizationId: string }) => Promise<{
-        data?: { redirectUri?: string; redirectTo?: string } | null;
-        error?: { message?: string } | null;
-      }>;
-    };
-  };
+  const authorizationId = validateAuthorizationId(rawAuthorizationId);
+  const oauthApi = getOAuthApi(client);
 
-  if (typeof authAny.oauth?.denyAuthorization === "function") {
-    try {
-      const res = await authAny.oauth.denyAuthorization({ authorizationId });
-      const redirectUrl = res.data?.redirectUri || res.data?.redirectTo;
-      if (!res.error && redirectUrl) {
-        return redirectUrl;
-      }
-    } catch {
-      // Fallback for test/dev
-    }
+  if (typeof oauthApi.denyAuthorization !== "function") {
+    throw new Error("OAuth server error: denyAuthorization is unavailable.");
   }
 
-  return `http://localhost:8080/callback?error=access_denied&error_description=User+denied+authorization`;
+  let res;
+  try {
+    res = await oauthApi.denyAuthorization(authorizationId, { skipBrowserRedirect: true });
+  } catch (err: unknown) {
+    throw new Error(`OAuth denial error: ${(err as Error)?.message || "Failed to deny authorization"}`);
+  }
+
+  const redirectUrl = res?.data?.redirect_url || res?.data?.url || res?.data?.redirect_uri || res?.data?.redirectTo;
+  if (res?.error || !redirectUrl) {
+    throw new Error(`OAuth denial failed: ${res?.error?.message || "No redirect URL returned by authorization server."}`);
+  }
+
+  return redirectUrl;
 }

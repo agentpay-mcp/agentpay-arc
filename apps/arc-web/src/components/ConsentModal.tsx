@@ -2,26 +2,30 @@ import React, { useState } from "react";
 import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc";
 
 export interface ConsentModalProps {
+  readonly userEmail?: string;
   readonly onClaim: () => Promise<void>;
+  readonly onSignOut?: () => void;
   readonly isLoading?: boolean;
   readonly errorMessage?: string;
 }
 
 export const ConsentModal: React.FC<ConsentModalProps> = ({
+  userEmail,
   onClaim,
+  onSignOut,
   isLoading = false,
   errorMessage,
 }) => {
   const [agreed, setAgreed] = useState(false);
 
   return (
-    <div className="modal-overlay" id="consent-modal-overlay" role="dialog" aria-labelledby="consent-modal-title">
+    <div className="modal-overlay" id="consent-card" role="dialog" aria-labelledby="consent-modal-title">
       <div className="modal-content">
         <h2 className="card-title" id="consent-modal-title" style={{ fontSize: "1.35rem" }}>
           Autonomous Agent Wallet Consent
         </h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginTop: "0.5rem" }}>
-          Before claiming your hosted Arc tenant and Circle SCA wallet, please review the required autonomy consent policy:
+          Before claiming your hosted Arc tenant and Circle SCA wallet for <span id="user-email-display" style={{ color: "var(--text-main)", fontWeight: 600 }}>{userEmail || "agent@example.com"}</span>, please review the required autonomy consent policy:
         </p>
 
         <div className="consent-statement" id="autonomy-consent-text">
@@ -51,6 +55,17 @@ export const ConsentModal: React.FC<ConsentModalProps> = ({
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "1rem", marginTop: "1.5rem" }}>
+          {onSignOut && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onSignOut}
+              id="consent-sign-out-btn"
+              disabled={isLoading}
+            >
+              Sign Out
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-primary"

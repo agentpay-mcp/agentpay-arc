@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { getPublicConfig, type PublicConfig } from "./config.ts";
 import { getSupabaseClient } from "./supabase.ts";
@@ -9,6 +9,7 @@ import {
   pauseHostedAccount,
   resumeHostedAccount,
   withdrawHostedAccount,
+  ArcApiError,
   type SafeAccountInfo,
 } from "./api.ts";
 import { Header } from "./components/Header.tsx";
@@ -29,8 +30,11 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
 
   const [session, setSession] = useState<Session | null>(null);
   const [account, setAccount] = useState<SafeAccountInfo | null>(null);
+  const [isUnclaimed, setIsUnclaimed] = useState(false);
+  const [accountFetchError, setAccountFetchError] = useState("");
   const [isInitializing, setIsInitializing] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isFetchingAccount, setIsFetchingAccount] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [withdrawalResult, setWithdrawalResult] = useState<{
     status: string;
@@ -38,9 +42,8 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
     reconciliationRequired: boolean;
   } | null>(null);
 
-  // Check current URL parameters for OAuth consent route
-  const searchParams = new URLSearchParams(window.location.search);
-  const isOAuthPath = window.location.pathname === "/oauth/consent" || searchParams.has("authorization_id");
+  const searchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const isOAuthPath = typeof window !== "undefined" && (window.location.pathname === "/oauth/consent" || searchParams.has("authorization_id"));
   const authorizationId = searchParams.get("authorization_id") || undefined;
 
   useEffect(() => {
@@ -48,7 +51,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       try {
         const { data } = await supabase.auth.getSession();
         setSession(data?.session ?? null);
-      } catch (err: unknown) {
+      } catch {
         setSession(null);
       } finally {
         setIsInitializing(false);
@@ -61,6 +64,8 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       setSession(newSession);
       if (!newSession) {
         setAccount(null);
+        setIsUnclaimed(false);
+        setAccountFetchError("");
       }
     });
 
@@ -69,77 +74,104 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
     };
   }, [supabase]);
 
-  // Load hosted account data whenever user is authenticated
-  useEffect(() => {
-    async function loadAccountData() {
-      if (!session) {
-        setAccount(null);
-        return;
-      }
-      setIsLoading(true);
-      try {
-        const res = await fetchHostedAccount(activeConfig.apiOrigin, session.access_token, customFetch);
-        setAccount(res.account);
-        setErrorMessage("");
-      } catch (err: unknown) {
-        // If 404, account has not been claimed yet (will prompt consent)
-        setAccount(null);
-      } finally {
-        setIsLoading(false);
-      }
+  const loadAccountData = useCallback(async () => {
+    if (!session) {
+      setAccount(null);
+      setIsUnclaimed(false);
+      setAccountFetchError("");
+      return;
     }
+    setIsFetchingAccount(true);
+    try {
+      const res = await fetchHostedAccount(activeConfig.apiOrigin, session.access_token, customFetch);
+      setAccount(res.account);
+      setIsUnclaimed(false);
+      setAccountFetchError("");
+      setErrorMessage("");
+    } catch (err: unknown) {
+      setAccount(null);
+      const status = (err instanceof ArcApiError) ? err.status : (err as { status?: number })?.status;
+      if (status === 404) {
+        setIsUnclaimed(true);
+        setAccountFetchError("");
+      } else if (status === 401 || status === 403) {
+        setIsUnclaimed(false);
+        setAccountFetchError("Session expired or unauthorized. Please sign in again.");
+        void supabase.auth.signOut();
+      } else {
+        setIsUnclaimed(false);
+        const msg = err instanceof Error ? err.message : "Failed to load account information.";
+        setAccountFetchError(msg);
+      }
+    } finally {
+      setIsFetchingAccount(false);
+    }
+  }, [session, activeConfig.apiOrigin, customFetch, supabase]);
 
+  useEffect(() => {
     void loadAccountData();
-  }, [session, activeConfig.apiOrigin, customFetch]);
+  }, [loadAccountData]);
 
   const handleSignIn = async (email: string, pass: string) => {
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
     if (error) {
-      setIsLoading(false);
+      setIsSubmitting(false);
       throw new Error(error.message);
     }
     setSession(data.session);
-    setIsLoading(false);
+    setIsSubmitting(false);
   };
 
   const handleSignUp = async (email: string, pass: string) => {
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     const { data, error } = await supabase.auth.signUp({ email, password: pass });
     if (error) {
-      setIsLoading(false);
+      setIsSubmitting(false);
       throw new Error(error.message);
     }
-    setSession(data.session);
-    setIsLoading(false);
+    if (data.session) {
+      setSession(data.session);
+    } else {
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password: pass });
+      if (signInErr) {
+        setIsSubmitting(false);
+        throw new Error(signInErr.message);
+      }
+      setSession(signInData.session);
+    }
+    setIsSubmitting(false);
   };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
     setAccount(null);
+    setIsUnclaimed(false);
+    setAccountFetchError("");
   };
 
   const handleClaimAccount = async () => {
     if (!session) return;
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     try {
       const res = await claimHostedAccount(activeConfig.apiOrigin, session.access_token, customFetch);
       setAccount(res.account);
+      setIsUnclaimed(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to claim hosted account.";
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   const handleProvisionWallet = async () => {
     if (!session) return;
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     try {
       const res = await provisionWallet(activeConfig.apiOrigin, session.access_token, customFetch);
@@ -158,13 +190,13 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       const msg = err instanceof Error ? err.message : "Failed to provision wallet.";
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   const handlePauseAccount = async () => {
     if (!session) return;
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     try {
       const res = await pauseHostedAccount(activeConfig.apiOrigin, session.access_token, customFetch);
@@ -173,13 +205,13 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       const msg = err instanceof Error ? err.message : "Failed to pause account.";
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   const handleResumeAccount = async () => {
     if (!session) return;
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     try {
       const res = await resumeHostedAccount(activeConfig.apiOrigin, session.access_token, customFetch);
@@ -188,13 +220,13 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
       const msg = err instanceof Error ? err.message : "Failed to resume account.";
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   const handleWithdraw = async (destination: string, amount: string, idempotencyKey: string) => {
     if (!session) return;
-    setIsLoading(true);
+    setIsSubmitting(true);
     setErrorMessage("");
     setWithdrawalResult(null);
     try {
@@ -210,19 +242,53 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
         customFetch,
       );
       setWithdrawalResult(res.withdrawal);
+      void loadAccountData();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Withdrawal failed.";
+      const msg = err instanceof Error ? err.message : "Failed to execute withdrawal.";
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
-  // Render OAuth 2.1 Consent View if on /oauth/consent path
+  // Full page spinner ONLY during initial auth boot or initial account fetch when no state exists yet
+  if (isInitializing || (isFetchingAccount && !account && !isUnclaimed && !accountFetchError)) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
+        <div className="spinner" id="app-loading-spinner" />
+      </div>
+    );
+  }
+
+  // Render AuthForm if unauthenticated
+  if (!session) {
+    return (
+      <>
+        <Header userEmail={undefined} onSignOut={handleSignOut} />
+        <main>
+          {isOAuthPath && (
+            <div className="container" style={{ marginTop: "1rem" }} id="oauth-signin-banner">
+              <div className="alert alert-info">
+                <span>Please sign in to authorize application request.</span>
+              </div>
+            </div>
+          )}
+          <AuthForm
+            onSignIn={handleSignIn}
+            onSignUp={handleSignUp}
+            errorMessage={errorMessage}
+            isLoading={isSubmitting}
+          />
+        </main>
+      </>
+    );
+  }
+
+  // Render OAuth 2.1 Consent View ONLY if authenticated and on OAuth route
   if (isOAuthPath) {
     return (
       <>
-        <Header userEmail={session?.user?.email} onSignOut={session ? handleSignOut : undefined} />
+        <Header userEmail={session.user.email} onSignOut={handleSignOut} />
         <main className="container">
           <OAuthConsent supabaseClient={supabase} authorizationId={authorizationId} />
         </main>
@@ -230,40 +296,44 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
     );
   }
 
-  if (isInitializing) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
-        <p style={{ color: "var(--text-muted)", fontSize: "1.1rem" }}>Loading AgentPay Arc...</p>
-      </div>
-    );
-  }
-
-  // Render Auth View if not logged in
-  if (!session) {
+  // Render Server Error / Retry view if loading account failed with 500 or network error
+  if (accountFetchError) {
     return (
       <>
-        <Header />
+        <Header userEmail={session.user.email} onSignOut={handleSignOut} />
         <main className="container">
-          <AuthForm
-            onSignIn={handleSignIn}
-            onSignUp={handleSignUp}
-            errorMessage={errorMessage}
-            isLoading={isLoading}
-          />
+          <div className="card" id="account-error-card">
+            <h2 className="card-title">Account Load Error</h2>
+            <div className="alert alert-danger" style={{ marginTop: "1rem" }} id="account-fetch-error-alert">
+              <span>{accountFetchError}</span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void loadAccountData()}
+              disabled={isFetchingAccount}
+              id="retry-account-fetch-btn"
+              style={{ marginTop: "1rem" }}
+            >
+              {isFetchingAccount ? "Retrying..." : "Retry Loading Account"}
+            </button>
+          </div>
         </main>
       </>
     );
   }
 
-  // Render Autonomy Consent Modal if account is not claimed yet
-  if (!account) {
+  // Render Autonomy Consent Modal ONLY if verified 404 (unclaimed)
+  if (isUnclaimed || !account) {
     return (
       <>
         <Header userEmail={session.user.email} onSignOut={handleSignOut} />
         <main className="container">
           <ConsentModal
+            userEmail={session.user.email}
             onClaim={handleClaimAccount}
-            isLoading={isLoading}
+            onSignOut={handleSignOut}
+            isLoading={isSubmitting}
             errorMessage={errorMessage}
           />
         </main>
@@ -282,7 +352,7 @@ export const App: React.FC<AppProps> = ({ config, supabaseClient, customFetch })
           onPauseAccount={handlePauseAccount}
           onResumeAccount={handleResumeAccount}
           onWithdraw={handleWithdraw}
-          isLoading={isLoading}
+          isLoading={isSubmitting}
           errorMessage={errorMessage}
           withdrawalResult={withdrawalResult}
         />

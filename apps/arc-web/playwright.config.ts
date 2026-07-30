@@ -22,8 +22,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npx vite preview --port 4173",
+    command: "npm run build && npx vite preview --port 4173",
     port: 4173,
     reuseExistingServer: false,
+    env: {
+      VITE_ARC_PUBLIC_ORIGIN: "http://127.0.0.1:4173",
+      VITE_ARC_API_ORIGIN: "https://mcp.arc.agentpay.site",
+      VITE_ARC_SUPABASE_URL: "https://example.supabase.co",
+      VITE_ARC_SUPABASE_PUBLISHABLE_KEY: "public-key-for-e2e-tests",
+    },
   },
 });

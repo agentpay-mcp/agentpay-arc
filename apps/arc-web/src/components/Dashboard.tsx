@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { SafeAccountInfo } from "../api.ts";
+import type { SafeAccountInfo, SafeActivityItem } from "../api.ts";
 
 export interface DashboardProps {
   readonly account: SafeAccountInfo;
@@ -33,6 +33,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const isWalletReady = account.wallet.status === "LIVE" && Boolean(account.wallet.address);
   const isPaused = account.status === "PAUSED";
+  const balanceDisplay = account.balanceUsdc ?? "0.00";
+  const activityList = account.activity ?? [];
 
   const handleCopyAddress = () => {
     if (account.wallet.address) {
@@ -79,7 +81,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         <div style={{ marginTop: "1.5rem" }}>
-          <label className="form-label">Safe Public Wallet Address</label>
+          <label className="form-label" htmlFor="wallet-address-display">Safe Public Wallet Address</label>
           <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
             <div className="code-box" style={{ flex: 1, marginTop: 0 }} id="wallet-address-display">
               {account.wallet.address || "Wallet provisioning pending..."}
@@ -144,7 +146,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="card" id="budget-card">
           <h3 className="card-title">Available Agent Budget</h3>
           <div style={{ fontSize: "2.2rem", fontWeight: 700, color: "var(--primary-accent)", margin: "0.75rem 0" }} id="budget-amount">
-            100.00 <span style={{ fontSize: "1rem", color: "var(--text-muted)" }}>USDC</span>
+            {balanceDisplay} <span style={{ fontSize: "1rem", color: "var(--text-muted)" }}>USDC</span>
           </div>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
             Funded balance represents your agent's total available payment capacity on Arc Testnet.
@@ -154,26 +156,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Activity & History */}
         <div className="card" id="activity-card">
           <h3 className="card-title">Recent Activity</h3>
-          <ul style={{ listStyle: "none", fontSize: "0.875rem", color: "var(--text-muted)" }} id="activity-list">
-            <li style={{ padding: "0.6rem 0", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between" }}>
-              <span>Account Claimed & Verified</span>
-              <span className="status-badge status-live" style={{ fontSize: "0.7rem" }}>SUCCESS</span>
-            </li>
-            {isWalletReady && (
-              <li style={{ padding: "0.6rem 0", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between" }}>
-                <span>SCA Wallet Provisioned</span>
-                <span className="status-badge status-live" style={{ fontSize: "0.7rem" }}>LIVE</span>
-              </li>
-            )}
-            {withdrawalResult && (
-              <li style={{ padding: "0.6rem 0", display: "flex", justifyContent: "space-between" }}>
-                <span>Withdrawal: {withdrawalResult.status}</span>
-                <span className={`status-badge status-${withdrawalResult.reconciliationRequired ? "pending" : "live"}`} style={{ fontSize: "0.7rem" }}>
-                  {withdrawalResult.reconciliationRequired ? "RECONCILING" : "COMPLETED"}
-                </span>
-              </li>
-            )}
-          </ul>
+          {activityList.length === 0 ? (
+            <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginTop: "0.75rem" }} id="empty-activity-msg">
+              No recent transactions recorded for this account.
+            </p>
+          ) : (
+            <ul style={{ listStyle: "none", fontSize: "0.875rem", color: "var(--text-muted)" }} id="activity-list">
+              {activityList.map((item: SafeActivityItem) => (
+                <li key={item.id} style={{ padding: "0.6rem 0", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between" }}>
+                  <span>{item.type} {item.amount ? `(${item.amount} USDC)` : ""}</span>
+                  <span className={`status-badge status-${item.status.toLowerCase()}`} style={{ fontSize: "0.7rem" }}>
+                    {item.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
