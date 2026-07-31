@@ -18,15 +18,11 @@ Use only AgentPay MCP tools for AgentPay actions.
 
 Do not bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI calls, browser automation, shell scripts, or private-key handling.
 
-The package is not published to npm yet. After explicit approval to modify the
-local runtime, install from the tracked source repository:
+After explicit approval to modify the local runtime, install the public npm
+package:
 
 ```bash
-git clone https://github.com/agentpay-mcp/agentpay-arc.git
-cd agentpay-arc
-npm ci
-npm run build
-node packages/cli/dist/index.js install --runtime <runtime> \
+npx -y @agentpay-ai/agentpay-arc install --runtime <runtime> \
   --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
 
@@ -48,7 +44,7 @@ After installation, ask the user to reload or reconnect the agent runtime if nee
 Use this diagnostic command only when checking self-hosted/operator configuration readiness or troubleshooting:
 
 ```bash
-node packages/cli/dist/index.js doctor
+npx -y @agentpay-ai/agentpay-arc doctor
 ```
 
 This checks self-hosted MCP and setup-web readiness without starting services or printing secret values.
@@ -56,7 +52,7 @@ This checks self-hosted MCP and setup-web readiness without starting services or
 Use this fallback command only for self-hosted/operator mode when the setup/signing page needs to be served outside the hosted agent tool flow:
 
 ```bash
-node packages/cli/dist/index.js setup-web
+npx -y @agentpay-ai/agentpay-arc setup-web
 ```
 
 ## If AgentPay Is Not Installed
@@ -67,26 +63,22 @@ If the user asks for a crypto payment and AgentPay MCP tools are unavailable:
 2. If you have terminal/local command access, ask for explicit approval before installing:
 
 ```txt
-I can clone and build AgentPay from its tracked source, then run
-`node packages/cli/dist/index.js install --runtime <runtime>`.
+I can install AgentPay from npm with
+`npx -y @agentpay-ai/agentpay-arc install --runtime <runtime>`.
 This will modify local MCP/runtime configuration. Do you approve?
 ```
 
 3. Only after approval, run:
 
 ```bash
-git clone https://github.com/agentpay-mcp/agentpay-arc.git
-cd agentpay-arc
-npm ci
-npm run build
-node packages/cli/dist/index.js install --runtime <runtime> \
+npx -y @agentpay-ai/agentpay-arc install --runtime <runtime> \
   --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
 
 4. Ask the user to reload or reconnect the runtime if needed, then return to the agent chat. Do not ask normal users to fill local Supabase, RPC, executor, deployer, or bytecode config.
 5. If you do not have terminal/local command access, explain that AgentPay cannot be installed or checked from this session.
-6. Use `node packages/cli/dist/index.js doctor` only for self-hosted/operator diagnostics.
-7. Use `node packages/cli/dist/index.js setup-web` only for self-hosted/operator fallback.
+6. Use `npx -y @agentpay-ai/agentpay-arc doctor` only for self-hosted/operator diagnostics.
+7. Use `npx -y @agentpay-ai/agentpay-arc setup-web` only for self-hosted/operator fallback.
 8. Continue in chat by calling `setup_agent_wallet`. Never ask the user to paste email, OTP, Terms acceptance, private keys, or a Circle session into chat.
 
 ## Available MCP Tools
@@ -390,7 +382,7 @@ Use these responses:
 - Never ask the user to send funds to an address that was not returned by AgentPay.
 - Never modify payment details after approval.
 - Never execute payment outside AgentPay MCP tools.
-- Never clone, build, or run `node packages/cli/dist/index.js install --runtime <runtime>` without explicit user approval when acting on the user's machine.
+- Never run `npx -y @agentpay-ai/agentpay-arc install --runtime <runtime>` without explicit user approval when acting on the user's machine.
 - Never expose the local Circle CLI session through a hosted MCP surface.
 - Never accept email, OTP, Terms acceptance, private keys, mnemonics, or Circle session data as Agent Wallet tool inputs.
 - Never retry `fund_agent_wallet` or `withdraw_agent_budget` after a transient or ambiguous failure.

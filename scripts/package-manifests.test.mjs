@@ -99,6 +99,19 @@ describe("publishable AgentPay package manifests", () => {
     }
   });
 
+  it("publishes Arc-branded package READMEs with the public npx command", async () => {
+    for (const packageDir of publishablePackages) {
+      const manifest = await readPackageJson(packageDir);
+      const readme = await readFile(join(packageDir, "README.md"), "utf8");
+
+      assert.match(readme, new RegExp(`^# ${manifest.name.replace("/", "\\/")}`, "m"));
+      assert.doesNotMatch(readme, /@agentpay-ai\/agentpay-celo/);
+    }
+
+    const cliReadme = await readFile("packages/cli/README.md", "utf8");
+    assert.match(cliReadme, /^npx @agentpay-ai\/agentpay-arc install --runtime <runtime>$/m);
+  });
+
   it("declares runtime dependencies in the package that imports them", async () => {
     const rootManifest = await readPackageJson(".");
     const skillManifest = await readPackageJson("packages/skill");
@@ -114,6 +127,7 @@ describe("publishable AgentPay package manifests", () => {
         "@supabase/supabase-js": rootManifest.dependencies["@supabase/supabase-js"],
         ethers: rootManifest.dependencies.ethers,
         viem: "2.55.8",
+        zod: rootManifest.dependencies.zod,
       },
       "@agentpay-ai/setup-web-arc": {
         ethers: rootManifest.dependencies.ethers,

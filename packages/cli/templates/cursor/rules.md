@@ -17,11 +17,11 @@
 - If the user wants a paid x402/API service but does not provide a URL, call `search_x402_services`, show Bazaar candidates, ask the user to choose one, collect required parameters, then call `prepare_x402_service_request`.
 - For x402 v2 `PAYMENT-REQUIRED` responses, call `parse_x402_payment_required`, run the Review & Sign owner-signature flow, then call `retry_x402_request` after tracking returns `COMPLETED`; it sends AgentPay receipt proof as `X-PAYMENT` and `PAYMENT-SIGNATURE`, reads V2 `PAYMENT-RESPONSE`, and includes `payment-identifier` idempotency data when advertised. Do not claim universal x402 facilitator compatibility unless the merchant supports this AgentPay proof bridge.
 - Pass the exact x402 request into both parse and retry. Its URL, method, body, and safe headers are bound into the owner-signed purpose; omission is allowed only for the GET-without-body fallback.
-- The package is not published to npm yet. If AgentPay is not installed and terminal access is available, ask before cloning and building `https://github.com/agentpay-mcp/agentpay-arc`, then run `node packages/cli/dist/index.js install --runtime cursor --mcp-url https://mcp.arc.agentpay.site/mcp` from the repository root.
-- The source install configures a config-free local `agentpay-wallet` MCP; users do not need Supabase, RPC, executor, deployer, or bytecode config.
+- If AgentPay is not installed and terminal access is available, ask before running `npx -y @agentpay-ai/agentpay-arc install --runtime cursor --mcp-url https://mcp.arc.agentpay.site/mcp`.
+- The install configures a config-free local `agentpay-wallet` MCP; users do not need Supabase, RPC, executor, deployer, or bytecode config.
 - Ask the user to reload or reconnect the runtime if needed, then return to the agent chat.
-- Use `node packages/cli/dist/index.js doctor` only for self-hosted/operator diagnostics.
-- Use `node packages/cli/dist/index.js setup-web` only for self-hosted/operator fallback when the setup/signing page cannot be served through the hosted agent flow.
+- Use `npx -y @agentpay-ai/agentpay-arc doctor` only for self-hosted/operator diagnostics.
+- Use `npx -y @agentpay-ai/agentpay-arc setup-web` only for self-hosted/operator fallback when the setup/signing page cannot be served through the hosted agent flow.
 - Do not use raw RPC calls, raw LI.FI calls, manual token transfers, or private keys.
 - For owner controls, call `prepare_account_admin_transaction` and ask the owner wallet to submit the returned transaction.
 - Use `quote_payment_route` for direct path or route previews when the user asks about source token, route, fee, ETA, or max spend before approval.
