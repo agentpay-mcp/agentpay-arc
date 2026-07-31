@@ -5,6 +5,7 @@ const AUTHORIZATION_ID = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
 const AUTH_USER_ID = "11111111-2222-4333-8444-555555555555";
 const CLIENT_A_ID = "22222222-2222-4222-8222-222222222222";
 const CLIENT_B_ID = "33333333-3333-4333-8333-333333333333";
+const EXTERNAL_WALLET = "0x1111111111111111111111111111111111111111";
 const CODE_VERIFIER_A = "client-a-pkce-verifier-with-at-least-forty-three-characters";
 const CODE_CHALLENGE_A = createHash("sha256")
   .update(CODE_VERIFIER_A)
@@ -24,16 +25,31 @@ async function fulfillCorsPreflight(route: Route): Promise<boolean> {
 }
 
 async function installAuthenticatedArcFakes(page: Page): Promise<void> {
+  await page.addInitScript((address) => {
+    Object.defineProperty(window, "ethereum", {
+      configurable: true,
+      value: {
+        async request({ method }: { method: string }) {
+          if (method === "eth_requestAccounts") return [address];
+          if (method === "eth_chainId") return "0xaa36a7";
+          if (method === "personal_sign") return `0x${"2".repeat(130)}`;
+          throw new Error(`Unexpected wallet method: ${method}`);
+        },
+      },
+    });
+  }, EXTERNAL_WALLET);
   await page.route("**/auth/v1/token*", async (route) => {
     if (await fulfillCorsPreflight(route)) {
       return;
     }
     const request = route.request();
-    expect(request.url()).toContain("grant_type=password");
+    expect(request.url()).toContain("grant_type=web3");
     const body = request.postDataJSON();
+    expect(body.chain).toBe("ethereum");
+    expect(body.message).toContain(EXTERNAL_WALLET);
+    expect(body.message).toContain("identity only");
     const user = {
       id: AUTH_USER_ID,
-      email: body.email,
       role: "authenticated",
     };
     await route.fulfill({
@@ -143,7 +159,6 @@ test("MCP discovery, PKCE consent, token exchange, and authenticated MCP complet
         },
         user: {
           id: AUTH_USER_ID,
-          email: "agent@example.com",
         },
         scope: "openid profile email",
       }),
@@ -220,9 +235,7 @@ test("MCP discovery, PKCE consent, token exchange, and authenticated MCP complet
   });
   expect(metadata.authorization_servers).toEqual(["https://example.supabase.co/auth/v1"]);
 
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  await page.click("#wallet-sign-in-btn");
   await expect(page.locator("#oauth-client-name")).toHaveText("MCP Client A");
   await page.click("#oauth-approve-btn");
   await expect(page).toHaveURL(

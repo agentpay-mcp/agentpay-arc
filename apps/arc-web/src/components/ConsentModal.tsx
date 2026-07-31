@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc/arc-hosted-auth";
 
 export interface ConsentModalProps {
-  readonly userEmail?: string;
   readonly onClaim: () => Promise<void>;
   readonly onSignOut?: () => void;
   readonly isLoading?: boolean;
@@ -10,7 +9,6 @@ export interface ConsentModalProps {
 }
 
 export const ConsentModal: React.FC<ConsentModalProps> = ({
-  userEmail,
   onClaim,
   onSignOut,
   isLoading = false,
@@ -25,7 +23,7 @@ export const ConsentModal: React.FC<ConsentModalProps> = ({
           Autonomous Agent Wallet Consent
         </h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginTop: "0.5rem" }}>
-          Before claiming your hosted Arc tenant and Circle SCA wallet for <span id="user-email-display" style={{ color: "var(--text-main)", fontWeight: 600 }}>{userEmail || "agent@example.com"}</span>, please review the required autonomy consent policy:
+          Before claiming your hosted Arc tenant and Circle SCA wallet for <span id="verified-wallet-session" style={{ color: "var(--text-main)", fontWeight: 600 }}>your verified wallet session</span>, please review the required autonomy consent policy:
         </p>
 
         <div className="consent-statement" id="autonomy-consent-text">

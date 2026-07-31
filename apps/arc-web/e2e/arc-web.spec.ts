@@ -3,27 +3,53 @@ import { test, expect } from "@playwright/test";
 const FAKE_AUTH_USER_ID = "11111111-2222-4333-8444-555555555555";
 const FAKE_AUTH_USER_ID_B = "99999999-8888-4777-8666-555555555555";
 const VALID_AUTH_ID = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+const WALLET_A = "0x1111111111111111111111111111111111111111";
+const WALLET_B = "0x2222222222222222222222222222222222222222";
+
+async function signInWithWallet(page: import("@playwright/test").Page, wallet: "a" | "b" = "a") {
+  await page.evaluate((selectedWallet) => {
+    window.sessionStorage.setItem("arc-test-wallet", selectedWallet);
+  }, wallet);
+  await page.click("#wallet-sign-in-btn");
+}
 
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(({ walletA, walletB }) => {
+    Object.defineProperty(window, "ethereum", {
+      configurable: true,
+      value: {
+        async request({ method }: { method: string }) {
+          const selected = window.sessionStorage.getItem("arc-test-wallet");
+          if (selected === "reject") {
+            throw new Error("wallet rejected with sensitive provider details");
+          }
+          const address = selected === "b" ? walletB : walletA;
+          if (method === "eth_requestAccounts") return [address];
+          if (method === "eth_chainId") return "0xaa36a7";
+          if (method === "personal_sign") return `0x${"1".repeat(130)}`;
+          throw new Error(`Unexpected wallet method: ${method}`);
+        },
+      },
+    });
+  }, { walletA: WALLET_A, walletB: WALLET_B });
+
   await page.route("**/auth/v1/token*", async (route) => {
     const postData = route.request().postDataJSON() || {};
-    if (postData.password === "wrongpass") {
-      return route.fulfill({
-        status: 400,
-        contentType: "application/json",
-        body: JSON.stringify({
-          error: "invalid_grant",
-          error_description: "Invalid login credentials",
-        }),
-      });
+    const isRefresh = route.request().url().includes("grant_type=refresh_token");
+    if (!isRefresh) {
+      expect(route.request().url()).toContain("grant_type=web3");
+      expect(postData.chain).toBe("ethereum");
+      expect(postData.message).toContain("identity only");
+      expect(postData.message).toContain("This does not approve payments");
+      expect(postData.message).toContain("URI: http://127.0.0.1:4173/");
+      expect(postData.signature).toMatch(/^0x1{130}$/);
     }
     const userObj = {
-      id: postData.email?.includes("userb") ? FAKE_AUTH_USER_ID_B : FAKE_AUTH_USER_ID,
-      email: postData.email || "agent@example.com",
+      id: postData.message?.includes(WALLET_B) ? FAKE_AUTH_USER_ID_B : FAKE_AUTH_USER_ID,
       role: "authenticated",
     };
     const sessionObj = {
-      access_token: postData.email?.includes("userb") ? "test_dummy_user_b_token" : "test_dummy_user_token",
+      access_token: postData.message?.includes(WALLET_B) ? "test_dummy_user_b_token" : "test_dummy_user_token",
       token_type: "bearer",
       expires_in: 3600,
       refresh_token: "test_dummy_refresh_token",
@@ -34,34 +60,6 @@ test.beforeEach(async ({ page }) => {
       contentType: "application/json",
       body: JSON.stringify({
         access_token: sessionObj.access_token,
-        token_type: "bearer",
-        expires_in: 3600,
-        refresh_token: "test_dummy_refresh_token",
-        user: userObj,
-        session: sessionObj,
-      }),
-    });
-  });
-
-  await page.route("**/auth/v1/signup*", async (route) => {
-    const postData = route.request().postDataJSON() || {};
-    const userObj = {
-      id: FAKE_AUTH_USER_ID,
-      email: postData.email || "newagent@example.com",
-      role: "authenticated",
-    };
-    const sessionObj = {
-      access_token: "test_dummy_user_token",
-      token_type: "bearer",
-      expires_in: 3600,
-      refresh_token: "test_dummy_refresh_token",
-      user: userObj,
-    };
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        access_token: "test_dummy_user_token",
         token_type: "bearer",
         expires_in: 3600,
         refresh_token: "test_dummy_refresh_token",
@@ -129,7 +127,7 @@ test("Security & Policy: CSP meta tag present and no secret keys exposed in brow
   expect(hasSecret).toBe(false);
 });
 
-test("Authentication Journey: Sign Up, Sign Out, Wrong Sign In, and Correct Sign In", async ({ page }) => {
+test("Authentication Journey: Wallet Sign In, Sign Out, rejected signature, and retry", async ({ page }) => {
   await page.route(/\/api\/account/, async (route) => {
     return route.fulfill({
       status: 404,
@@ -140,40 +138,28 @@ test("Authentication Journey: Sign Up, Sign Out, Wrong Sign In, and Correct Sign
 
   await page.goto("/");
 
-  await expect(page.locator("#auth-title")).toHaveText("Sign In to AgentPay Arc");
+  await expect(page.locator("#auth-title")).toHaveText("Connect Wallet to AgentPay Arc");
+  await expect(page.locator("#auth-email")).toHaveCount(0);
+  await expect(page.locator("#auth-password")).toHaveCount(0);
 
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "wrongpass");
-  await page.click("#auth-submit-btn");
+  await page.evaluate(() => window.sessionStorage.setItem("arc-test-wallet", "reject"));
+  await page.click("#wallet-sign-in-btn");
+  await expect(page.locator("#auth-error-alert")).toContainText(
+    "Wallet sign in failed. Connect your wallet and try again.",
+  );
+  await expect(page.locator("#auth-error-alert")).not.toContainText("sensitive provider details");
 
-  await expect(page.locator("#auth-error-alert")).toBeVisible();
-
-  await page.click("#switch-to-signup");
-  await expect(page.locator("#auth-title")).toHaveText("Create Arc Account");
-
-  await page.fill("#auth-email", "newagent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  await signInWithWallet(page);
 
   await expect(page.locator("#consent-card")).toBeVisible();
-  await expect(page.locator("#user-email-display")).toContainText("newagent@example.com");
+  await expect(page.locator("#verified-wallet-session")).toContainText("your verified wallet session");
 
   // Sign out
   await page.click("#consent-sign-out-btn");
   await expect(page.locator("#auth-title")).toBeVisible();
 
-  // Wrong sign in is sanitized.
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "wrongpass");
-  await page.click("#auth-submit-btn");
-  await expect(page.locator("#auth-error-alert")).toContainText(
-    "Sign in failed. Check your email and password.",
-  );
-  await expect(page.locator("#auth-error-alert")).not.toContainText("invalid_grant");
-
-  // Correct sign in recovers into the product journey.
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // A repeated wallet sign in returns to the product journey without registration.
+  await signInWithWallet(page);
   await expect(page.locator("#consent-card")).toBeVisible();
 });
 
@@ -243,10 +229,8 @@ test("Autonomy Consent & Account Claim Journey", async ({ page }) => {
 
   await page.goto("/");
 
-  // Sign in
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // Wallet sign in
+  await signInWithWallet(page);
 
   // Consent modal visible
   await expect(page.locator("#consent-card")).toBeVisible();
@@ -353,10 +337,8 @@ test("Dashboard Lifecycle: Wallet Provisioning, Pause/Resume, and Confirmed With
 
   await page.goto("/");
 
-  // Sign in
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // Wallet sign in
+  await signInWithWallet(page);
 
   // Dashboard loaded
   await expect(page.locator("#wallet-address-display")).toContainText(walletAddress);
@@ -436,7 +418,6 @@ test("OAuth 2.1 Consent Journey: authenticated approval uses exact Supabase APIs
         },
         user: {
           id: FAKE_AUTH_USER_ID,
-          email: "agent@example.com",
         },
         scope: "openid profile email",
       }),
@@ -466,10 +447,8 @@ test("OAuth 2.1 Consent Journey: authenticated approval uses exact Supabase APIs
     });
   });
 
-  // Sign in as user
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // Wallet sign in as user
+  await signInWithWallet(page);
 
   await expect(page.locator("#oauth-consent-card")).toBeVisible();
   await expect(page.locator("#oauth-client-name")).toHaveText("MCP Client A");
@@ -511,7 +490,7 @@ test("OAuth 2.1 Consent Journey: explicit denial follows only Supabase redirect"
           uri: "https://client-b.example",
           logo_uri: "https://client-b.example/logo.png",
         },
-        user: { id: FAKE_AUTH_USER_ID, email: "agent@example.com" },
+        user: { id: FAKE_AUTH_USER_ID },
         scope: "openid",
       }),
     });
@@ -530,9 +509,7 @@ test("OAuth 2.1 Consent Journey: explicit denial follows only Supabase redirect"
   }));
 
   await page.goto(`/oauth/consent?authorization_id=${VALID_AUTH_ID}`);
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  await signInWithWallet(page);
   await expect(page.locator("#oauth-consent-card")).toBeVisible();
   await page.click("#oauth-deny-btn");
   await expect(page).toHaveURL(
@@ -577,9 +554,7 @@ test("OAuth 2.1 Consent Journey: already-approved, expired, and invalid requests
   });
 
   await page.goto(`/oauth/consent?authorization_id=${VALID_AUTH_ID}`);
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  await signInWithWallet(page);
   await expect(page).toHaveURL("http://127.0.0.1:4173/already-approved?code=existing");
   expect(oauthRequests).toBeGreaterThanOrEqual(1);
   const requestsAfterRedirect = oauthRequests;
@@ -608,7 +583,6 @@ test("Session refresh and expired-session recovery retain the authenticated jour
     }
     const user = {
       id: FAKE_AUTH_USER_ID,
-      email: "agent@example.com",
       role: "authenticated",
     };
     return route.fulfill({
@@ -637,9 +611,7 @@ test("Session refresh and expired-session recovery retain the authenticated jour
   }));
 
   await page.goto("/");
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  await signInWithWallet(page);
   await expect(page.locator("#dashboard-container")).toBeVisible();
 
   await page.evaluate(() => {
@@ -703,10 +675,8 @@ test("Cross-Tenant Isolation: User A and User B observe isolated wallet addresse
 
   await page.goto("/");
 
-  // Login User A
-  await page.fill("#auth-email", "usera@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // Login User A through the external wallet identity.
+  await signInWithWallet(page, "a");
 
   // Verify User A data
   await expect(page.locator("#wallet-address-display")).toContainText("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -717,10 +687,8 @@ test("Cross-Tenant Isolation: User A and User B observe isolated wallet addresse
   await page.click("#sign-out-btn");
   await expect(page.locator("#auth-title")).toBeVisible();
 
-  // Login User B
-  await page.fill("#auth-email", "userb@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // Login User B through a different external wallet identity.
+  await signInWithWallet(page, "b");
 
   // Verify User B data (isolated from User A)
   await expect(page.locator("#wallet-address-display")).toContainText("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
@@ -756,10 +724,8 @@ test("Account Read Failure & Retry Flow: 500 Error shows Error Card with Retry b
 
   await page.goto("/");
 
-  // Login user
-  await page.fill("#auth-email", "agent@example.com");
-  await page.fill("#auth-password", "password123");
-  await page.click("#auth-submit-btn");
+  // Wallet sign in
+  await signInWithWallet(page);
 
   // Expect Error Card (NOT Consent Modal!)
   await expect(page.locator("#account-error-card")).toBeVisible();
@@ -780,20 +746,16 @@ test("Account Read Failure & Retry Flow: 500 Error shows Error Card with Retry b
 
 test("Accessibility and responsive layout: keyboard focus is visible and content does not overflow", async ({ page }) => {
   await page.goto("/");
-  await page.locator("#auth-email").focus();
-  await expect(page.locator("#auth-email")).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.locator("#auth-password")).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.locator("#auth-submit-btn")).toBeFocused();
+  await page.locator("#wallet-sign-in-btn").focus();
+  await expect(page.locator("#wallet-sign-in-btn")).toBeFocused();
 
   const layout = await page.evaluate(() => ({
     viewportWidth: window.innerWidth,
     documentWidth: document.documentElement.scrollWidth,
     title: document.querySelector("h2")?.textContent,
-    passwordLabel: document.querySelector('label[for="auth-password"]')?.textContent,
+    identityOnlyCopy: document.querySelector(".card p")?.textContent,
   }));
   expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
-  expect(layout.title).toContain("Sign In");
-  expect(layout.passwordLabel).toContain("Password");
+  expect(layout.title).toContain("Connect Wallet");
+  expect(layout.identityOnlyCopy).toContain("identity only");
 });
