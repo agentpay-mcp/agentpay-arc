@@ -1649,6 +1649,57 @@ describe("hosted Arc authenticated JSON account API", () => {
 });
 
 describe("hosted Arc HTTP protocol hardening", () => {
+  it("publishes OAuth protected-resource metadata to browser-based public clients", async () => {
+    const { server } = await startTestServer();
+    try {
+      const metadataUrl = new URL(
+        "/.well-known/oauth-protected-resource/mcp",
+        server.url,
+      );
+      const metadata = await fetch(metadataUrl, {
+        headers: { origin: "http://localhost:6274" },
+      });
+      assert.equal(metadata.status, 200);
+      assert.equal(
+        metadata.headers.get("access-control-allow-origin"),
+        "*",
+      );
+      assert.equal(
+        metadata.headers.get("access-control-allow-credentials"),
+        null,
+      );
+
+      const preflight = await fetch(metadataUrl, {
+        method: "OPTIONS",
+        headers: {
+          origin: "http://localhost:6274",
+          "access-control-request-method": "GET",
+          "access-control-request-headers":
+            "content-type,mcp-protocol-version",
+        },
+      });
+      assert.equal(preflight.status, 204);
+      assert.equal(
+        preflight.headers.get("access-control-allow-origin"),
+        "*",
+      );
+      assert.equal(
+        preflight.headers.get("access-control-allow-methods"),
+        "GET, OPTIONS",
+      );
+      assert.equal(
+        preflight.headers.get("access-control-allow-headers"),
+        "Content-Type, MCP-Protocol-Version",
+      );
+      assert.equal(
+        preflight.headers.get("access-control-allow-credentials"),
+        null,
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects foreign host/origin and emits CORS only for the exact allowed origin", async () => {
     const { server } = await startTestServer();
     try {
