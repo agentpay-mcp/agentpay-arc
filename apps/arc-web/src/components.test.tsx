@@ -7,7 +7,12 @@ import { AuthForm } from "./components/AuthForm.tsx";
 import { ConsentModal } from "./components/ConsentModal.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
-import { App, sanitizeErrorMessage } from "./App.tsx";
+import {
+  App,
+  ARC_WALLET_LOGIN_STATEMENT,
+  sanitizeErrorMessage,
+  signInWithArcWallet,
+} from "./App.tsx";
 import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc/arc-hosted-auth";
 import type { Session } from "@supabase/supabase-js";
 
@@ -38,68 +43,44 @@ test("sanitizeErrorMessage turns raw database/SQL/internal errors into clean use
   );
 });
 
-test("Header component renders brand logo, network badge, user email, and sign-out button", () => {
-  const html = renderToString(<Header userEmail="user@example.com" onSignOut={async () => {}} />);
+test("Header component renders brand logo, network badge, wallet-authenticated state, and sign-out button", () => {
+  const html = renderToString(<Header isAuthenticated onSignOut={async () => {}} />);
   assert.ok(html.includes("AgentPay Arc"));
   assert.ok(html.includes("ARC-TESTNET"));
-  assert.ok(html.includes("user@example.com"));
+  assert.ok(html.includes("Wallet verified"));
+  assert.ok(!html.includes("user@example.com"));
   assert.ok(html.includes("Sign Out"));
 
   const noUserHtml = renderToString(<Header />);
   assert.ok(!noUserHtml.includes("Sign Out"));
 });
 
-test("AuthForm renders sign in and sign up modes, error messages, and loading states", () => {
-  const signInHtml = renderToString(
+test("AuthForm renders one wallet-first identity action without credential fields", () => {
+  const html = renderToString(
     <AuthForm
       onSignIn={async () => {}}
-      onSignUp={async () => {}}
-      errorMessage="Invalid email or password"
+      errorMessage="Connect your wallet and try again."
       isLoading={false}
-      defaultMode="signin"
     />,
   );
-  assert.ok(signInHtml.includes("Sign In to AgentPay Arc"));
-  assert.ok(signInHtml.includes("Invalid email or password"));
-  assert.ok(signInHtml.includes("Sign Up"));
+  assert.ok(html.includes("Connect Wallet to AgentPay Arc"));
+  assert.ok(html.includes("Connect wallet &amp; sign in"));
+  assert.ok(html.includes("identity only"));
+  assert.ok(html.includes("Connect your wallet and try again."));
+  assert.ok(!html.includes("auth-email"));
+  assert.ok(!html.includes("auth-password"));
+  assert.ok(!html.includes("Sign Up"));
 
-  const signUpHtml = renderToString(
-    <AuthForm
-      onSignIn={async () => {}}
-      onSignUp={async () => {}}
-      isLoading={false}
-      defaultMode="signup"
-    />,
+  const loadingHtml = renderToString(
+    <AuthForm onSignIn={async () => {}} isLoading />,
   );
-  assert.ok(signUpHtml.includes("Create Arc Account"));
-  assert.ok(signUpHtml.includes("Create Account &amp; Continue"));
-  assert.ok(signUpHtml.includes("Sign In"));
-
-  const loadingSignInHtml = renderToString(
-    <AuthForm
-      onSignIn={async () => {}}
-      onSignUp={async () => {}}
-      isLoading={true}
-      defaultMode="signin"
-    />,
-  );
-  assert.ok(loadingSignInHtml.includes("Processing..."));
-
-  const loadingSignUpHtml = renderToString(
-    <AuthForm
-      onSignIn={async () => {}}
-      onSignUp={async () => {}}
-      isLoading={true}
-      defaultMode="signup"
-    />,
-  );
-  assert.ok(loadingSignUpHtml.includes("Processing..."));
+  assert.ok(loadingHtml.includes("Waiting for wallet..."));
+  assert.ok(loadingHtml.includes("disabled"));
 });
 
-test("ConsentModal renders autonomy consent statement, custom email, errors, and sign out button states", () => {
+test("ConsentModal renders autonomy consent statement for a verified wallet session", () => {
   const html = renderToString(
     <ConsentModal
-      userEmail="agent@example.com"
       onClaim={async () => {}}
       onSignOut={async () => {}}
       isLoading={false}
@@ -107,29 +88,65 @@ test("ConsentModal renders autonomy consent statement, custom email, errors, and
     />,
   );
   assert.ok(html.includes("Autonomy Consent Policy"));
-  assert.ok(html.includes("agent@example.com"));
+  assert.ok(html.includes("your verified wallet session"));
+  assert.ok(!html.includes("agent@example.com"));
   assert.ok(html.includes("Consent error"));
   assert.ok(html.includes("Claim Hosted Account"));
   assert.ok(html.includes("Sign Out"));
 
-  const fallbackEmailHtml = renderToString(
+  const noSignOutHtml = renderToString(
     <ConsentModal
       onClaim={async () => {}}
       isLoading={false}
     />,
   );
-  assert.ok(fallbackEmailHtml.includes("agent@example.com"));
-  assert.ok(!fallbackEmailHtml.includes("id=\"consent-sign-out-btn\""));
+  assert.ok(noSignOutHtml.includes("your verified wallet session"));
+  assert.ok(!noSignOutHtml.includes("id=\"consent-sign-out-btn\""));
 
   const loadingHtml = renderToString(
     <ConsentModal
-      userEmail="agent@example.com"
       onClaim={async () => {}}
       onSignOut={async () => {}}
       isLoading={true}
     />,
   );
   assert.ok(loadingHtml.includes("Claiming..."));
+});
+
+test("signInWithArcWallet delegates SIWE construction and verification to Supabase", async () => {
+  const calls: unknown[] = [];
+  const expectedSession = { access_token: "wallet-session-token" } as Session;
+  const client = {
+    auth: {
+      async signInWithWeb3(credentials: unknown) {
+        calls.push(credentials);
+        return { data: { session: expectedSession }, error: null };
+      },
+    },
+  };
+
+  assert.equal(await signInWithArcWallet(client as never), expectedSession);
+  assert.deepEqual(calls, [{
+    chain: "ethereum",
+    statement: ARC_WALLET_LOGIN_STATEMENT,
+  }]);
+  assert.match(ARC_WALLET_LOGIN_STATEMENT, /identity only/i);
+  assert.doesNotMatch(ARC_WALLET_LOGIN_STATEMENT, /payment approval/i);
+});
+
+test("signInWithArcWallet never exposes a wallet-provider error", async () => {
+  const client = {
+    auth: {
+      async signInWithWeb3() {
+        return { data: { session: null }, error: { message: "wallet address leaked" } };
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => signInWithArcWallet(client as never),
+    (err: Error) => err.message === "Wallet sign in failed. Connect your wallet and try again.",
+  );
 });
 
 test("Dashboard renders pending/provisioning/failed/closed wallet statuses and action buttons", () => {
@@ -348,7 +365,7 @@ test("App component renders loading spinner, unauthenticated form, OAuth banner,
       initialSession={null}
     />,
   );
-  assert.ok(unauthHtml.includes("Sign In to AgentPay Arc"));
+  assert.ok(unauthHtml.includes("Connect Wallet to AgentPay Arc"));
 
   const unauthOAuthHtml = renderToString(
     <App
@@ -363,7 +380,7 @@ test("App component renders loading spinner, unauthenticated form, OAuth banner,
 
   const dummySession = {
     access_token: "token123",
-    user: { id: "user1", email: "agent@example.com" },
+    user: { id: "user1" },
   } as unknown as Session;
 
   const authOAuthHtml = renderToString(
@@ -377,6 +394,7 @@ test("App component renders loading spinner, unauthenticated form, OAuth banner,
     />,
   );
   assert.ok(authOAuthHtml.includes("Loading Authorization Request..."));
+  assert.ok(authOAuthHtml.includes("Wallet verified"));
 
   const unclaimedHtml = renderToString(
     <App

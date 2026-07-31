@@ -78,14 +78,21 @@ execution phase:
 4. Dynamic Client Registration remains disabled for the initial hosted release;
    only explicitly registered OAuth clients are permitted. Do not enable DCR
    in code, documentation, Supabase, or remote configuration.
-5. Add only `https://arc.agentpay.site` as the browser origin and callback
-   origin required by the approved flow.
-6. Create a dedicated service-role credential and keep it only in
+5. Enable the **Ethereum Web3 Wallet** authentication provider. Arc uses the
+   official Supabase SIWE flow for identity-only external-wallet login; its
+   signature is never a payment approval or Circle-wallet credential.
+6. Set Site URL to `https://arc.agentpay.site` and allow exactly
+   `https://arc.agentpay.site/**` as the browser redirect URL pattern. This
+   exact origin is part of SIWE message verification.
+7. Configure authentication rate limits and CAPTCHA before accepting public
+   users. Keep provider credentials out of the repository and environment
+   examples.
+8. Create a dedicated service-role credential and keep it only in
    `/etc/agentpay-arc/mcp.env`.
-7. Apply the Arc migration set to that new project only after taking a backup
-   and verifying the project reference.
-8. Enable database backups, authentication audit logs, and alerting before
-   accepting users.
+9. Apply the Arc migration set to that new project only after taking a backup
+    and verifying the project reference.
+10. Enable database backups, authentication audit logs, and alerting before
+    accepting users.
 
 No keys from another product, project, repository, or runtime may be copied
 into these files.

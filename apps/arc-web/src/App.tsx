@@ -18,6 +18,20 @@ import { ConsentModal } from "./components/ConsentModal.tsx";
 import { Dashboard } from "./components/Dashboard.tsx";
 import { OAuthConsent } from "./components/OAuthConsent.tsx";
 
+export const ARC_WALLET_LOGIN_STATEMENT =
+  "Sign in to AgentPay Arc to verify your external wallet identity only. This does not approve payments or grant access to your hosted Circle wallet.";
+
+export async function signInWithArcWallet(client: Pick<SupabaseClient, "auth">): Promise<Session> {
+  const { data, error } = await client.auth.signInWithWeb3({
+    chain: "ethereum",
+    statement: ARC_WALLET_LOGIN_STATEMENT,
+  });
+  if (error || !data.session) {
+    throw new Error("Wallet sign in failed. Connect your wallet and try again.");
+  }
+  return data.session;
+}
+
 export function sanitizeErrorMessage(msg: string): string {
   const safeMessages = new Set([
     "Network error. Unable to reach Arc server.",
@@ -146,37 +160,15 @@ export const App: React.FC<AppProps> = ({
     void loadAccountData();
   }, [loadAccountData]);
 
-  const handleSignIn = async (email: string, pass: string) => {
+  const handleSignIn = async () => {
     setIsSubmitting(true);
     setErrorMessage("");
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-    if (error) {
+    try {
+      const walletSession = await signInWithArcWallet(supabase);
+      setSession(walletSession);
+    } finally {
       setIsSubmitting(false);
-      throw new Error("Sign in failed. Check your email and password.");
     }
-    setSession(data.session);
-    setIsSubmitting(false);
-  };
-
-  const handleSignUp = async (email: string, pass: string) => {
-    setIsSubmitting(true);
-    setErrorMessage("");
-    const { data, error } = await supabase.auth.signUp({ email, password: pass });
-    if (error) {
-      setIsSubmitting(false);
-      throw new Error("Sign up failed. Check the entered details and try again.");
-    }
-    if (data.session) {
-      setSession(data.session);
-    } else {
-      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password: pass });
-      if (signInErr) {
-        setIsSubmitting(false);
-        throw new Error("Account created, but sign in failed. Please sign in again.");
-      }
-      setSession(signInData.session);
-    }
-    setIsSubmitting(false);
   };
 
   const handleSignOut = async () => {
@@ -302,7 +294,7 @@ export const App: React.FC<AppProps> = ({
   if (!session) {
     return (
       <>
-        <Header userEmail={undefined} onSignOut={handleSignOut} />
+        <Header onSignOut={handleSignOut} />
         <main>
           {isOAuthPath && (
             <div className="container" style={{ marginTop: "1rem" }} id="oauth-signin-banner">
@@ -313,7 +305,6 @@ export const App: React.FC<AppProps> = ({
           )}
           <AuthForm
             onSignIn={handleSignIn}
-            onSignUp={handleSignUp}
             errorMessage={errorMessage}
             isLoading={isSubmitting}
           />
@@ -326,7 +317,7 @@ export const App: React.FC<AppProps> = ({
   if (isOAuthPath) {
     return (
       <>
-        <Header userEmail={session.user.email} onSignOut={handleSignOut} />
+        <Header isAuthenticated onSignOut={handleSignOut} />
         <main className="container">
           <OAuthConsent supabaseClient={supabase} authorizationId={authorizationId} />
         </main>
@@ -338,7 +329,7 @@ export const App: React.FC<AppProps> = ({
   if (accountFetchError) {
     return (
       <>
-        <Header userEmail={session.user.email} onSignOut={handleSignOut} />
+        <Header isAuthenticated onSignOut={handleSignOut} />
         <main className="container">
           <div className="card" id="account-error-card">
             <h2 className="card-title">Account Load Error</h2>
@@ -365,10 +356,9 @@ export const App: React.FC<AppProps> = ({
   if (isUnclaimed || !account) {
     return (
       <>
-        <Header userEmail={session.user.email} onSignOut={handleSignOut} />
+        <Header isAuthenticated onSignOut={handleSignOut} />
         <main className="container">
           <ConsentModal
-            userEmail={session.user.email}
             onClaim={handleClaimAccount}
             onSignOut={handleSignOut}
             isLoading={isSubmitting}
@@ -382,7 +372,7 @@ export const App: React.FC<AppProps> = ({
   // Render Main Dashboard
   return (
     <>
-      <Header userEmail={session.user.email} onSignOut={handleSignOut} />
+      <Header isAuthenticated onSignOut={handleSignOut} />
       <main>
         <Dashboard
           account={account}

@@ -47,7 +47,7 @@ const OAuthConsentDetailsSchema = z.object({
   }),
   user: z.object({
     id: z.string().uuid(),
-    email: z.string().email(),
+    email: z.string().email().optional(),
   }),
   scope: z.string().trim().min(1).max(512),
 });

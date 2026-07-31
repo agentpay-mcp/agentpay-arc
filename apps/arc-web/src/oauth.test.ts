@@ -43,7 +43,7 @@ test("getSupabaseClient initializes a singleton and permits an isolated test tra
   assert.notEqual(client1, customClient);
 });
 
-test("fetchOAuthAuthorizationDetails consumes the exact Supabase consent shape", async () => {
+test("fetchOAuthAuthorizationDetails accepts a wallet-only Supabase user without exposing identity fields", async () => {
   const client = fakeOAuthClient({
     async getAuthorizationDetails(id: string) {
       assert.equal(id, VALID_AUTH_ID);
@@ -59,7 +59,6 @@ test("fetchOAuthAuthorizationDetails consumes the exact Supabase consent shape",
           },
           user: {
             id: "33333333-3333-4333-8333-333333333333",
-            email: "agent@example.com",
           },
           scope: "openid profile email",
         },

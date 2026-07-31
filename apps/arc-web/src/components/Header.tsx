@@ -1,11 +1,11 @@
 import React from "react";
 
 export interface HeaderProps {
-  readonly userEmail?: string;
+  readonly isAuthenticated?: boolean;
   readonly onSignOut?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ userEmail, onSignOut }) => {
+export const Header: React.FC<HeaderProps> = ({ isAuthenticated = false, onSignOut }) => {
   return (
     <header className="header-bar" role="banner">
       <a href="/" className="brand-logo" id="brand-logo">
@@ -23,10 +23,10 @@ export const Header: React.FC<HeaderProps> = ({ userEmail, onSignOut }) => {
       </a>
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
         <span className="badge-network" id="network-badge">ARC-TESTNET</span>
-        {userEmail && (
+        {isAuthenticated && (
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }} id="header-user-email">
-              {userEmail}
+            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }} id="header-wallet-session">
+              Wallet verified
             </span>
             {onSignOut && (
               <button
