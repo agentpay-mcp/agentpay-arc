@@ -205,6 +205,27 @@ export function extractClientIp(
 async function handleRequest(context: RequestContext): Promise<void> {
   const { request, response, config } = context;
   const url = parseAndValidateRequestUrl(request, config);
+  if (url.search !== "") {
+    throw new HttpRequestError(400, "Query parameters are not accepted");
+  }
+  if (METADATA_PATHS.has(url.pathname)) {
+    applyPublicMetadataCorsHeaders(response);
+    context.rateLimiter.assertAllowed(
+      extractClientIp(request.socket, request.headers["x-forwarded-for"]),
+    );
+    if (request.method === "OPTIONS") {
+      handleMetadataPreflight(request, response);
+      return;
+    }
+    requireMethod(request, "GET");
+    writeJson(response, 200, {
+      resource: config.resourceUrl,
+      authorization_servers: [config.authIssuer],
+      scopes_supported: ARC_HOSTED_OAUTH_SCOPES,
+    });
+    return;
+  }
+
   const origin = validateOrigin(request, config);
   if (origin) {
     applyCorsHeaders(response, origin);
@@ -217,18 +238,6 @@ async function handleRequest(context: RequestContext): Promise<void> {
     return;
   }
 
-  if (url.search !== "") {
-    throw new HttpRequestError(400, "Query parameters are not accepted");
-  }
-  if (METADATA_PATHS.has(url.pathname)) {
-    requireMethod(request, "GET");
-    writeJson(response, 200, {
-      resource: config.resourceUrl,
-      authorization_servers: [config.authIssuer],
-      scopes_supported: ARC_HOSTED_OAUTH_SCOPES,
-    });
-    return;
-  }
   if (url.pathname === "/healthz") {
     requireMethod(request, "GET");
     writeJson(response, 200, {
@@ -568,6 +577,35 @@ function handlePreflight(
   response.end();
 }
 
+function handleMetadataPreflight(
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
+  if (typeof request.headers.origin !== "string") {
+    throw new HttpRequestError(400, "CORS Origin is required");
+  }
+  if (request.headers["access-control-request-method"] !== "GET") {
+    throw new HttpRequestError(405, "CORS method is not allowed");
+  }
+  const requestedHeaders = request.headers[
+    "access-control-request-headers"
+  ];
+  if (
+    typeof requestedHeaders === "string"
+    && requestedHeaders
+      .split(",")
+      .map((header) => header.trim().toLowerCase())
+      .some(
+        (header) =>
+          !["content-type", "mcp-protocol-version"].includes(header),
+      )
+  ) {
+    throw new HttpRequestError(400, "CORS headers are not allowed");
+  }
+  response.statusCode = 204;
+  response.end();
+}
+
 function rejectClientSessionId(request: IncomingMessage): void {
   if (request.headers["mcp-session-id"] !== undefined) {
     throw new HttpRequestError(
@@ -681,6 +719,18 @@ function applyCorsHeaders(
   response.setHeader(
     "Access-Control-Allow-Headers",
     "Authorization, Content-Type, MCP-Protocol-Version",
+  );
+  response.setHeader("Access-Control-Max-Age", "600");
+}
+
+function applyPublicMetadataCorsHeaders(
+  response: ServerResponse,
+): void {
+  response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  response.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, MCP-Protocol-Version",
   );
   response.setHeader("Access-Control-Max-Age", "600");
 }

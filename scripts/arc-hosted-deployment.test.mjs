@@ -189,6 +189,16 @@ describe("Arc-only hosted deployment artifacts", () => {
       nginx,
       new RegExp(`server_name mcp\\.arc\\.agentpay\\.site;[\\s\\S]*location \\^~ \/api\/ \\{[\\s\\S]*proxy_pass http:\/\/127\\.0\\.0\\.1:${ARC_MCP_PORT};`),
     );
+    assert.equal(
+      (
+        nginx.match(
+          /location = \/\.well-known\/oauth-protected-resource(?:\/mcp)? \{\s*limit_except GET OPTIONS \{ deny all; \}/g,
+        )
+        ?? []
+      ).length,
+      2,
+      "both OAuth metadata routes must proxy browser preflight",
+    );
     assert.doesNotMatch(nginx, /default_server|\bserver_name\s+_|proxy_pass\s+https?:\/\/(?!127\.0\.0\.1)/);
     assert.doesNotMatch(nginx, /\$http_authorization|\$request_body/);
   });
