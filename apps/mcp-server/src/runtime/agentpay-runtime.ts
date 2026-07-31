@@ -122,6 +122,7 @@ import type {
   GetAgentWalletDependencies,
   PrepareWalletCreationDependencies,
 } from "../tools/wallet-setup.ts";
+import { PRODUCTION_HOME_CHAIN_ID } from "./production-readiness.ts";
 import type { ExecutionMode } from "./production-readiness.ts";
 
 const REQUIRED_LOCAL_ENV_NAMES = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CELO_RPC_URL", "EXECUTOR_PRIVATE_KEY"];
@@ -358,7 +359,7 @@ export function parseAgentPayEnv(env: NodeJS.ProcessEnv | Record<string, string 
       ? "consumer secret isolation"
       : undefined,
     isProduction && normalized.AGENTPAY_ACCOUNT_VERSION !== "v2" ? "AGENTPAY_ACCOUNT_VERSION" : undefined,
-    isProduction && normalized.AGENTPAY_HOME_CHAIN_ID !== "42220" ? "AGENTPAY_HOME_CHAIN_ID" : undefined,
+    isProduction && normalized.AGENTPAY_HOME_CHAIN_ID !== PRODUCTION_HOME_CHAIN_ID ? "AGENTPAY_HOME_CHAIN_ID" : undefined,
     isProduction && normalized.AGENTPAY_PUBLIC_SETUP_URL !== MAINNET_ONBOARDING_URL
       ? "AGENTPAY_PUBLIC_SETUP_URL"
       : undefined,

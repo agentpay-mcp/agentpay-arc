@@ -13,6 +13,7 @@ import {
   ARC_USDC_ADDRESS,
   ARC_USDC_CODE_HASH,
   MAINNET_MIGRATION_HEAD,
+  PRODUCTION_HOME_CHAIN_ID,
   assertProductionExecutionAllowed,
   computeManifestSha256,
   evaluateProductionReadiness,
@@ -48,7 +49,9 @@ function toArcManifest(source: Record<string, any>): Record<string, any> {
 function productionEnv(): Record<string, string> {
   return {
     AGENTPAY_ENVIRONMENT: "production",
-    AGENTPAY_HOME_CHAIN_ID: "5042002",
+    // Taken from the shared constant, not restated. A literal here is what let
+    // this fixture drift away from the value startup actually requires.
+    AGENTPAY_HOME_CHAIN_ID: PRODUCTION_HOME_CHAIN_ID,
     AGENTPAY_ACCOUNT_VERSION: "v2",
     ARC_TESTNET_RPC_URL: "https://rpc.testnet.arc.network",
     SUPABASE_PRODUCTION_URL: "https://abcdefghijklmnopqrst.supabase.co",
