@@ -445,6 +445,22 @@ export function createTenantArcPaymentRepositories(
   };
 }
 
+export async function listTenantArcPaymentReceipts(
+  client: ArcPaymentSupabaseClient,
+  trustedTenantId: string,
+  rawLimit: number,
+): Promise<readonly ArcPaymentReceiptRecord[]> {
+  const tenantId = tenantIdSchema.parse(trustedTenantId);
+  const limit = z.number().int().min(1).max(100).parse(rawLimit);
+  const result = await client
+    .from("arc_payment_receipts")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+  return requireListData(result).map((row) => mapReceipt(row, tenantId));
+}
+
 function mapAtomicBatchResult(
   value: unknown,
   requested: ArcPaymentBatchRecord,

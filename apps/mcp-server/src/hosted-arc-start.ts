@@ -19,6 +19,7 @@ import { createDefaultHostedArcRuntime } from "./runtime/default-hosted-arc-runt
 import { ArcHostedAccountRepositoryImpl } from "./services/arc-hosted-accounts.js";
 import {
   createTenantArcPaymentRepositories,
+  listTenantArcPaymentReceipts,
   type ArcPaymentSupabaseClient,
   type ArcPaymentSupabaseQuery,
 } from "./services/arc-payments-supabase.js";
@@ -27,6 +28,7 @@ import {
   validateCircleDeveloperWalletsConfig,
 } from "./services/circle-developer-wallets.js";
 import { CircleHostedWalletFacade } from "./services/circle-hosted-wallet-facade.js";
+import { createHostedArcObservability } from "./mcp/hosted-arc-observability.js";
 
 const hostedArcSecretConfigSchema = z
   .object({
@@ -120,6 +122,22 @@ export async function startHostedArcFromEnv(
       return unresolvedMutationRowsSchema.parse(data ?? []).length > 0;
     },
   });
+  const observability = createHostedArcObservability({
+    facade,
+    paymentsForTenant(tenantId) {
+      return createTenantArcPaymentRepositories(
+        paymentClient,
+        tenantId,
+      ).payments;
+    },
+    listReceiptsForTenant(tenantId, limit) {
+      return listTenantArcPaymentReceipts(
+        paymentClient,
+        tenantId,
+        limit,
+      );
+    },
+  });
   const verifier = createSupabaseHostedArcBearerVerifier(
     new SupabaseUserVerifierImpl(userConfig),
     httpConfig,
@@ -143,6 +161,11 @@ export async function startHostedArcFromEnv(
       });
     },
     mutationCoordinator,
+    projectAccount: observability.projectAccount,
+    reportProjectionError() {
+      console.error("Hosted Arc account projection is unavailable.");
+    },
+    reconcileWithdrawal: observability.reconcileWithdrawal,
     async readinessProbe() {
       const { error } = await serviceClient
         .from("arc_hosted_accounts")

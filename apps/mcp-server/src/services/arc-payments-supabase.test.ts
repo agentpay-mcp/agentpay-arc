@@ -10,6 +10,7 @@ import type {
 
 import {
   createTenantArcPaymentRepositories,
+  listTenantArcPaymentReceipts,
   type ArcPaymentSupabaseQuery,
   type ArcPaymentSupabaseClient,
   type SupabaseListResult,
@@ -26,6 +27,27 @@ const WALLET = "0x1111111111111111111111111111111111111111";
 const RECIPIENT = "0x2222222222222222222222222222222222222222";
 
 describe("tenant-bound Arc payment Supabase repositories", () => {
+  it("lists recent receipts only for the trusted tenant", async () => {
+    const client = new SupabaseSpy({
+      arc_payment_receipts: [
+        receiptRpcRow(),
+        { ...receiptRpcRow(), tenant_id: OTHER_TENANT_ID },
+      ],
+    });
+
+    const receipts = await listTenantArcPaymentReceipts(
+      client,
+      TENANT_ID,
+      20,
+    );
+
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0]?.id, RECEIPT_ID);
+    assert.deepEqual(client.queries[0]?.filters, [
+      ["tenant_id", TENANT_ID],
+    ]);
+  });
+
   it("adds the trusted tenant to every read and write without exposing caller authority", async () => {
     const client = new SupabaseSpy();
     const repositories = createTenantArcPaymentRepositories(client, TENANT_ID);

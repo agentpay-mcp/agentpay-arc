@@ -20,6 +20,8 @@ const celoX402SettlementAuditMigrationPath = "supabase/migrations/20260721160000
 const arcAgentActivityMigrationPath = "supabase/migrations/20260726090000_arc_agent_activity.sql";
 const arcReceiptTransitionMigrationPath =
   "supabase/migrations/20260726091000_arc_payment_receipt_transitions.sql";
+const arcReceiptRecoveryMigrationPath =
+  "supabase/migrations/20260731120000_arc_payment_receipt_recovery.sql";
 const migrationsDir = "supabase/migrations";
 const requiredTables = ["setup_intents", "agent_wallets", "payment_intents", "payment_events"];
 const requiredSecurityStatements = [
@@ -49,6 +51,14 @@ function normalizeSql(sql) {
 }
 
 describe("AgentPay Supabase migration", () => {
+  it("allows service-role recovery from reconciliation-required to completed", async () => {
+    const sql = normalizeSql(await readFile(arcReceiptRecoveryMigrationPath, "utf8"));
+
+    assert.ok(sql.includes("p_expected_status not in ('submitting', 'submitted', 'reconciliation_required')"));
+    assert.ok(sql.includes("p_expected_status = 'reconciliation_required' and p_status = 'completed'"));
+    assert.ok(sql.includes("current_user <> 'service_role'"));
+    assert.ok(sql.includes("grant execute on function public.transition_arc_payment_receipt"));
+  });
   it("defines runtime tables with RLS and query-aligned indexes", async () => {
     const sql = normalizeSql(await readFile(migrationPath, "utf8"));
 

@@ -7,6 +7,7 @@ import {
   pauseHostedAccount,
   resumeHostedAccount,
   withdrawHostedAccount,
+  fetchWithdrawalStatus,
   ArcApiError,
 } from "./api.ts";
 import { ARC_AUTONOMY_CONSENT_VERSION } from "@agentpay-ai/shared-arc/arc-hosted-auth";
@@ -143,6 +144,38 @@ test("withdrawHostedAccount sends withdrawal parameters and handles status 200",
 
   assert.equal(res.withdrawal.status, "COMPLETED");
   assert.equal(res.withdrawal.transactionHash, "0xabc");
+});
+
+test("fetchWithdrawalStatus polls by tenant-bound opaque identifiers without resubmitting", async () => {
+  const mockFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    assert.equal(url.toString(), `${API_ORIGIN}/api/account/withdraw/status`);
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(JSON.parse(init?.body as string), {
+      idempotencyKey: "123e4567-e89b-42d3-a456-426614174000",
+      transactionId: "circle-tx-1",
+    });
+    return new Response(JSON.stringify({
+      success: true,
+      withdrawal: {
+        status: "COMPLETED",
+        transactionId: "circle-tx-1",
+        transactionHash: `0x${"a".repeat(64)}`,
+        reconciliationRequired: false,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const response = await fetchWithdrawalStatus(
+    API_ORIGIN,
+    MOCK_ACCESS_TOKEN,
+    {
+      idempotencyKey: "123e4567-e89b-42d3-a456-426614174000",
+      transactionId: "circle-tx-1",
+    },
+    mockFetch,
+  );
+
+  assert.equal(response.withdrawal.status, "COMPLETED");
 });
 
 test("handles non-json response error", async () => {

@@ -41,6 +41,8 @@ import type {
 import {
   executeHostedArcApi,
   HostedArcApiError,
+  type HostedArcAccountProjection,
+  type HostedArcWithdrawalStatusInput,
 } from "./hosted-arc-http-api.js";
 
 export {
@@ -77,6 +79,7 @@ const API_PATHS = new Set([
   "/api/account/pause",
   "/api/account/resume",
   "/api/account/withdraw",
+  "/api/account/withdraw/status",
 ]);
 
 export interface HostedArcHttpServer {
@@ -98,6 +101,14 @@ export interface StartHostedArcHttpServerOptions {
     authority: ArcHostedAuthority,
   ) => HostedArcWalletRuntime;
   readonly mutationCoordinator: HostedArcMutationCoordinator;
+  readonly projectAccount?: (
+    authority: ArcHostedAuthority,
+  ) => Promise<HostedArcAccountProjection>;
+  readonly reportProjectionError?: (error: unknown) => void;
+  readonly reconcileWithdrawal?: (
+    authority: ArcHostedAuthority,
+    input: HostedArcWithdrawalStatusInput,
+  ) => Promise<HostedArcMutationOutput>;
   readonly readinessProbe: () => Promise<boolean>;
   readonly readinessTimeoutMs?: number;
   readonly rateLimitMaxRequests?: number;
@@ -324,6 +335,9 @@ async function handleApiRequest(
     resolveAuthority: () =>
       resolveAuthority(options.repository, identity),
     mutationCoordinator: options.mutationCoordinator,
+    projectAccount: options.projectAccount,
+    reportProjectionError: options.reportProjectionError,
+    reconcileWithdrawal: options.reconcileWithdrawal,
   });
   writeJson(response, result.status, result.body);
 }
@@ -464,6 +478,12 @@ async function resolveAuthority(
     throw new HttpRequestError(403, "Hosted authority is unavailable");
   }
   if (!authority) {
+    if (
+      account?.authUserId === identity.authUserId
+      && account.accountStatus === "PAUSED"
+    ) {
+      throw new HttpRequestError(403, "Hosted account is paused");
+    }
     throw new HttpRequestError(403, "Hosted authority is unavailable");
   }
   const parsed = ArcHostedAuthoritySchema.parse(authority);

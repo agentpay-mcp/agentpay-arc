@@ -10,6 +10,7 @@ import { OAuthConsent } from "./components/OAuthConsent.tsx";
 import {
   App,
   ARC_WALLET_LOGIN_STATEMENT,
+  getSessionIdentity,
   sanitizeErrorMessage,
   signInWithArcWallet,
 } from "./App.tsx";
@@ -41,6 +42,25 @@ test("sanitizeErrorMessage turns raw database/SQL/internal errors into clean use
     sanitizeErrorMessage("Network error. Unable to reach Arc server."),
     "Network error. Unable to reach Arc server.",
   );
+});
+
+test("session identity follows the wallet user without invalidating a same-user token refresh", () => {
+  const sessionA = {
+    access_token: "token-a",
+    user: { id: "user-a" },
+  } as Session;
+  const refreshedA = {
+    access_token: "token-b",
+    user: { id: "user-a" },
+  } as Session;
+  const sessionB = {
+    access_token: "token-b",
+    user: { id: "user-b" },
+  } as Session;
+
+  assert.equal(getSessionIdentity(sessionA), getSessionIdentity(refreshedA));
+  assert.notEqual(getSessionIdentity(refreshedA), getSessionIdentity(sessionB));
+  assert.equal(getSessionIdentity(null), null);
 });
 
 test("Header component renders brand logo, network badge, wallet-authenticated state, and sign-out button", () => {
@@ -268,6 +288,23 @@ test("Dashboard renders account details, live wallet status, balance, paused sta
   );
   assert.ok(completedHtml.includes("Withdrawal Outcome:"));
   assert.ok(completedHtml.includes("COMPLETED"));
+
+  const submittedHtml = renderToString(
+    <Dashboard
+      account={{
+        status: "ACTIVE",
+        consentVersion: ARC_AUTONOMY_CONSENT_VERSION,
+        wallet: { status: "LIVE", address: "0x1111111111111111111111111111111111111111" },
+      }}
+      onProvisionWallet={async () => {}}
+      onPauseAccount={async () => {}}
+      onResumeAccount={async () => {}}
+      onWithdraw={async () => {}}
+      withdrawalResult={{ status: "SUBMITTED", reconciliationRequired: false }}
+    />,
+  );
+  assert.ok(submittedHtml.includes("Status is pending reconciliation with Arc network."));
+  assert.ok(submittedHtml.includes("alert-info"));
 });
 
 test("OAuthConsent renders loading, error card, missing authorizationId, and loaded states", () => {
