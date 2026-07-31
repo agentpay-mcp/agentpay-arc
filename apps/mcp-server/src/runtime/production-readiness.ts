@@ -14,6 +14,25 @@ export type RuntimeIdentityStatus = "SHADOW_ONLY" | "DEPLOYED" | "READY" | "DRAI
 
 export const ARC_CHAIN_ID = 5042002;
 export const ARC_CAIP2 = "eip155:5042002";
+
+/**
+ * The home chain id a production process is configured with at boot.
+ *
+ * This is the single source of truth for that value. `parseAgentPayEnv` gates
+ * startup on it and this module's readiness check gates `/readyz` on it, and
+ * both run inside one hosted process -- so a second, independently maintained
+ * copy is a defect waiting to happen. It already was one: readiness required
+ * Arc while startup required Celo mainnet, which left no environment able to
+ * satisfy both. A server could start and never become ready, and each half was
+ * covered by its own passing tests.
+ *
+ * Note this is the *legacy* Celo-shaped HTTP surface. The Arc hosted surface
+ * boots from `hosted-arc-start.ts`, validates its own `ARC_*` environment, and
+ * calls neither validator; it is unaffected by this constant. Migrating this
+ * surface to Arc means changing this value and the `CeloHomeChainId` domain it
+ * feeds -- a separate piece of work, not a redefinition of this constant.
+ */
+export const PRODUCTION_HOME_CHAIN_ID = "42220";
 export const ARC_USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 export const ARC_USDC_CODE_HASH =
   "0xc9987bd3af6b26a030951faa7eacc017b68343aeedf3ce5fe68f821c4b93939d";
@@ -148,7 +167,12 @@ export function validateProductionEnvironment(env: Record<string, string | undef
   const has = (name: string) => typeof env[name] === "string" && env[name]!.trim() !== "";
 
   if (env.AGENTPAY_ENVIRONMENT !== "production") add("AGENTPAY_ENVIRONMENT", "must be production");
-  if (String(env.AGENTPAY_HOME_CHAIN_ID ?? "") !== String(ARC_CHAIN_ID)) add("AGENTPAY_HOME_CHAIN_ID", "must be 5042002");
+  // Readiness verifies the process that is actually running. Demanding a
+  // different chain than the one startup booted with cannot be satisfied by
+  // any deployment, whichever chain is the right answer.
+  if (String(env.AGENTPAY_HOME_CHAIN_ID ?? "") !== PRODUCTION_HOME_CHAIN_ID) {
+    add("AGENTPAY_HOME_CHAIN_ID", `must be ${PRODUCTION_HOME_CHAIN_ID}, matching the configured home chain at startup`);
+  }
   if (env.AGENTPAY_ACCOUNT_VERSION !== "v2") add("AGENTPAY_ACCOUNT_VERSION", "must be v2");
 
   for (const name of [
