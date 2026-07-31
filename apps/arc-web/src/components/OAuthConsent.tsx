@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { uuidV4Schema } from "@agentpay-ai/shared-arc/batch-payout";
 import {
   fetchOAuthAuthorizationDetails,
   approveOAuthAuthorization,
@@ -34,13 +33,6 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
 
       if (!authorizationId) {
         setErrorMsg("Missing required authorization_id parameter.");
-        setIsLoading(false);
-        return;
-      }
-
-      const parseResult = uuidV4Schema.safeParse(authorizationId);
-      if (!parseResult.success) {
-        setErrorMsg("Invalid authorization_id format. Must be a valid UUID.");
         setIsLoading(false);
         return;
       }

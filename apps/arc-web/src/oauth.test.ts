@@ -8,7 +8,7 @@ import {
   denyOAuthAuthorization,
 } from "./supabase.ts";
 
-const VALID_AUTH_ID = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+const VALID_AUTH_ID = "xdjoahdagwfu365xo2c3mwpy3wiaaowg";
 const TEST_CONFIG = {
   publicOrigin: "https://arc.agentpay.site",
   apiOrigin: "https://mcp.arc.agentpay.site",
@@ -22,15 +22,20 @@ function fakeOAuthClient(oauth: Record<string, unknown>): OAuthClient {
   return { auth: { oauth } } as unknown as OAuthClient;
 }
 
-test("validateAuthorizationId accepts only a bounded UUID v4", () => {
+test("validateAuthorizationId treats Supabase authorization IDs as bounded opaque tokens", () => {
   assert.equal(validateAuthorizationId(`  ${VALID_AUTH_ID}  `), VALID_AUTH_ID);
+  assert.equal(validateAuthorizationId("opaque_ID-token-123"), "opaque_ID-token-123");
   assert.throws(
-    () => validateAuthorizationId("not-a-uuid"),
-    (err: Error) => err.message === "Invalid authorization request.",
+    () => validateAuthorizationId("invalid/id"),
+    (err: Error) => err.message === "Invalid authorization_id format.",
   );
   assert.throws(
-    () => validateAuthorizationId(`${VALID_AUTH_ID}${"x".repeat(200)}`),
-    (err: Error) => err.message === "Invalid authorization request.",
+    () => validateAuthorizationId(" "),
+    (err: Error) => err.message === "Invalid authorization_id format.",
+  );
+  assert.throws(
+    () => validateAuthorizationId("x".repeat(161)),
+    (err: Error) => err.message === "Invalid authorization_id format.",
   );
 });
 

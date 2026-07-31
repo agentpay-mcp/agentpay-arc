@@ -24,9 +24,7 @@ export function getSupabaseClient(config?: PublicConfig, customFetch?: typeof fe
   return client;
 }
 
-const AuthorizationIdSchema = z.string().trim().max(64).regex(
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-);
+const AuthorizationIdSchema = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/);
 
 const SafeRedirectUrlSchema = z.string().max(2048).url().refine((value) => {
   const url = new URL(value);
@@ -59,7 +57,7 @@ const OAuthRedirectSchema = z.object({
 export function validateAuthorizationId(authorizationId: string): string {
   const result = AuthorizationIdSchema.safeParse(authorizationId);
   if (!result.success) {
-    throw new Error("Invalid authorization request.");
+    throw new Error("Invalid authorization_id format.");
   }
   return result.data;
 }

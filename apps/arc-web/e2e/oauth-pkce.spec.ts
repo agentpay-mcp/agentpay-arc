@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const AUTHORIZATION_ID = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+const AUTHORIZATION_ID = "xdjoahdagwfu365xo2c3mwpy3wiaaowg";
 const AUTH_USER_ID = "11111111-2222-4333-8444-555555555555";
 const CLIENT_A_ID = "22222222-2222-4222-8222-222222222222";
 const CLIENT_B_ID = "33333333-3333-4333-8333-333333333333";
