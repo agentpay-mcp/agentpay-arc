@@ -167,6 +167,11 @@ describe("README", () => {
       assert.match(contents, /Cross-chain.*payment/i, `${file} must keep cross-chain as a payment-time choice`);
       assert.match(contents, /(?:self-service|chat).*wallet creation.*Celo Sepolia/i, `${file} must keep public wallet creation on Sepolia`);
       assert.match(contents, /mainnet.*operator-managed/i, `${file} must identify the gated mainnet account path`);
+      assert.match(contents, /Arc.*Circle Agent Wallet|Circle Agent Wallet.*Arc/i, `${file} must lead with Arc`);
+      assert.ok(
+        contents.indexOf("setup_agent_wallet") < contents.indexOf("prepare_wallet_creation"),
+        `${file} must present Arc onboarding before inherited Celo onboarding`,
+      );
       assert.doesNotMatch(
         contents,
         /cross-chain route,? before creating an AgentPay wallet/i,

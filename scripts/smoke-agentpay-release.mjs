@@ -39,7 +39,7 @@ async function main() {
       await mkdir(join(appDir, ".codex"));
       run(npmCommand, ["install", "--ignore-scripts", ...tarballs], { cwd: appDir, quiet: true });
       run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--output-dir", installDir], { cwd: appDir });
-      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--mcp-url", "https://wallet.agentpay.site/arc/mcp", "--output-dir", mcpUrlInstallDir], { cwd: appDir });
+      run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--mcp-url", "https://mcp.arc.agentpay.site/mcp", "--output-dir", mcpUrlInstallDir], { cwd: appDir });
       run(npxCommand, ["@agentpay-ai/agentpay-arc", "install", "--self-hosted", "--output-dir", selfHostedInstallDir], {
         cwd: appDir,
       });
@@ -75,12 +75,15 @@ async function main() {
       if (mcpConfig.mcpServers?.agentpay !== undefined) {
         throw new Error("Default AgentPay install configured a hosted MCP URL when none was requested.");
       }
-      if (mcpConfig.mcpServers?.["agentpay-wallet"]?.command !== "npx") {
+      if (mcpConfig.mcpServers?.["agentpay-wallet"]?.command !== process.execPath) {
         throw new Error("Default AgentPay install did not configure the local agentpay-wallet MCP.");
+      }
+      if (!mcpConfig.mcpServers?.["agentpay-wallet"]?.args?.[0]?.endsWith("/dist/index.js")) {
+        throw new Error("Default AgentPay install did not pin the packaged local CLI entrypoint.");
       }
 
       const mcpUrlConfig = JSON.parse(await readFile(join(mcpUrlInstallDir, "runtimes", "codex", "mcp.json"), "utf8"));
-      if (mcpUrlConfig.mcpServers?.agentpay?.url !== "https://wallet.agentpay.site/arc/mcp") {
+      if (mcpUrlConfig.mcpServers?.agentpay?.url !== "https://mcp.arc.agentpay.site/mcp") {
         throw new Error("Explicit --mcp-url install did not configure the requested hosted MCP URL.");
       }
 
@@ -88,7 +91,7 @@ async function main() {
       if (claudeConfig.mcpServers?.agentpay !== undefined) {
         throw new Error("Default Claude install registered a hosted AgentPay MCP URL.");
       }
-      if (claudeConfig.mcpServers?.["agentpay-wallet"]?.command !== "npx") {
+      if (claudeConfig.mcpServers?.["agentpay-wallet"]?.command !== process.execPath) {
         throw new Error("Claude install did not register the local agentpay-wallet MCP.");
       }
 
@@ -96,7 +99,7 @@ async function main() {
       if (cursorConfig.mcpServers?.agentpay !== undefined) {
         throw new Error("Default Cursor install registered a hosted AgentPay MCP URL.");
       }
-      if (cursorConfig.mcpServers?.["agentpay-wallet"]?.command !== "npx") {
+      if (cursorConfig.mcpServers?.["agentpay-wallet"]?.command !== process.execPath) {
         throw new Error("Cursor install did not register the local agentpay-wallet MCP.");
       }
 

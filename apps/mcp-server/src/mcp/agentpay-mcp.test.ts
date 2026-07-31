@@ -1270,7 +1270,7 @@ describe("registerAgentPayMcpTools", () => {
         receivedOwner = input.ownerAddress;
         return {
           status: "SETUP_REQUIRED",
-          setupUrl: "https://wallet.agentpay.site/arc/setup",
+          setupUrl: "https://arc.agentpay.site/setup",
           instructionToAgent: "Open the secure AgentPay setup link.",
           homeChainId: 5042002,
           homeChain: "Arc Testnet",
@@ -1284,7 +1284,7 @@ describe("registerAgentPayMcpTools", () => {
     assert.equal(receivedOwner, sessionContext.ownerAddress);
     assert.deepEqual((result as { structuredContent?: unknown }).structuredContent, {
       status: "SETUP_REQUIRED",
-      setupUrl: "https://wallet.agentpay.site/arc/setup",
+      setupUrl: "https://arc.agentpay.site/setup",
       instructionToAgent: "Open the secure AgentPay setup link.",
       homeChainId: 5042002,
       homeChain: "Arc Testnet",

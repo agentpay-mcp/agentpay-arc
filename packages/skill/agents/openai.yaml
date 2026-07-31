@@ -1,3 +1,3 @@
 display_name: AgentPay
 short_description: Owner-authorized cross-chain payments for AI agents.
-default_prompt: Use AgentPay to create a Celo agent wallet, prepare an owner-signed stablecoin payment, open the Review & Sign URL, retrieve the verified EIP-712 signature, execute via the paid MCP ASP, and track status.
+default_prompt: Use AgentPay Arc to set up a Circle Agent Wallet on Arc Testnet, check its autonomous USDC budget, execute the requested Arc tool exactly once, and report the resulting receipt or activity status.

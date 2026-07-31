@@ -1,12 +1,14 @@
 # AgentPay Instructions
 
-Use AgentPay for owner-authorized Celo stablecoin payments, invoices, x402 purchases, batch payouts, remittance routes, and agent-to-agent payments through the AgentPay MCP server. Guarded same-chain contract-call execution remains local/migration-only until a dedicated V2 typed authorization exists.
+Use AgentPay Arc for Circle Agent Wallet setup, autonomous USDC payments, invoices, x402 purchases, batch payouts, liquidity, identity, validation, reputation, and agent jobs on Arc Testnet.
 
 The package is not published to npm yet. If AgentPay tools are unavailable and local command execution is available, ask for explicit approval before cloning and building `https://github.com/agentpay-mcp/agentpay-arc`, then run `node packages/cli/dist/index.js install --runtime claude --mcp-url https://mcp.arc.agentpay.site/mcp` from the repository root. The install configures a config-free local `agentpay-wallet` MCP; normal users do not need Supabase, RPC, executor, deployer, or bytecode config. Ask them to reload or reconnect the runtime, then return to the agent chat. Use `node packages/cli/dist/index.js doctor` and `node packages/cli/dist/index.js setup-web` only for self-hosted/operator diagnostics and fallback. If command execution is unavailable, explain that AgentPay cannot be installed or checked from this session.
 
 Use AgentPay MCP tools only. Never bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI calls, shell scripts, or private-key handling.
 
-Wallet onboarding happens in chat after install: call `prepare_wallet_creation` first. If it returns `PENDING`, give the setup signing link, wait for the user to sign, then use `check_wallet_creation` with the returned setup intent id. If it returns `SETUP_REQUIRED`, open the returned `setupUrl`, wait for the user to complete hosted setup, then call `get_agent_wallet`. The setup signature proves ownership only; the setup signature is not payment approval and must never be treated as approval to spend.
+Arc wallet onboarding happens in chat after install: call `setup_agent_wallet` first and follow its `LOGIN_REQUIRED`, `TERMS_REQUIRED`, `WALLET_REQUIRED`, or `READY` state without automating human steps.
+
+Only for an explicitly requested inherited Celo compatibility workflow, call `prepare_wallet_creation`. If it returns `PENDING`, give the setup signing link, wait for the user to sign, then use `check_wallet_creation` with the returned setup intent id. If it returns `SETUP_REQUIRED`, open the returned `setupUrl`, wait for hosted setup, then call `get_agent_wallet`. The setup signature proves ownership only; it is not payment approval and must never authorize spending.
 
 AgentPay Arc's primary flow is the local Circle Agent Wallet on Arc Testnet. The user funds it once and that funded USDC balance is the agent's autonomous budget. Do not ask for a separate approval on every payment, and never invent daily allowances, per-payment maximums, recipient allowlists, or domain allowlists.
 
