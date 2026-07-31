@@ -12,11 +12,14 @@ describe("README", () => {
     assert.match(contents, /npm run release:smoke/);
     assert.match(contents, /skills\/agentpay\/SKILL\.md/);
     assert.match(contents, /detects the target runtime/i);
-    assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
-    assert.match(contents, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
-    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/arc\/mcp/);
+    assert.match(contents, /https:\/\/arc\.agentpay\.site/);
+    assert.match(contents, /https:\/\/mcp\.arc\.agentpay\.site\/mcp/);
+    assert.match(contents, /five hosted Arc MCP tools/i);
+    assert.match(contents, /package is not published|not published to npm/i);
+    assert.match(contents, /node packages\/cli\/dist\/index\.js install --runtime/i);
+    assert.doesNotMatch(contents, /^npx @agentpay-ai\/agentpay-arc install$/m);
     assert.match(contents, /normal users do not need Supabase, RPC, executor, deployer, or bytecode config/i);
-    assert.match(contents, /install --self-hosted/);
+    assert.match(contents, /install [^\n]*--self-hosted/);
     assert.match(contents, /apps\/mcp-server/);
     assert.match(contents, /packages\/cli/);
     assert.match(contents, /agentpay serve-http/);
@@ -29,12 +32,13 @@ describe("README", () => {
     assert.match(contents, /0x3600000000000000000000000000000000000000/);
     assert.match(contents, /ARC_TESTNET_RPC_URL/);
 
-    // The runtime env layer is not migrated yet. The README must say so instead
-    // of advertising Arc values that make the MCP server refuse to start.
+    // The new hosted Arc runtime must be separated from the inherited local
+    // startup parser instead of claiming the live deployment is Celo-shaped.
+    assert.match(contents, /hosted Arc runtime.*Arc-prefixed|Arc-prefixed.*hosted Arc runtime/is);
     assert.match(contents, /parseAgentPayEnv/);
     assert.match(contents, /still (?:validates|requires).*(?:inherited )?Celo|Celo-shaped/i);
     assert.match(contents, /42220/);
-    assert.match(contents, /two gates currently disagree|validators currently coexist/i);
+    assert.doesNotMatch(contents, /Arc migration is not finished at the configuration layer/i);
 
     // The 18/6 decimal hazard must stay documented.
     assert.match(contents, /6 decimals/i);
