@@ -146,33 +146,27 @@ flow at `https://arc.agentpay.site`, and returns with a PKCE-bound token.
 Normal users do not need Supabase, RPC, executor, deployer, or bytecode config. They
 also do not receive or manage Circle API credentials.
 
-## Local install
+## Install with npx
 
-The npm package is not published yet, so do not run an `npx` command from the
-registry. Clone this repository, build it, and run the tracked installer from
-the repository root. It detects the target runtime and writes MCP configuration
-plus the `skills/agentpay/SKILL.md` instructions:
+The public CLI detects the target runtime and writes MCP configuration plus the
+`skills/agentpay/SKILL.md` instructions:
 
 ```bash
-git clone https://github.com/agentpay-mcp/agentpay-arc.git
-cd agentpay-arc
-npm ci
-npm run build
-node packages/cli/dist/index.js install --runtime <runtime>
+npx @agentpay-ai/agentpay-arc install --runtime <runtime>
 ```
 
 Use `codex`, `claude`, `cursor`, `hermes`, or `generic` for `<runtime>`. To
 configure the hosted MCP alongside the complete local 31-tool wallet surface:
 
 ```bash
-node packages/cli/dist/index.js install --runtime <runtime> \
+npx @agentpay-ai/agentpay-arc install --runtime <runtime> \
   --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
 
 For an operator-managed deployment:
 
 ```bash
-node packages/cli/dist/index.js install --runtime <runtime> --self-hosted
+npx @agentpay-ai/agentpay-arc install --runtime <runtime> --self-hosted
 ```
 
 ## Components

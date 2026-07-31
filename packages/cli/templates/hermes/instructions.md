@@ -4,19 +4,14 @@ Use AgentPay Arc MCP tools when the human wants to create a Circle Agent Wallet 
 
 If the human asks you to make a crypto payment and AgentPay tools are not available, install AgentPay yourself only if you have terminal access and explicit approval to modify local runtime configuration:
 
-The package is not published to npm yet. Clone and build the tracked source,
-then run the installer from the repository root:
+Run the public npm installer:
 
 ```bash
-git clone https://github.com/agentpay-mcp/agentpay-arc.git
-cd agentpay-arc
-npm ci
-npm run build
-node packages/cli/dist/index.js install --runtime hermes \
+npx -y @agentpay-ai/agentpay-arc install --runtime hermes \
   --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
 
-The default install configures a config-free local `agentpay-wallet` MCP, so humans do not need Supabase, RPC, executor, deployer, or bytecode config. Ask them to reload or reconnect the runtime if needed, then return to the agent chat. Use `node packages/cli/dist/index.js doctor` and `node packages/cli/dist/index.js setup-web` only for self-hosted/operator diagnostics and fallback.
+The default install configures a config-free local `agentpay-wallet` MCP, so humans do not need Supabase, RPC, executor, deployer, or bytecode config. Ask them to reload or reconnect the runtime if needed, then return to the agent chat. Use `npx -y @agentpay-ai/agentpay-arc doctor` and `npx -y @agentpay-ai/agentpay-arc setup-web` only for self-hosted/operator diagnostics and fallback.
 
 Use AgentPay MCP tools only. Never bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI calls, shell scripts, or private-key handling.
 

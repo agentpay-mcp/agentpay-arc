@@ -73,7 +73,7 @@ describe("prepareWalletCreation", () => {
         },
         executorAddress: "0x4444444444444444444444444444444444444444",
         setupWebUrl: "https://wallet.agentpay.site/arc/review",
-        productionOnboardingUrl: "https://wallet.agentpay.site/arc/setup",
+        productionOnboardingUrl: "https://arc.agentpay.site/setup",
         clock: () => new Date("2026-07-21T04:00:00.000Z"),
         createSetupIntentId: () => "must_not_be_created",
       },
@@ -82,7 +82,7 @@ describe("prepareWalletCreation", () => {
     assert.equal(createCalls, 0);
     assert.deepEqual(output, {
       status: "SETUP_REQUIRED",
-      setupUrl: "https://wallet.agentpay.site/arc/setup",
+      setupUrl: "https://arc.agentpay.site/setup",
       homeChainId: 5042002,
       homeChain: "Arc Testnet",
       instructionToAgent: "Open the secure AgentPay setup link, connect the owner wallet, and approve the setup signature. Never share a seed phrase or private key.",
@@ -97,7 +97,7 @@ describe("prepareWalletCreation", () => {
       },
       executorAddress: "0x4444444444444444444444444444444444444444",
       setupWebUrl: "https://wallet.agentpay.site/arc/review",
-      productionOnboardingUrl: "https://wallet.agentpay.site/arc/setup",
+      productionOnboardingUrl: "https://arc.agentpay.site/setup",
       clock: () => new Date("2026-07-21T04:00:00.000Z"),
       createSetupIntentId: () => "must_not_be_created",
     };
