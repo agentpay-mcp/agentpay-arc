@@ -12,7 +12,7 @@ Environment=NODE_ENV=production
 EnvironmentFile=/etc/agentpay-arc/mcp.env
 ExecStartPre=/usr/bin/node /opt/agentpay-arc/releases/@RELEASE_COMMIT@/deploy/arc/validate-env.mjs mcp
 ExecStart=/usr/bin/npm run start:hosted-arc --workspace apps/mcp-server
-ExecStartPost=/usr/bin/curl --fail --silent --show-error --max-time 5 --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3002/healthz
+ExecStartPost=/usr/bin/curl --fail --silent --show-error --max-time 5 --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3102/healthz
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=45
@@ -39,7 +39,7 @@ LockPersonality=true
 CapabilityBoundingSet=
 AmbientCapabilities=
 SocketBindDeny=any
-SocketBindAllow=tcp:3002
+SocketBindAllow=tcp:3102
 ReadOnlyPaths=/opt/agentpay-arc/releases/@RELEASE_COMMIT@
 InaccessiblePaths=/etc/agentpay-arc/web.env
 StandardOutput=journal

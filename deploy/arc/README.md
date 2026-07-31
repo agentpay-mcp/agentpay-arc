@@ -7,11 +7,11 @@ project, deploy a release, apply a migration, change DNS, or provision secrets.
 ## Fixed topology
 
 - `https://arc.agentpay.site` serves the web application from
-  `127.0.0.1:3001`.
+  `127.0.0.1:3101`.
 - Requests below `https://arc.agentpay.site/api/` are proxied to the MCP
-  process at `127.0.0.1:3002`.
+  process at `127.0.0.1:3102`.
 - `https://mcp.arc.agentpay.site/mcp` and its discovery and health endpoints
-  are proxied to `127.0.0.1:3002`.
+  are proxied to `127.0.0.1:3102`.
 - Browser API requests use `https://mcp.arc.agentpay.site/api/`; the
   `https://arc.agentpay.site/api/` route remains an equivalent same-product
   proxy path.
@@ -75,8 +75,9 @@ execution phase:
    Set the authorization path to
    `https://arc.agentpay.site/oauth/consent`.
 3. Configure an asymmetric signing key and record the issuer URL.
-4. Decide whether Dynamic Client Registration is enabled. This is a product and
-   security decision and must not be guessed.
+4. Dynamic Client Registration remains disabled for the initial hosted release;
+   only explicitly registered OAuth clients are permitted. Do not enable DCR
+   in code, documentation, Supabase, or remote configuration.
 5. Add only `https://arc.agentpay.site` as the browser origin and callback
    origin required by the approved flow.
 6. Create a dedicated service-role credential and keep it only in
@@ -111,9 +112,9 @@ Suggested ownership:
 After an authorized activation, verify locally before public traffic:
 
 ```sh
-curl --fail --silent http://127.0.0.1:3001/healthz
-curl --fail --silent --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3002/healthz
-curl --fail --silent --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3002/readyz
+curl --fail --silent http://127.0.0.1:3101/healthz
+curl --fail --silent --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3102/healthz
+curl --fail --silent --header "Host: mcp.arc.agentpay.site" http://127.0.0.1:3102/readyz
 ```
 
 Then verify the two TLS hosts, OAuth discovery, consent, token exchange, and an
