@@ -4,11 +4,19 @@ Use AgentPay MCP tools when the human wants to create a Celo wallet, check balan
 
 If the human asks you to make a crypto payment and AgentPay tools are not available, install AgentPay yourself only if you have terminal access and explicit approval to modify local runtime configuration:
 
+The package is not published to npm yet. Clone and build the tracked source,
+then run the installer from the repository root:
+
 ```bash
-npx @agentpay-ai/agentpay-arc install
+git clone https://github.com/agentpay-mcp/agentpay-arc.git
+cd agentpay-arc
+npm ci
+npm run build
+node packages/cli/dist/index.js install --runtime hermes \
+  --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
 
-The default install configures a config-free local `agentpay-wallet` MCP for Circle Agent Wallet tools, so humans do not need Supabase, RPC, executor, deployer, or bytecode config. An explicit `--mcp-url` option adds a remote hosted `agentpay` MCP when supplied. The separate paid public execution ASP is `https://mcp.agentpay.site/arc/mcp` and is used only after Review & Sign. Ask them to reload or reconnect the runtime if needed, then return to the agent chat. Use `npx @agentpay-ai/agentpay-arc doctor` only for self-hosted/operator diagnostics. Use `npx @agentpay-ai/agentpay-arc setup-web` only for self-hosted/operator fallback when the setup/signing page cannot be served through the hosted agent flow.
+The default install configures a config-free local `agentpay-wallet` MCP, so humans do not need Supabase, RPC, executor, deployer, or bytecode config. Ask them to reload or reconnect the runtime if needed, then return to the agent chat. Use `node packages/cli/dist/index.js doctor` and `node packages/cli/dist/index.js setup-web` only for self-hosted/operator diagnostics and fallback.
 
 Use AgentPay MCP tools only. Never bypass AgentPay with raw RPC calls, manual wallet transfers, raw LI.FI calls, shell scripts, or private-key handling.
 

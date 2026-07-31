@@ -61,8 +61,9 @@ their agent chat. Operators may also run the complete local tool surface.
    stops the flow.
 4. The agent performs the requested economic action and returns a receipt with
    an Arcscan proof link.
-5. The user can withdraw the remaining balance at any time with
-   `withdraw_agent_budget`.
+5. Hosted users withdraw remaining balance from the dashboard, which calls the
+   authenticated withdrawal API. The complete local MCP surface exposes
+   `withdraw_agent_budget` for the same purpose.
 
 On the hosted path, Circle API credentials and the Entity Secret remain only in
 the Arc MCP service environment; neither reaches the browser, database, OAuth

@@ -58,14 +58,18 @@ describe("README", () => {
     assert.doesNotMatch(quickStart, /Fill the generated config/i);
   });
 
-  it("presents the npm CLI as a chat-first Arc install flow", async () => {
+  it("presents the source CLI as a chat-first Arc install flow until npm publication", async () => {
     const contents = await readFile("packages/cli/README.md", "utf8");
     const quickStart = contents.split("## Commands")[0] ?? contents;
 
     assert.match(contents, /^# @agentpay-ai\/agentpay-arc/m);
-    assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
+    assert.match(contents, /package is not published|not published to npm/i);
+    assert.match(contents, /git clone https:\/\/github\.com\/agentpay-mcp\/agentpay-arc\.git/);
+    assert.match(contents, /node packages\/cli\/dist\/index\.js install --runtime/i);
+    assert.doesNotMatch(contents, /^npx @agentpay-ai\/agentpay-arc install/m);
     assert.match(contents, /return to your agent chat/i);
     assert.match(contents, /--mcp-url/);
+    assert.match(contents, /https:\/\/mcp\.arc\.agentpay\.site\/mcp/);
     assert.match(contents, /agentpay-wallet/);
     assert.match(contents, /No user secrets are required|do not manage Supabase/i);
     assert.match(contents, /install --self-hosted/);
@@ -83,6 +87,36 @@ describe("README", () => {
 
     // The published package name must never drift back to the Celo fork source.
     assert.doesNotMatch(contents, /npx @agentpay-ai\/agentpay-celo install/);
+  });
+
+  it("keeps public install guidance and Arc endpoints deployable", async () => {
+    const files = [
+      "packages/skill/SKILL.md",
+      "packages/cli/templates/codex/AGENTS.md",
+      "packages/cli/templates/claude/CLAUDE.md",
+      "packages/cli/templates/cursor/rules.md",
+      "packages/cli/templates/generic/instructions.md",
+      "packages/cli/templates/hermes/instructions.md",
+    ];
+
+    for (const file of files) {
+      const contents = await readFile(file, "utf8");
+
+      assert.match(contents, /not published to npm|package is not published/i, `${file} must disclose npm status`);
+      assert.match(
+        contents,
+        /node packages\/cli\/dist\/index\.js install --runtime/,
+        `${file} must provide the source installer`,
+      );
+      assert.match(contents, /https:\/\/mcp\.arc\.agentpay\.site\/mcp/, `${file} must use the live MCP URL`);
+      assert.doesNotMatch(contents, /npx @agentpay-ai\/agentpay-arc/, `${file} must not advertise unpublished npm`);
+      assert.doesNotMatch(contents, /wallet\.agentpay\.site\/arc|mcp\.agentpay\.site\/arc/, `${file} has stale URLs`);
+    }
+
+    const publicUrls = await readFile("packages/shared/src/chains.ts", "utf8");
+    assert.match(publicUrls, /consumerMcp: "https:\/\/mcp\.arc\.agentpay\.site\/mcp"/);
+    assert.match(publicUrls, /setup: "https:\/\/arc\.agentpay\.site\/setup"/);
+    assert.doesNotMatch(publicUrls, /wallet\.agentpay\.site\/arc|mcp\.agentpay\.site\/arc/);
   });
 
   // This fork inherits Celo lineage. Public docs may reference it, but must
@@ -173,6 +207,7 @@ describe("README", () => {
     }
     assert.match(contents, /19 approved features/i);
     assert.match(contents, /npm run demo:local/);
+    assert.match(contents, /Hosted users withdraw.*dashboard.*API/is);
   });
 
   it("keeps the installed skill aligned with the complete local Arc surface", async () => {

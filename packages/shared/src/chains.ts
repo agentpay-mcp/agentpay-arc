@@ -100,12 +100,12 @@ export const AGENTPAY_CELO_PUBLIC_URLS = {
 } as const;
 
 export const AGENTPAY_ARC_PUBLIC_URLS = {
-  consumerMcp: "https://wallet.agentpay.site/arc/mcp",
-  paidMcp: "https://mcp.agentpay.site/arc/mcp",
-  setup: "https://wallet.agentpay.site/arc/setup",
-  review: "https://wallet.agentpay.site/arc/review",
-  marketplace: "https://wallet.agentpay.site/arc/marketplace",
-  activity: "https://wallet.agentpay.site/arc/activity",
+  consumerMcp: "https://mcp.arc.agentpay.site/mcp",
+  paidMcp: "https://mcp.arc.agentpay.site/mcp",
+  setup: "https://arc.agentpay.site/setup",
+  review: "https://arc.agentpay.site/review",
+  marketplace: "https://arc.agentpay.site/marketplace",
+  activity: "https://arc.agentpay.site/activity",
 } as const;
 
 export const celoNetworkSchema = z.enum(["mainnet", "testnet"]);

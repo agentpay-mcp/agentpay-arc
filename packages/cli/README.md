@@ -9,14 +9,23 @@ manage Supabase, RPC, executor, deployer, or bytecode configuration.
 
 ## Install
 
+The package is not published to npm yet. Until publication is independently
+verified, install from the tracked source instead of running `npx`:
+
 ```bash
-npx @agentpay-ai/agentpay-arc install
+git clone https://github.com/agentpay-mcp/agentpay-arc.git
+cd agentpay-arc
+npm ci
+npm run build
+node packages/cli/dist/index.js install --runtime <runtime>
 ```
 
-To configure a remote hosted MCP alongside the local wallet MCP:
+Use `codex`, `claude`, `cursor`, `hermes`, or `generic` for `<runtime>`. To
+configure the live hosted MCP alongside the local wallet MCP:
 
 ```bash
-npx @agentpay-ai/agentpay-arc install --mcp-url https://wallet.agentpay.site/arc/mcp
+node packages/cli/dist/index.js install --runtime <runtime> \
+  --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
 
 Then return to your agent chat:
@@ -64,6 +73,10 @@ agentpay doctor
 `install` detects the target runtime. `--self-hosted` additionally writes a local
 config. `doctor` and `setup-web` are operator diagnostics and fallbacks, not the
 normal hosted-user flow.
+
+Until npm publication, run diagnostics from the built source as
+`node packages/cli/dist/index.js doctor` or
+`node packages/cli/dist/index.js setup-web`.
 
 The public x402 seller gate is enabled with `AGENTPAY_A2MCP_PAYMENT_ENABLED=true`
 plus pay-to, price, network, and asset values. `/healthz` remains free.
