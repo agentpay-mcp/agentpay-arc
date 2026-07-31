@@ -28,6 +28,32 @@ const withdrawalBodySchema = z
     confirmed: z.literal(true),
   })
   .strict();
+const withdrawalStatusBodySchema = z
+  .object({
+    idempotencyKey: uuidV4Schema,
+    transactionId: z.string().trim().min(1).max(256),
+  })
+  .strict();
+const accountProjectionSchema = z
+  .object({
+    balanceUsdc: z.string().trim().min(1).max(128),
+    activity: z.array(z.object({
+      id: z.string().trim().min(1).max(128),
+      type: z.string().trim().min(1).max(128),
+      amount: z.string().trim().min(1).max(128).optional(),
+      status: z.string().trim().min(1).max(64),
+      timestamp: z.string().datetime({ offset: true }),
+    }).strict()).max(100),
+  })
+  .strict();
+
+export type HostedArcAccountProjection = z.output<
+  typeof accountProjectionSchema
+>;
+export interface HostedArcWithdrawalStatusInput {
+  readonly idempotencyKey: string;
+  readonly transactionId: string;
+}
 
 export class HostedArcApiError extends Error {
   readonly status: number;
@@ -48,6 +74,14 @@ export interface ExecuteHostedArcApiOptions {
   ) => Promise<{ readonly walletAddress: string; readonly status: "LIVE" }>;
   readonly resolveAuthority: () => Promise<ArcHostedAuthority>;
   readonly mutationCoordinator: HostedArcMutationCoordinator;
+  readonly projectAccount?: (
+    authority: ArcHostedAuthority,
+  ) => Promise<HostedArcAccountProjection>;
+  readonly reportProjectionError?: (error: unknown) => void;
+  readonly reconcileWithdrawal?: (
+    authority: ArcHostedAuthority,
+    input: HostedArcWithdrawalStatusInput,
+  ) => Promise<HostedArcMutationOutput>;
 }
 
 export interface HostedArcApiResponse {
@@ -65,7 +99,27 @@ export async function executeHostedArcApi(
     if (!account) {
       throw new HostedArcApiError(404, "Hosted account not found");
     }
-    return successResponse({ account: safeAccount(account) });
+    let projection: HostedArcAccountProjection | undefined;
+    if (
+      options.projectAccount
+      && account.accountStatus === "ACTIVE"
+      && account.walletStatus === "LIVE"
+    ) {
+      const authority = await options.resolveAuthority();
+      try {
+        projection = accountProjectionSchema.parse(
+          await options.projectAccount(authority),
+        );
+      } catch (error: unknown) {
+        options.reportProjectionError?.(error);
+      }
+    }
+    return successResponse({
+      account: {
+        ...safeAccount(account),
+        ...projection,
+      },
+    });
   }
 
   if (options.pathname === "/api/account/claim") {
@@ -144,6 +198,27 @@ export async function executeHostedArcApi(
         idempotencyKey: input.idempotencyKey,
         purpose: "Hosted account withdrawal",
       },
+    );
+    return {
+      status: mutation.reconciliationRequired ? 202 : 200,
+      body: {
+        success: true,
+        withdrawal: safeMutation(mutation),
+      },
+    };
+  }
+  if (options.pathname === "/api/account/withdraw/status") {
+    const input = withdrawalStatusBodySchema.parse(options.body);
+    if (!options.reconcileWithdrawal) {
+      throw new HostedArcApiError(
+        503,
+        "Withdrawal reconciliation is unavailable",
+      );
+    }
+    const authority = await options.resolveAuthority();
+    const mutation = await options.reconcileWithdrawal(
+      authority,
+      input,
     );
     return {
       status: mutation.reconciliationRequired ? 202 : 200,

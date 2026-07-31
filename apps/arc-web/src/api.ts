@@ -186,3 +186,27 @@ export async function withdrawHostedAccount(
     customFetch,
   }, WithdrawalApiResponseSchema);
 }
+
+export async function fetchWithdrawalStatus(
+  apiOrigin: string,
+  accessToken: string,
+  params: {
+    idempotencyKey: string;
+    transactionId: string;
+  },
+  customFetch?: typeof fetch,
+): Promise<WithdrawalApiResponse> {
+  return requestJson<WithdrawalApiResponse>(
+    `${apiOrigin}/api/account/withdraw/status`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        idempotencyKey: params.idempotencyKey,
+        transactionId: params.transactionId,
+      }),
+      accessToken,
+      customFetch,
+    },
+    WithdrawalApiResponseSchema,
+  );
+}

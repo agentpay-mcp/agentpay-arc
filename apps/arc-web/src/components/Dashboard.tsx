@@ -38,6 +38,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const hasBalance = account.balanceUsdc !== undefined;
   const balanceDisplay = hasBalance ? account.balanceUsdc : "Balance projection unavailable";
   const activityList = account.activity;
+  const withdrawalIsComplete =
+    withdrawalResult?.status === "COMPLETED"
+    && !withdrawalResult.reconciliationRequired;
+  const withdrawalIsFailed =
+    withdrawalResult?.status === "FAILED"
+    && !withdrawalResult.reconciliationRequired;
+  const withdrawalAlertClass = withdrawalIsComplete
+    ? "alert-success"
+    : withdrawalIsFailed
+      ? "alert-danger"
+      : "alert-info";
 
   const handleCopyAddress = () => {
     if (account.wallet.address) {
@@ -216,11 +227,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           )}
 
           {withdrawalResult && (
-            <div className={`alert ${withdrawalResult.reconciliationRequired ? "alert-info" : "alert-success"}`} id="withdrawal-result-alert">
+            <div className={`alert ${withdrawalAlertClass}`} id="withdrawal-result-alert">
               <div>
                 <strong>Withdrawal Outcome: {withdrawalResult.status}</strong>
                 {withdrawalResult.transactionHash && <div>Tx Hash: {withdrawalResult.transactionHash}</div>}
-                {withdrawalResult.reconciliationRequired && <div>Status is pending reconciliation with Arc network.</div>}
+                {!withdrawalIsComplete && !withdrawalIsFailed && <div>Status is pending reconciliation with Arc network.</div>}
               </div>
             </div>
           )}

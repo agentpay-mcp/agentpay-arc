@@ -32,6 +32,7 @@
     "src/mcp/hosted-arc-http.ts",
     "src/mcp/hosted-arc-http-api.ts",
     "src/mcp/hosted-arc-http-config.ts",
+    "src/mcp/hosted-arc-observability.ts",
     "src/mcp/hosted-arc-mutation.ts",
     "src/mcp/stdio.ts",
     "src/runtime/agentpay-runtime.ts",

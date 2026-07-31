@@ -764,6 +764,38 @@ describe("hosted Arc bearer and stateless authority boundary", () => {
     }
   });
 
+  it("returns a pause-specific error without creating a runtime", async () => {
+    const context = createHttpTestContext();
+    context.setAccount({
+      ...baseAccount,
+      accountStatus: "PAUSED",
+    });
+    context.setAuthority(null);
+    const { server } = await startTestServer(context);
+
+    try {
+      const response = await fetch(server.mcpUrl, {
+        method: "POST",
+        headers: authHeaders(MCP_TOKEN),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {},
+        }),
+      });
+
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), {
+        success: false,
+        error: "Hosted account is paused",
+      });
+      assert.equal(context.calls.runtime.length, 0);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("requires top-level client identity for MCP but permits browser API tokens without it", async () => {
     const context = createHttpTestContext();
     context.setVerifierResult(MCP_TOKEN, {
@@ -1509,6 +1541,133 @@ describe("hosted Arc authenticated JSON account API", () => {
       );
       assert.equal(revoked.status, 403);
       assert.equal(context.calls.mutations.length, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns safe account projections and reconciles a tenant-bound withdrawal", async () => {
+    const context = createHttpTestContext();
+    context.setAuthority({
+      ...baseAuthority,
+      oauthClientId: undefined,
+    });
+    const transactionHash = `0x${"a".repeat(64)}`;
+    const { server } = await startTestServer(context, {
+      async projectAccount(authority) {
+        assert.equal(authority.tenantId, TENANT_ID);
+        return {
+          balanceUsdc: "19.98",
+          activity: [
+            {
+              id: IDEMPOTENCY_KEY,
+              type: "Withdrawal",
+              amount: "0.01",
+              status: "SUBMITTED",
+              timestamp: "2026-07-31T01:00:00.000Z",
+            },
+          ],
+        };
+      },
+      async reconcileWithdrawal(authority, input) {
+        assert.equal(authority.tenantId, TENANT_ID);
+        assert.deepEqual(input, {
+          idempotencyKey: IDEMPOTENCY_KEY,
+          transactionId: "circle-tx-1",
+        });
+        return {
+          status: "COMPLETED",
+          transactionId: "circle-tx-1",
+          transactionHash,
+          reconciliationRequired: false,
+        };
+      },
+    });
+
+    try {
+      const account = await fetch(new URL("/api/account", server.url), {
+        headers: { authorization: `Bearer ${BROWSER_TOKEN}` },
+      });
+      assert.equal(account.status, 200);
+      assert.deepEqual(await account.json(), {
+        success: true,
+        account: {
+          status: "ACTIVE",
+          consentVersion: ARC_AUTONOMY_CONSENT_VERSION,
+          wallet: {
+            status: "LIVE",
+            address: WALLET_ADDRESS,
+          },
+          balanceUsdc: "19.98",
+          activity: [
+            {
+              id: IDEMPOTENCY_KEY,
+              type: "Withdrawal",
+              amount: "0.01",
+              status: "SUBMITTED",
+              timestamp: "2026-07-31T01:00:00.000Z",
+            },
+          ],
+        },
+      });
+
+      const reconciled = await postJson(
+        server,
+        "/api/account/withdraw/status",
+        BROWSER_TOKEN,
+        {
+          idempotencyKey: IDEMPOTENCY_KEY,
+          transactionId: "circle-tx-1",
+        },
+      );
+      assert.equal(reconciled.status, 200);
+      assert.deepEqual(await reconciled.json(), {
+        success: true,
+        withdrawal: {
+          status: "COMPLETED",
+          transactionId: "circle-tx-1",
+          transactionHash,
+          reconciliationRequired: false,
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("keeps the safe account available when the optional projection is unavailable", async () => {
+    const context = createHttpTestContext();
+    context.setAuthority({
+      ...baseAuthority,
+      oauthClientId: undefined,
+    });
+    const projectionErrors: unknown[] = [];
+    const { server } = await startTestServer(context, {
+      async projectAccount() {
+        throw new Error("Circle is unavailable");
+      },
+      reportProjectionError(error) {
+        projectionErrors.push(error);
+      },
+    });
+
+    try {
+      const account = await fetch(new URL("/api/account", server.url), {
+        headers: { authorization: `Bearer ${BROWSER_TOKEN}` },
+      });
+      assert.equal(account.status, 200);
+      assert.deepEqual(await account.json(), {
+        success: true,
+        account: {
+          status: "ACTIVE",
+          consentVersion: ARC_AUTONOMY_CONSENT_VERSION,
+          wallet: {
+            status: "LIVE",
+            address: WALLET_ADDRESS,
+          },
+        },
+      });
+      assert.equal(projectionErrors.length, 1);
     } finally {
       await server.close();
     }

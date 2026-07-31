@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { getPublicConfig, type PublicConfig } from "./config.ts";
 import { getSupabaseClient } from "./supabase.ts";
@@ -9,9 +9,11 @@ import {
   pauseHostedAccount,
   resumeHostedAccount,
   withdrawHostedAccount,
+  fetchWithdrawalStatus,
   ArcApiError,
   type SafeAccountInfo,
 } from "./api.ts";
+import { pollWithdrawalUntilTerminal } from "./withdrawal-polling.ts";
 import { Header } from "./components/Header.tsx";
 import { AuthForm } from "./components/AuthForm.tsx";
 import { ConsentModal } from "./components/ConsentModal.tsx";
@@ -42,6 +44,10 @@ export function sanitizeErrorMessage(msg: string): string {
   return safeMessages.has(msg)
     ? msg
     : "An unexpected error occurred. Please try again.";
+}
+
+export function getSessionIdentity(session: Session | null): string | null {
+  return session?.user.id ?? null;
 }
 
 export interface AppProps {
@@ -87,6 +93,29 @@ export const App: React.FC<AppProps> = ({
     transactionHash?: string;
     reconciliationRequired: boolean;
   } | null>(null);
+  const withdrawalPollRef = useRef<AbortController | null>(null);
+  const sessionRef = useRef<Session | null>(initialSession);
+  const sessionEpochRef = useRef(0);
+
+  const replaceSession = useCallback((nextSession: Session | null) => {
+    if (getSessionIdentity(sessionRef.current) !== getSessionIdentity(nextSession)) {
+      sessionEpochRef.current += 1;
+      withdrawalPollRef.current?.abort();
+      withdrawalPollRef.current = null;
+      setAccount(null);
+      setIsUnclaimed(false);
+      setAccountFetchError("");
+      setErrorMessage("");
+      setWithdrawalResult(null);
+      setIsSubmitting(false);
+    }
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+  }, []);
+
+  useEffect(() => () => {
+    withdrawalPollRef.current?.abort();
+  }, []);
 
   const searchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const isOAuthPath = initialIsOAuthPath ?? (
@@ -98,9 +127,9 @@ export const App: React.FC<AppProps> = ({
     async function initAuth() {
       try {
         const { data } = await supabase.auth.getSession();
-        setSession(data?.session ?? null);
+        replaceSession(data?.session ?? null);
       } catch {
-        setSession(null);
+        replaceSession(null);
       } finally {
         setIsInitializing(false);
       }
@@ -109,18 +138,13 @@ export const App: React.FC<AppProps> = ({
     void initAuth();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      if (!newSession) {
-        setAccount(null);
-        setIsUnclaimed(false);
-        setAccountFetchError("");
-      }
+      replaceSession(newSession);
     });
 
     return () => {
       authListener.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase, replaceSession]);
 
   const loadAccountData = useCallback(async () => {
     if (!session) {
@@ -129,14 +153,25 @@ export const App: React.FC<AppProps> = ({
       setAccountFetchError("");
       return;
     }
+    const requestEpoch = sessionEpochRef.current;
+    const requestIdentity = getSessionIdentity(session);
+    const requestAccessToken = session.access_token;
+    const isCurrentSession = () =>
+      requestEpoch === sessionEpochRef.current
+      && requestIdentity === getSessionIdentity(sessionRef.current);
+    const isCurrentCredential = () =>
+      isCurrentSession()
+      && requestAccessToken === sessionRef.current?.access_token;
     setIsFetchingAccount(true);
     try {
       const res = await fetchHostedAccount(activeConfig.apiOrigin, session.access_token, customFetch);
+      if (!isCurrentSession()) return;
       setAccount(res.account);
       setIsUnclaimed(false);
       setAccountFetchError("");
       setErrorMessage("");
     } catch (err: unknown) {
+      if (!isCurrentCredential()) return;
       setAccount(null);
       const status = (err instanceof ArcApiError) ? err.status : (err as { status?: number })?.status;
       if (status === 404) {
@@ -152,7 +187,9 @@ export const App: React.FC<AppProps> = ({
         setAccountFetchError(sanitizeErrorMessage(msg));
       }
     } finally {
-      setIsFetchingAccount(false);
+      if (isCurrentCredential()) {
+        setIsFetchingAccount(false);
+      }
     }
   }, [session, activeConfig.apiOrigin, customFetch, supabase]);
 
@@ -165,18 +202,15 @@ export const App: React.FC<AppProps> = ({
     setErrorMessage("");
     try {
       const walletSession = await signInWithArcWallet(supabase);
-      setSession(walletSession);
+      replaceSession(walletSession);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleSignOut = async () => {
+    replaceSession(null);
     await supabase.auth.signOut();
-    setSession(null);
-    setAccount(null);
-    setIsUnclaimed(false);
-    setAccountFetchError("");
   };
 
   const handleClaimAccount = async () => {
@@ -252,6 +286,11 @@ export const App: React.FC<AppProps> = ({
 
   const handleWithdraw = async (destination: string, amount: string, idempotencyKey: string) => {
     if (!session) return;
+    const requestEpoch = sessionEpochRef.current;
+    const requestIdentity = getSessionIdentity(session);
+    const isCurrentSession = () =>
+      requestEpoch === sessionEpochRef.current
+      && requestIdentity === getSessionIdentity(sessionRef.current);
     setIsSubmitting(true);
     setErrorMessage("");
     setWithdrawalResult(null);
@@ -267,17 +306,76 @@ export const App: React.FC<AppProps> = ({
         },
         customFetch,
       );
-      setWithdrawalResult({
+      const submitted = {
         status: res.withdrawal.status,
+        transactionId: res.withdrawal.transactionId,
         transactionHash: res.withdrawal.transactionHash,
         reconciliationRequired: res.withdrawal.reconciliationRequired,
-      });
-      void loadAccountData();
+      };
+      if (!isCurrentSession()) return;
+      setWithdrawalResult(submitted);
+      if (
+        submitted.transactionId
+        && submitted.status !== "COMPLETED"
+        && submitted.status !== "FAILED"
+      ) {
+        withdrawalPollRef.current?.abort();
+        const controller = new AbortController();
+        withdrawalPollRef.current = controller;
+        try {
+          const terminal = await pollWithdrawalUntilTerminal({
+            initial: submitted,
+            signal: controller.signal,
+            fetchStatus: async () => {
+              if (!isCurrentSession()) {
+                throw new DOMException("Withdrawal polling aborted", "AbortError");
+              }
+              const status = await fetchWithdrawalStatus(
+                activeConfig.apiOrigin,
+                sessionRef.current?.access_token ?? session.access_token,
+                {
+                  idempotencyKey,
+                  transactionId: submitted.transactionId!,
+                },
+                customFetch,
+              );
+              if (!isCurrentSession()) {
+                throw new DOMException("Withdrawal polling aborted", "AbortError");
+              }
+              return status.withdrawal;
+            },
+          });
+          if (isCurrentSession()) {
+            setWithdrawalResult(terminal);
+          }
+        } catch (pollError: unknown) {
+          if (
+            isCurrentSession()
+            && !(pollError instanceof DOMException && pollError.name === "AbortError")
+          ) {
+            setWithdrawalResult({
+              ...submitted,
+              reconciliationRequired: true,
+            });
+          }
+        } finally {
+          if (withdrawalPollRef.current === controller) {
+            withdrawalPollRef.current = null;
+          }
+        }
+      }
+      if (isCurrentSession()) {
+        await loadAccountData();
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to execute withdrawal.";
-      setErrorMessage(sanitizeErrorMessage(msg));
+      if (isCurrentSession()) {
+        const msg = err instanceof Error ? err.message : "Failed to execute withdrawal.";
+        setErrorMessage(sanitizeErrorMessage(msg));
+      }
     } finally {
-      setIsSubmitting(false);
+      if (isCurrentSession()) {
+        setIsSubmitting(false);
+      }
     }
   };
 
