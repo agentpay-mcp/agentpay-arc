@@ -285,6 +285,7 @@ export async function installAgentPay(options: InstallAgentPayOptions): Promise<
 
   const packageRoot = options.packageRoot ?? findPackageRoot();
   const cliRoot = resolveCliPackageRoot(packageRoot);
+  const cliEntryPath = join(cliRoot, "dist", "index.js");
   const skillRoot = resolveAgentPaySkillRoot(packageRoot);
   const runtimeDir = join(options.outputDir, "runtimes", options.runtime);
   const skillDir = join(options.outputDir, "skills", "agentpay");
@@ -321,7 +322,7 @@ export async function installAgentPay(options: InstallAgentPayOptions): Promise<
       from: isMcpConfigTemplateFile(fileName) ? undefined : join(templateDir, fileName),
       to: join(runtimeDir, fileName),
       contents: isMcpConfigTemplateFile(fileName)
-        ? `${JSON.stringify(createAgentPayMcpConfig({ selfHosted, mcpUrl: options.mcpUrl }), null, 2)}\n`
+        ? `${JSON.stringify(createAgentPayMcpConfig({ selfHosted, mcpUrl: options.mcpUrl, cliEntryPath }), null, 2)}\n`
         : undefined,
     })),
   ];
@@ -347,6 +348,7 @@ export async function installAgentPay(options: InstallAgentPayOptions): Promise<
     const mcpConfig = createAgentPayMcpConfig({
       selfHosted,
       mcpUrl: options.mcpUrl,
+      cliEntryPath,
     });
     const mcpServers = mcpConfig.mcpServers as Record<string, Record<string, unknown>>;
     const nativeConfigPath = getNativeRuntimeConfigPath(options);
@@ -666,14 +668,18 @@ function isMcpConfigTemplateFile(fileName: string): boolean {
   return fileName === "mcp.json" || fileName === "claude_desktop_config.json";
 }
 
-function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl?: string }): Record<string, unknown> {
+function createAgentPayMcpConfig(options: {
+  selfHosted: boolean;
+  mcpUrl?: string;
+  cliEntryPath: string;
+}): Record<string, unknown> {
   return {
     mcpServers: {
       ...(options.selfHosted
         ? {
             agentpay: {
-              command: "npx",
-              args: ["-y", "@agentpay-ai/agentpay-arc", "mcp"],
+              command: process.execPath,
+              args: [options.cliEntryPath, "mcp"],
               env: {
                 AGENTPAY_CONFIG: "~/.agentpay/config.json",
               },
@@ -687,8 +693,8 @@ function createAgentPayMcpConfig(options: { selfHosted: boolean; mcpUrl?: string
           }
         : {}),
       "agentpay-wallet": {
-        command: "npx",
-        args: ["-y", "@agentpay-ai/agentpay-arc", "agent-wallet-mcp"],
+        command: process.execPath,
+        args: [options.cliEntryPath, "agent-wallet-mcp"],
       },
     },
   };

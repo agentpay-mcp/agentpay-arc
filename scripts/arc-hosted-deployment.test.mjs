@@ -88,8 +88,14 @@ describe("Arc-only hosted deployment artifacts", () => {
         );
       }
     }
-    assert.match(files.readme, /Dynamic Client Registration remains disabled/i);
-    assert.match(files.readme, /explicitly registered OAuth clients/i);
+    assert.match(files.readme, /Dynamic Client Registration \(DCR\)/i);
+    assert.match(files.readme, /PKCE/i);
+    assert.match(files.readme, /explicit consent/i);
+    assert.match(files.readme, /exact redirect URI/i);
+    assert.match(files.readme, /rate limit/i);
+    assert.match(files.readme, /audit/i);
+    assert.match(files.readme, /revoke/i);
+    assert.match(files.readme, /registration_endpoint/i);
   });
 
   it("isolates web and MCP systemd services on exact loopback listeners", async () => {

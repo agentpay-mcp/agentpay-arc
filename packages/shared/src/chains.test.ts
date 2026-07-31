@@ -82,12 +82,12 @@ describe("getNativeCurrency", () => {
       explorerUrl: "https://testnet.arcscan.app",
     });
     assert.deepEqual(AGENTPAY_ARC_PUBLIC_URLS, {
-      consumerMcp: "https://wallet.agentpay.site/arc/mcp",
-      paidMcp: "https://mcp.agentpay.site/arc/mcp",
-      setup: "https://wallet.agentpay.site/arc/setup",
-      review: "https://wallet.agentpay.site/arc/review",
-      marketplace: "https://wallet.agentpay.site/arc/marketplace",
-      activity: "https://wallet.agentpay.site/arc/activity",
+      consumerMcp: "https://mcp.arc.agentpay.site/mcp",
+      paidMcp: "https://mcp.arc.agentpay.site/mcp",
+      setup: "https://arc.agentpay.site/setup",
+      review: "https://arc.agentpay.site/review",
+      marketplace: "https://arc.agentpay.site/marketplace",
+      activity: "https://arc.agentpay.site/activity",
     });
   });
 });

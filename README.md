@@ -17,6 +17,17 @@ Built for the Encode x Arc Programmable Money Hackathon, Agentic Economy track.
 
 Arc Testnet only. There is no Arc mainnet — Arc has not launched one.
 
+The hosted hackathon MVP is live:
+
+- Web dashboard: [arc.agentpay.site](https://arc.agentpay.site)
+- OAuth-protected MCP: `https://mcp.arc.agentpay.site/mcp`
+- Health: `https://mcp.arc.agentpay.site/healthz`
+
+The hosted MCP uses wallet-first login, OAuth 2.1 with PKCE, explicit consent,
+and one tenant-isolated Circle developer-controlled SCA wallet per user. It
+exposes five hosted Arc MCP tools: `setup_agent_wallet`, `get_agent_budget`,
+`send_usdc`, `get_payment_receipt`, and `get_unified_balance`.
+
 - Home chain: Arc Testnet, chain ID `5042002` (`eip155:5042002`)
 - RPC: `https://rpc.testnet.arc.network`
 - Explorer: [testnet.arcscan.app](https://testnet.arcscan.app)
@@ -37,8 +48,9 @@ EIP-712 smart-account flow is legacy and is **not** the Arc authorization model.
 
 ## Chat Flow
 
-The product is conversational. The user installs AgentPay, completes Circle
-login and Terms manually, funds the Agent Wallet, and then asks for work.
+The product is conversational. Hosted users connect the MCP endpoint, sign in
+with an external wallet, explicitly approve OAuth access, and then return to
+their agent chat. Operators may also run the complete local tool surface.
 
 1. The agent calls `setup_agent_wallet` and returns the Circle Agent Wallet
    address.
@@ -49,13 +61,16 @@ login and Terms manually, funds the Agent Wallet, and then asks for work.
    stops the flow.
 4. The agent performs the requested economic action and returns a receipt with
    an Arcscan proof link.
-5. The user can withdraw the remaining balance at any time with
-   `withdraw_agent_budget`.
+5. Hosted users withdraw remaining balance from the dashboard, which calls the
+   authenticated withdrawal API. The complete local MCP surface exposes
+   `withdraw_agent_budget` for the same purpose.
 
-Wallet writes run through the authenticated local Circle CLI. The CLI session,
-OTP, and wallet credentials stay on the user's machine and are never sent to a
-hosted service. Mutating commands execute exactly once and are never blindly
-retried.
+On the hosted path, Circle API credentials and the Entity Secret remain only in
+the Arc MCP service environment; neither reaches the browser, database, OAuth
+client, or tool response. On the local path, writes run through the
+authenticated Circle CLI and its session stays on the user's machine. Both
+paths execute mutating commands exactly once and never blindly retry an
+ambiguous payment.
 
 ## 19 Approved Features
 
@@ -118,31 +133,46 @@ EOA-only buyer SDK. The hosted seller path uses
 invoice or service minimum, and persists the exact last verified state rather
 than hiding partial progress.
 
-## Install
+## Try the hosted MVP
 
-The installer detects the target runtime and writes MCP configuration plus the
-`skills/agentpay/SKILL.md` agent instructions. The default install configures the
-config-free local `agentpay-wallet` MCP exposing all 31 Arc tools:
+Add this Streamable HTTP endpoint to an MCP-compatible client:
 
-```bash
-npx @agentpay-ai/agentpay-arc install
+```text
+https://mcp.arc.agentpay.site/mcp
 ```
 
-To configure a remote hosted MCP alongside the local wallet MCP:
+The client discovers the OAuth server, opens the wallet-signature and consent
+flow at `https://arc.agentpay.site`, and returns with a PKCE-bound token.
+Normal users do not need Supabase, RPC, executor, deployer, or bytecode config. They
+also do not receive or manage Circle API credentials.
+
+## Local install
+
+The npm package is not published yet, so do not run an `npx` command from the
+registry. Clone this repository, build it, and run the tracked installer from
+the repository root. It detects the target runtime and writes MCP configuration
+plus the `skills/agentpay/SKILL.md` instructions:
 
 ```bash
-npx @agentpay-ai/agentpay-arc install --mcp-url https://wallet.agentpay.site/arc/mcp
+git clone https://github.com/agentpay-mcp/agentpay-arc.git
+cd agentpay-arc
+npm ci
+npm run build
+node packages/cli/dist/index.js install --runtime <runtime>
 ```
 
-The Arc package is not published to npm yet; until it is, run the installer from
-`packages/cli` in this repository.
+Use `codex`, `claude`, `cursor`, `hermes`, or `generic` for `<runtime>`. To
+configure the hosted MCP alongside the complete local 31-tool wallet surface:
 
-Normal users do not need Supabase, RPC, executor, deployer, or bytecode config.
+```bash
+node packages/cli/dist/index.js install --runtime <runtime> \
+  --mcp-url https://mcp.arc.agentpay.site/mcp
+```
 
 For an operator-managed deployment:
 
 ```bash
-npx @agentpay-ai/agentpay-arc install --self-hosted
+node packages/cli/dist/index.js install --runtime <runtime> --self-hosted
 ```
 
 ## Components
@@ -166,29 +196,24 @@ not by the local startup parser.
 
 See `.env.example` for the full key list.
 
-### The hosted runtime environment is still Celo-shaped
+### Hosted Arc and inherited local runtime boundaries
 
-The Arc migration is not finished at the configuration layer, and the docs say
-so rather than advertising values that would not start.
+The live hosted Arc runtime is an independent entry point that validates only
+the Arc-prefixed environment contract, binds web and MCP listeners to loopback,
+and runs behind the Arc-only TLS proxy. Its public surfaces are:
+
+- Web and OAuth consent: `https://arc.agentpay.site`
+- Authenticated MCP: `https://mcp.arc.agentpay.site/mcp`
+- Browser API: `https://mcp.arc.agentpay.site/api/`
+
+The inherited general-purpose local startup parser remains separate and is
+still Celo-shaped. It is not the process serving the hosted Arc deployment.
 
 `parseAgentPayEnv` in `apps/mcp-server/src/runtime/agentpay-runtime.ts` is what
-actually starts the MCP server, and it still validates the inherited Celo
+starts that inherited runtime, and it still validates the inherited Celo
 environment: `AGENTPAY_HOME_CHAIN_ID` must be a Celo chain ID — `42220` in
-production — and the production setup URL must be the Celo one. Setting those
-keys to Arc values makes the server refuse to start. `.env.example` therefore
-keeps the Celo values, and `scripts/env-example-runtime.test.ts` feeds the
-committed values through that parser so this cannot drift unnoticed.
-
-A separate Arc gate, `validateProductionEnvironment` in
-`apps/mcp-server/src/runtime/production-readiness.ts`, expects the Arc values
-instead: `AGENTPAY_HOME_CHAIN_ID=5042002`, an HTTPS `ARC_TESTNET_RPC_URL`, and
-the `/arc/` public routes below. **The two gates currently disagree**, and
-reconciling them is a runtime change, not a documentation change.
-
-- Authenticated consumer MCP: `https://wallet.agentpay.site/arc/mcp`
-- Public paid MCP: `https://mcp.agentpay.site/arc/mcp`
-- Setup: `https://wallet.agentpay.site/arc/setup`
-- Review: `https://wallet.agentpay.site/arc/review`
+production. Do not feed hosted Arc values into that legacy parser. The hosted
+deployment instead uses `deploy/arc/` and its `ARC_*` environment names.
 
 The Circle Agent Wallet tools are unaffected by either gate. They run on a
 config-free local MCP surface with process-owned durable state at

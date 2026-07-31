@@ -12,11 +12,14 @@ describe("README", () => {
     assert.match(contents, /npm run release:smoke/);
     assert.match(contents, /skills\/agentpay\/SKILL\.md/);
     assert.match(contents, /detects the target runtime/i);
-    assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
-    assert.match(contents, /https:\/\/wallet\.agentpay\.site\/arc\/mcp/);
-    assert.match(contents, /https:\/\/mcp\.agentpay\.site\/arc\/mcp/);
+    assert.match(contents, /https:\/\/arc\.agentpay\.site/);
+    assert.match(contents, /https:\/\/mcp\.arc\.agentpay\.site\/mcp/);
+    assert.match(contents, /five hosted Arc MCP tools/i);
+    assert.match(contents, /package is not published|not published to npm/i);
+    assert.match(contents, /node packages\/cli\/dist\/index\.js install --runtime/i);
+    assert.doesNotMatch(contents, /^npx @agentpay-ai\/agentpay-arc install$/m);
     assert.match(contents, /normal users do not need Supabase, RPC, executor, deployer, or bytecode config/i);
-    assert.match(contents, /install --self-hosted/);
+    assert.match(contents, /install [^\n]*--self-hosted/);
     assert.match(contents, /apps\/mcp-server/);
     assert.match(contents, /packages\/cli/);
     assert.match(contents, /agentpay serve-http/);
@@ -29,12 +32,13 @@ describe("README", () => {
     assert.match(contents, /0x3600000000000000000000000000000000000000/);
     assert.match(contents, /ARC_TESTNET_RPC_URL/);
 
-    // The runtime env layer is not migrated yet. The README must say so instead
-    // of advertising Arc values that make the MCP server refuse to start.
+    // The new hosted Arc runtime must be separated from the inherited local
+    // startup parser instead of claiming the live deployment is Celo-shaped.
+    assert.match(contents, /hosted Arc runtime.*Arc-prefixed|Arc-prefixed.*hosted Arc runtime/is);
     assert.match(contents, /parseAgentPayEnv/);
     assert.match(contents, /still (?:validates|requires).*(?:inherited )?Celo|Celo-shaped/i);
     assert.match(contents, /42220/);
-    assert.match(contents, /two gates currently disagree|validators currently coexist/i);
+    assert.doesNotMatch(contents, /Arc migration is not finished at the configuration layer/i);
 
     // The 18/6 decimal hazard must stay documented.
     assert.match(contents, /6 decimals/i);
@@ -54,14 +58,18 @@ describe("README", () => {
     assert.doesNotMatch(quickStart, /Fill the generated config/i);
   });
 
-  it("presents the npm CLI as a chat-first Arc install flow", async () => {
+  it("presents the source CLI as a chat-first Arc install flow until npm publication", async () => {
     const contents = await readFile("packages/cli/README.md", "utf8");
     const quickStart = contents.split("## Commands")[0] ?? contents;
 
     assert.match(contents, /^# @agentpay-ai\/agentpay-arc/m);
-    assert.match(contents, /npx @agentpay-ai\/agentpay-arc install/);
+    assert.match(contents, /package is not published|not published to npm/i);
+    assert.match(contents, /git clone https:\/\/github\.com\/agentpay-mcp\/agentpay-arc\.git/);
+    assert.match(contents, /node packages\/cli\/dist\/index\.js install --runtime/i);
+    assert.doesNotMatch(contents, /^npx @agentpay-ai\/agentpay-arc install/m);
     assert.match(contents, /return to your agent chat/i);
     assert.match(contents, /--mcp-url/);
+    assert.match(contents, /https:\/\/mcp\.arc\.agentpay\.site\/mcp/);
     assert.match(contents, /agentpay-wallet/);
     assert.match(contents, /No user secrets are required|do not manage Supabase/i);
     assert.match(contents, /install --self-hosted/);
@@ -79,6 +87,36 @@ describe("README", () => {
 
     // The published package name must never drift back to the Celo fork source.
     assert.doesNotMatch(contents, /npx @agentpay-ai\/agentpay-celo install/);
+  });
+
+  it("keeps public install guidance and Arc endpoints deployable", async () => {
+    const files = [
+      "packages/skill/SKILL.md",
+      "packages/cli/templates/codex/AGENTS.md",
+      "packages/cli/templates/claude/CLAUDE.md",
+      "packages/cli/templates/cursor/rules.md",
+      "packages/cli/templates/generic/instructions.md",
+      "packages/cli/templates/hermes/instructions.md",
+    ];
+
+    for (const file of files) {
+      const contents = await readFile(file, "utf8");
+
+      assert.match(contents, /not published to npm|package is not published/i, `${file} must disclose npm status`);
+      assert.match(
+        contents,
+        /node packages\/cli\/dist\/index\.js install --runtime/,
+        `${file} must provide the source installer`,
+      );
+      assert.match(contents, /https:\/\/mcp\.arc\.agentpay\.site\/mcp/, `${file} must use the live MCP URL`);
+      assert.doesNotMatch(contents, /npx @agentpay-ai\/agentpay-arc/, `${file} must not advertise unpublished npm`);
+      assert.doesNotMatch(contents, /wallet\.agentpay\.site\/arc|mcp\.agentpay\.site\/arc/, `${file} has stale URLs`);
+    }
+
+    const publicUrls = await readFile("packages/shared/src/chains.ts", "utf8");
+    assert.match(publicUrls, /consumerMcp: "https:\/\/mcp\.arc\.agentpay\.site\/mcp"/);
+    assert.match(publicUrls, /setup: "https:\/\/arc\.agentpay\.site\/setup"/);
+    assert.doesNotMatch(publicUrls, /wallet\.agentpay\.site\/arc|mcp\.agentpay\.site\/arc/);
   });
 
   // This fork inherits Celo lineage. Public docs may reference it, but must
@@ -129,6 +167,11 @@ describe("README", () => {
       assert.match(contents, /Cross-chain.*payment/i, `${file} must keep cross-chain as a payment-time choice`);
       assert.match(contents, /(?:self-service|chat).*wallet creation.*Celo Sepolia/i, `${file} must keep public wallet creation on Sepolia`);
       assert.match(contents, /mainnet.*operator-managed/i, `${file} must identify the gated mainnet account path`);
+      assert.match(contents, /Arc.*Circle Agent Wallet|Circle Agent Wallet.*Arc/i, `${file} must lead with Arc`);
+      assert.ok(
+        contents.indexOf("setup_agent_wallet") < contents.indexOf("prepare_wallet_creation"),
+        `${file} must present Arc onboarding before inherited Celo onboarding`,
+      );
       assert.doesNotMatch(
         contents,
         /cross-chain route,? before creating an AgentPay wallet/i,
@@ -169,6 +212,7 @@ describe("README", () => {
     }
     assert.match(contents, /19 approved features/i);
     assert.match(contents, /npm run demo:local/);
+    assert.match(contents, /Hosted users withdraw.*dashboard.*API/is);
   });
 
   it("keeps the installed skill aligned with the complete local Arc surface", async () => {

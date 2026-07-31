@@ -75,9 +75,13 @@ execution phase:
    Set the authorization path to
    `https://arc.agentpay.site/oauth/consent`.
 3. Configure an asymmetric signing key and record the issuer URL.
-4. Dynamic Client Registration remains disabled for the initial hosted release;
-   only explicitly registered OAuth clients are permitted. Do not enable DCR
-   in code, documentation, Supabase, or remote configuration.
+4. Dynamic Client Registration (DCR) stays disabled until the public-client
+   readiness review is complete. Before enabling it, verify OAuth 2.1 PKCE,
+   explicit consent, exact redirect URI validation, authentication and
+   registration rate limits, client-registration audit monitoring, and a tested
+   path to revoke abusive clients. After an authorized change, verify that
+   discovery publishes a non-null `registration_endpoint`; roll back by
+   disabling DCR if registration or authorization probes fail.
 5. Enable the **Ethereum Web3 Wallet** authentication provider. Arc uses the
    official Supabase SIWE flow for identity-only external-wallet login; its
    signature is never a payment approval or Circle-wallet credential.
