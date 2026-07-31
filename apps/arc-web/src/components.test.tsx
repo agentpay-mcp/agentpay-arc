@@ -286,15 +286,15 @@ test("OAuthConsent renders loading, error card, missing authorizationId, and loa
   assert.ok(errorHtml.includes("OAuth Authorization Error"));
   assert.ok(errorHtml.includes("Missing required authorization_id parameter."));
 
-  const invalidUuidHtml = renderToString(
+  const invalidIdHtml = renderToString(
     <OAuthConsent
       supabaseClient={mockClient}
-      authorizationId="invalid-uuid"
+      authorizationId="invalid/id"
       initialLoading={false}
-      initialErrorMsg="Invalid authorization_id format. Must be a valid UUID."
+      initialErrorMsg="Invalid authorization_id format."
     />,
   );
-  assert.ok(invalidUuidHtml.includes("Invalid authorization_id format. Must be a valid UUID."));
+  assert.ok(invalidIdHtml.includes("Invalid authorization_id format."));
 
   const nullDetailsHtml = renderToString(
     <OAuthConsent
@@ -309,7 +309,7 @@ test("OAuthConsent renders loading, error card, missing authorizationId, and loa
   const loadedHtml = renderToString(
     <OAuthConsent
       supabaseClient={mockClient}
-      authorizationId="9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+      authorizationId="xdjoahdagwfu365xo2c3mwpy3wiaaowg"
       initialLoading={false}
       initialDetails={{
         clientName: "Agent Client App",

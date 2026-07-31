@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 const FAKE_AUTH_USER_ID = "11111111-2222-4333-8444-555555555555";
 const FAKE_AUTH_USER_ID_B = "99999999-8888-4777-8666-555555555555";
-const VALID_AUTH_ID = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
+const VALID_AUTH_ID = "xdjoahdagwfu365xo2c3mwpy3wiaaowg";
 const WALLET_A = "0x1111111111111111111111111111111111111111";
 const WALLET_B = "0x2222222222222222222222222222222222222222";
 
@@ -559,7 +559,7 @@ test("OAuth 2.1 Consent Journey: already-approved, expired, and invalid requests
   expect(oauthRequests).toBeGreaterThanOrEqual(1);
   const requestsAfterRedirect = oauthRequests;
 
-  const expiredId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const expiredId = "expiredrequesttoken0000000000000";
   await page.goto(`/oauth/consent?authorization_id=${expiredId}`);
   await expect(page.locator("#oauth-error-alert")).toContainText(
     "Unable to load this authorization request. It may be invalid or expired.",
@@ -568,7 +568,7 @@ test("OAuth 2.1 Consent Journey: already-approved, expired, and invalid requests
   expect(oauthRequests).toBeGreaterThan(requestsAfterRedirect);
   const requestsAfterExpired = oauthRequests;
 
-  await page.goto("/oauth/consent?authorization_id=invalid-uuid-format");
+  await page.goto("/oauth/consent?authorization_id=invalid%2Fauthorization");
   await expect(page.locator("#oauth-error-alert")).toContainText("Invalid authorization_id format.");
   expect(oauthRequests).toBe(requestsAfterExpired);
 });
