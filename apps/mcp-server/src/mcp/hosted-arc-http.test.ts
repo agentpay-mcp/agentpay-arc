@@ -565,6 +565,11 @@ async function waitFor(
 }
 
 describe("hosted Arc HTTP configuration and OAuth metadata", () => {
+  it("uses the reviewed shared-host MCP port when no override is provided", () => {
+    const { ARC_MCP_PORT: _ignoredPort, ...envWithoutPort } = hostedEnv();
+    assert.equal(parseHostedArcHttpConfig(envWithoutPort).port, 3102);
+  });
+
   it("fails closed on an invalid resource, issuer, origin, host, or port", () => {
     assert.throws(
       () =>

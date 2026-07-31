@@ -21,7 +21,7 @@ const PUBLIC_ORIGIN = "https://arc.agentpay.site";
 const API_ORIGIN = "https://mcp.arc.agentpay.site";
 const MCP_RESOURCE_URL = "https://mcp.arc.agentpay.site/mcp";
 const MCP_HOST = "127.0.0.1";
-const MCP_PORT = "3002";
+const MCP_PORT = "3102";
 
 const WEB_KEYS = Object.freeze([
   "VITE_ARC_PUBLIC_ORIGIN",

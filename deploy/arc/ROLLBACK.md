@@ -7,7 +7,9 @@ authorization and only for the dedicated Arc infrastructure.
 
 1. Record the active release commit and the last known-good reviewed commit.
 2. Confirm the target paths begin with `/opt/agentpay-arc/releases/`.
-3. Confirm both systemd unit names begin with `agentpay-arc-`.
+3. Confirm both systemd unit names begin with `agentpay-arc-` and the
+   rendered units use the reviewed loopback ports `3101` (web) and `3102`
+   (MCP); rescan the shared host immediately before any future activation.
 4. Confirm the database project reference belongs to the new Arc project.
 5. Take and verify a database backup before any schema rollback.
 6. Do not print, copy, rotate, or replace secrets during an application

@@ -25,6 +25,10 @@ const deploymentFiles = Object.freeze({
   nginx: "deploy/arc/nginx/agentpay-arc.conf",
 });
 
+const ARC_WEB_PORT = "3101";
+const ARC_MCP_PORT = "3102";
+const SUPERSEDED_ARC_PORTS = Object.freeze(["3001", "3002"]);
+
 const validMcpEnv = Object.freeze({
   ARC_PUBLIC_ORIGIN: "https://arc.agentpay.site",
   ARC_MCP_RESOURCE_URL: "https://mcp.arc.agentpay.site/mcp",
@@ -36,7 +40,7 @@ const validMcpEnv = Object.freeze({
   ARC_CIRCLE_API_KEY: "fake-circle-api-key-with-32-bytes",
   ARC_CIRCLE_ENTITY_SECRET: "f".repeat(64),
   ARC_MCP_HOST: "127.0.0.1",
-  ARC_MCP_PORT: "3002",
+  ARC_MCP_PORT: ARC_MCP_PORT,
 });
 
 const validWebEnv = Object.freeze({
@@ -76,7 +80,16 @@ describe("Arc-only hosted deployment artifacts", () => {
       assert.doesNotMatch(content, forbiddenRepository);
       assert.doesNotMatch(content, /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/);
       assert.doesNotMatch(content, /(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}/);
+      for (const port of SUPERSEDED_ARC_PORTS) {
+        assert.doesNotMatch(
+          content,
+          new RegExp(`(?:127\\.0\\.0\\.1|localhost):${port}\\b|tcp:${port}\\b`),
+          `${name} must not retain superseded Arc port ${port}`,
+        );
+      }
     }
+    assert.match(files.readme, /Dynamic Client Registration remains disabled/i);
+    assert.match(files.readme, /explicitly registered OAuth clients/i);
   });
 
   it("isolates web and MCP systemd services on exact loopback listeners", async () => {
@@ -90,19 +103,19 @@ describe("Arc-only hosted deployment artifacts", () => {
     );
     assert.match(
       webService,
-      /validate-env\.mjs web[\s\S]*static-server\.mjs --host 127\.0\.0\.1 --port 3001/,
+      new RegExp(`validate-env\\.mjs web[\\s\\S]*static-server\\.mjs --host 127\\.0\\.0\\.1 --port ${ARC_WEB_PORT}`),
     );
     assert.match(
       webService,
       /arc-artifact-manifest\.json/,
     );
-    assert.match(webService, /^SocketBindAllow=tcp:3001$/m);
+    assert.match(webService, new RegExp(`^SocketBindAllow=tcp:${ARC_WEB_PORT}$`, "m"));
     assert.match(webService, /^NoNewPrivileges=true$/m);
     assert.match(webService, /^ProtectSystem=strict$/m);
     assert.match(webService, /^Restart=on-failure$/m);
     assert.match(webService, /^RestartSec=5$/m);
     assert.match(webService, /^TimeoutStartSec=30$/m);
-    assert.match(webService, /127\.0\.0\.1:3001\/healthz/);
+    assert.match(webService, new RegExp(`127\\.0\\.0\\.1:${ARC_WEB_PORT}\\/healthz`));
     assert.doesNotMatch(webService, /^Environment=.*(?:KEY|SECRET|TOKEN)=/m);
 
     assert.match(mcpService, /^User=agentpay-arc-mcp$/m);
@@ -116,13 +129,13 @@ describe("Arc-only hosted deployment artifacts", () => {
       mcpService,
       /npm run start:hosted-arc --workspace apps\/mcp-server/,
     );
-    assert.match(mcpService, /^SocketBindAllow=tcp:3002$/m);
+    assert.match(mcpService, new RegExp(`^SocketBindAllow=tcp:${ARC_MCP_PORT}$`, "m"));
     assert.match(mcpService, /^NoNewPrivileges=true$/m);
     assert.match(mcpService, /^ProtectSystem=strict$/m);
     assert.match(mcpService, /^Restart=on-failure$/m);
     assert.match(mcpService, /^RestartSec=5$/m);
     assert.match(mcpService, /^TimeoutStartSec=45$/m);
-    assert.match(mcpService, /127\.0\.0\.1:3002\/healthz/);
+    assert.match(mcpService, new RegExp(`127\\.0\\.0\\.1:${ARC_MCP_PORT}\\/healthz`));
 	    assert.match(
 	      mcpService,
 	      /Host: mcp\.arc\.agentpay\.site/,
@@ -162,19 +175,19 @@ describe("Arc-only hosted deployment artifacts", () => {
     );
     assert.match(
       nginx,
-      /server_name arc\.agentpay\.site;[\s\S]*location \^~ \/api\/ \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3002;/,
+      new RegExp(`server_name arc\\.agentpay\\.site;[\\s\\S]*location \\^~ \/api\/ \\{[\\s\\S]*proxy_pass http:\/\/127\\.0\\.0\\.1:${ARC_MCP_PORT};`),
     );
     assert.match(
       nginx,
-      /server_name arc\.agentpay\.site;[\s\S]*location \/ \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3001;/,
+      new RegExp(`server_name arc\\.agentpay\\.site;[\\s\\S]*location \/ \\{[\\s\\S]*proxy_pass http:\/\/127\\.0\\.0\\.1:${ARC_WEB_PORT};`),
     );
     assert.match(
       nginx,
-      /server_name mcp\.arc\.agentpay\.site;[\s\S]*location = \/mcp \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3002\/mcp;/,
+      new RegExp(`server_name mcp\\.arc\\.agentpay\\.site;[\\s\\S]*location = \/mcp \\{[\\s\\S]*proxy_pass http:\/\/127\\.0\\.0\\.1:${ARC_MCP_PORT}\/mcp;`),
     );
     assert.match(
       nginx,
-      /server_name mcp\.arc\.agentpay\.site;[\s\S]*location \^~ \/api\/ \{[\s\S]*proxy_pass http:\/\/127\.0\.0\.1:3002;/,
+      new RegExp(`server_name mcp\\.arc\\.agentpay\\.site;[\\s\\S]*location \\^~ \/api\/ \\{[\\s\\S]*proxy_pass http:\/\/127\\.0\\.0\\.1:${ARC_MCP_PORT};`),
     );
     assert.doesNotMatch(nginx, /default_server|\bserver_name\s+_|proxy_pass\s+https?:\/\/(?!127\.0\.0\.1)/);
     assert.doesNotMatch(nginx, /\$http_authorization|\$request_body/);
@@ -188,6 +201,7 @@ describe("Arc-only hosted deployment artifacts", () => {
     )?.groups?.body;
 
     assert.ok(arcBlock, "root .env.example must contain a bounded Arc block");
+    assert.match(arcBlock, /Shared-host loopback contract: web 3101, MCP 3102/i);
     for (const assignment of arcBlock.matchAll(/^([A-Z0-9_]+)=(.*)$/gm)) {
       assert.equal(
         assignment[2],

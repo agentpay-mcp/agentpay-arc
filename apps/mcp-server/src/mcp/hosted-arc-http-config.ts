@@ -104,7 +104,7 @@ export function parseHostedArcHttpConfig(
   const hostname = hostnameSchema.parse(
     env.ARC_MCP_HOST ?? "127.0.0.1",
   );
-  const port = portSchema.parse(env.ARC_MCP_PORT ?? "3002");
+  const port = portSchema.parse(env.ARC_MCP_PORT ?? "3102");
   const protectedResourceMetadataUrl = new URL(
     "/.well-known/oauth-protected-resource/mcp",
     resourceUrl.origin,
