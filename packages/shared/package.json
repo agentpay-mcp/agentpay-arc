@@ -10,6 +10,7 @@
   "files": [
     "README.md",
     "src/account-admin.ts",
+    "src/agent-decision.ts",
     "src/approval.ts",
     "src/arc-hosted-auth.ts",
     "src/arc.ts",
