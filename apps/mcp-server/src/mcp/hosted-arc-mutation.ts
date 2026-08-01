@@ -241,6 +241,34 @@ export function createHostedArcMutationCoordinator(
       );
     }
 
+    // The hosted transport routes send_usdc straight here rather than through
+    // runtime.dispatch, so a capability check placed only there would guard a
+    // path production never takes for the one tool that moves money. This is
+    // the last point before the transfer, on a freshly resolved authority --
+    // which is what makes a revoked grant stop this call rather than the next.
+    //
+    // Kept out of the resolve try/catch above so the receipt records why it
+    // failed: "not permitted" and "authority went stale" are different events
+    // and must not be reconciled as the same one.
+    if (!transferAuthority.capabilities.includes("payment:send")) {
+      const failed = await transitionSafely(
+        payments,
+        {
+          ...claim.receipt,
+          status: "FAILED",
+          errorMessage: "Hosted client is not permitted to send payments",
+          updatedAt: clock().toISOString(),
+        },
+        "SUBMITTING",
+      );
+      if (!failed) {
+        return reconciliationOutput(claim.receipt);
+      }
+      throw new Error(
+        "Hosted client is not permitted to send payments: capability payment:send was not granted",
+      );
+    }
+
     let transfer:
       | { readonly transactionId: string; readonly state: string }
       | undefined;

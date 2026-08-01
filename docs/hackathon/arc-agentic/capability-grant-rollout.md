@@ -3,9 +3,9 @@
 Migration: `supabase/migrations/20260801130000_arc_hosted_client_grants.sql`
 
 **Do not apply this migration to the live Supabase project without reading this
-first.** Applying it stops hosted payments until grants are recorded. That is
-intended, and it is the entire point — but it is a deliberate operational step,
-not a side effect anyone should discover in production.
+first.** Applying the schema is harmless on its own; deploying the enforcement
+release before grants exist is what stops hosted payments. Ordering the two
+correctly is the whole content of this note.
 
 ## What changes
 
@@ -13,8 +13,15 @@ Before, completing OAuth was sufficient to call `send_usdc`. Dynamic client
 registration is enabled, so any client that registered and obtained a user's
 consent could move that user's funds.
 
-After, a client can only spend if a live, current-epoch grant records
-`payment:send` for it. Reads are unaffected.
+After, a client can only spend if a grant records `payment:send` for it, and
+that grant is live, current-epoch, and made under the consent wording in force.
+
+Reads are unaffected. A client with no grant — including one that just
+registered through DCR — resolves to `wallet:read`, so it can show the user
+their own balance and nothing more. Losing or outgrowing a payment grant
+degrades a client to read; it does not lock the user out of their own account.
+A request carrying no client id at all cannot be attributed to any grant and
+gets nothing.
 
 This is a capability, not a spending limit. The funded Circle Agent Wallet
 balance remains the autonomous budget: no cap, no per-payment maximum, no
@@ -33,13 +40,18 @@ So the table starts empty, and the operator decides who gets `payment:send`.
 
 ## Rollout sequence
 
-Each step needs explicit user approval; none is performed by an agent.
+Each step needs explicit user approval; none is performed by an agent. The
+order matters: the table has to exist before rows can go in it, and the rows
+have to be in place before the code that requires them ships.
 
-1. **Identify the first-party client id.** Read it from the authorization
+1. **Apply the schema migration.** Safe on its own — the running release does
+   not read this table yet, so nothing changes behaviourally.
+
+2. **Identify the first-party client id.** Read it from the authorization
    server or the consent records. Do not guess it, and do not copy it from a
    log line.
 
-2. **Record the grant before applying the enforcement release**, so there is no
+3. **Record the grants, still before deploying enforcement**, so there is no
    window where payments fail:
 
    ```sql
@@ -61,10 +73,25 @@ Each step needs explicit user approval; none is performed by an agent.
    Scoped to one named client. Every other client — including any registered
    later through DCR — stays read-only until granted explicitly.
 
-3. **Verify before releasing.** One granted client can pay; one
-   dynamically-registered client cannot, and its refusal leaves no transaction.
+4. **Verify before releasing.** Confirm the granted client resolves to
+   `["wallet:read", "payment:send"]` and that a second, ungranted client
+   resolves to `["wallet:read"]`.
 
-4. **Then deploy the enforcement release.**
+5. **Deploy the enforcement release.**
+
+6. **Verify after releasing.** The granted client completes one payment; an
+   ungranted client is refused and — the part worth checking rather than
+   assuming — leaves no transaction and no `SUBMITTING` receipt behind.
+
+## Rollback
+
+Rolling back is a code deploy, not a schema change: redeploy the previous
+release and enforcement stops. Leave the table and its rows in place; they are
+inert to a release that does not read them, and dropping them would mean
+rebuilding every grant before the next attempt.
+
+Revoking a single client is the narrower tool and does not need a rollback —
+see below.
 
 ## Revocation
 

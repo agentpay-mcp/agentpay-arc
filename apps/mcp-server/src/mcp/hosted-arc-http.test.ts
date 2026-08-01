@@ -1181,6 +1181,54 @@ describe("hosted Arc Streamable MCP surface", () => {
     }
   });
 
+  it("refuses send_usdc over the real MCP transport for a read-only client", async () => {
+    // The transport special-cases send_usdc and routes it to the mutation
+    // coordinator rather than runtime.dispatch, so a guard proven only through
+    // dispatch proves a path production never takes for the one tool that
+    // moves money. This drives the route the hosted server actually uses.
+    const payment = createPaymentRepositoryFake();
+    const wallet = createMutationFacade({});
+    const mutationCoordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      resolveFreshAuthority: async (trustedAuthority) => ({
+        ...trustedAuthority,
+        capabilities: ["wallet:read"],
+      }),
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
+        hasConflictingUnresolvedMutation(payment, authority, idempotencyKey),
+    });
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, { mutationCoordinator });
+    const client = new Client({
+      name: "hosted-arc-readonly-client",
+      version: "1.0.0",
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(server.mcpUrl), {
+      requestInit: { headers: { authorization: `Bearer ${MCP_TOKEN}` } },
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "send_usdc",
+        arguments: {
+          recipient: RECIPIENT_ADDRESS,
+          amount: "1",
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
+      });
+
+      assert.equal(result.isError, true, "a read-only client must be refused");
+      // The assertion that matters: refusing after the money moved would still
+      // report an error to the caller.
+      assert.equal(wallet.transferCalls(), 0, "no transfer may be attempted");
+    } finally {
+      await transport.close().catch(() => {});
+      await server.close();
+    }
+  });
+
   it("shares queued authority revalidation between MCP sends and API withdrawals", async () => {
     let releaseMcpTransfer = () => {};
     const mcpTransferGate = new Promise<void>((resolveGate) => {

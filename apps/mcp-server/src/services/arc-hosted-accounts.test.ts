@@ -62,7 +62,12 @@ describe("ArcHostedAccountRepository", () => {
             },
             async maybeSingle() {
               return {
-                data: { capabilities: ["wallet:read"], auth_epoch: 0, revoked_at: null },
+                data: {
+                  capabilities: ["wallet:read"],
+                  auth_epoch: 0,
+                  revoked_at: null,
+                  consent_version: "arc-hosted-autonomy-v1",
+                },
                 error: null,
               };
             },

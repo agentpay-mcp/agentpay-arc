@@ -78,6 +78,7 @@ const ArcHostedClientGrantRowSchema = z.object({
   capabilities: z.array(ArcHostedCapabilitySchema),
   auth_epoch: z.number().int().min(0),
   revoked_at: z.string().nullable().optional(),
+  consent_version: z.string().trim().min(1),
 });
 
 const TenantJoinSchema = z.object({
@@ -287,6 +288,7 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
         validUserId,
         validOAuthClientId,
         authEpoch,
+        validatedAccount.consent_version,
       ),
     });
   }
@@ -295,22 +297,27 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
    * What this client may do, resolved on every authority refresh so a
    * revocation takes effect on the next call rather than the next session.
    *
-   * Every path that is not an explicit, live, current-epoch grant returns
-   * nothing. A request with no client id cannot be attributed to a grant at
-   * all, so it cannot carry one.
+   * `payment:send` is returned only for an explicit, live, current-epoch grant
+   * made under the consent wording in force. Every other path degrades to
+   * `wallet:read`, so a client that lost its payment grant can still show the
+   * user their own balance rather than appearing broken. A request carrying no
+   * client id cannot be attributed to any grant, so it gets nothing.
    */
   private async resolveClientCapabilities(
     authUserId: string,
     oauthClientId: string | undefined,
     authEpoch: number,
+    accountConsentVersion: string,
   ): Promise<ArcHostedCapability[]> {
+    // No client id means the call cannot be attributed to a grant, so it
+    // carries none -- not even read.
     if (!oauthClientId) {
       return [];
     }
 
     const { data, error } = await this.supabaseClient
       .from("arc_hosted_client_grants")
-      .select("capabilities, auth_epoch, revoked_at")
+      .select("capabilities, auth_epoch, revoked_at, consent_version")
       .eq("auth_user_id", authUserId)
       .eq("oauth_client_id", oauthClientId)
       .is("revoked_at", null)
@@ -322,16 +329,27 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       throw formatRepositoryError("Failed to resolve hosted client grant", error);
     }
 
+    // An authenticated client with no grant may read the account it was
+    // authorised for, and nothing more. Reading is not the threat this guards
+    // against; spending is, and that needs an explicit row.
     if (!data) {
-      return [];
+      return ["wallet:read"];
     }
 
     const grant = ArcHostedClientGrantRowSchema.parse(data);
 
+    // A grant given under older consent wording is not evidence of agreement to
+    // the wording in force now. Drop to read rather than to nothing, so stale
+    // consent degrades the client instead of locking the user out of their own
+    // balance.
+    if (grant.consent_version !== accountConsentVersion) {
+      return ["wallet:read"];
+    }
+
     // Credential rotation bumps the tenant epoch, retiring grants issued
     // against the old one without having to find and delete each row.
     if (grant.auth_epoch !== authEpoch) {
-      return [];
+      return ["wallet:read"];
     }
 
     return grant.capabilities;
