@@ -75,12 +75,19 @@ execution phase:
    Set the authorization path to
    `https://arc.agentpay.site/oauth/consent`.
 3. Configure an asymmetric signing key and record the issuer URL.
-4. Dynamic Client Registration (DCR) stays disabled until the public-client
-   readiness review is complete. Before enabling it, verify OAuth 2.1 PKCE,
-   explicit consent, exact redirect URI validation, authentication and
-   registration rate limits, client-registration audit monitoring, and a tested
-   path to revoke abusive clients. After an authorized change, verify that
-   discovery publishes a non-null `registration_endpoint`; roll back by
+4. Dynamic Client Registration (DCR) is **enabled**, authorized by the user on
+   2026-08-01 after the public-client readiness review. Discovery therefore
+   publishes a non-null `registration_endpoint`, and readiness asserts that
+   reviewed state — a change in either direction is drift, not just a missing
+   feature. The review covered OAuth 2.1 PKCE, explicit consent, exact redirect URI
+   validation, authentication and registration rate limits,
+   client-registration audit monitoring, and a tested path to revoke abusive
+   clients.
+
+   Because any client can now register, a registered client is authenticated
+   but not trusted: it starts read-only and can only spend once the owner
+   grants `payment:send` from account settings. See
+   `docs/hackathon/arc-agentic/capability-grant-rollout.md`. Roll back by
    disabling DCR if registration or authorization probes fail.
 5. Enable the **Ethereum Web3 Wallet** authentication provider. Arc uses the
    official Supabase SIWE flow for identity-only external-wallet login; its

@@ -4,6 +4,8 @@ import {
   approveOAuthAuthorization,
   denyOAuthAuthorization,
 } from "../supabase.ts";
+import { fetchHostedClients } from "../api.ts";
+import { getPublicConfig } from "../config.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface OAuthConsentProps {
@@ -33,6 +35,9 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
   const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
   const [isLoading, setIsLoading] = useState(initialLoading);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resolvedGrant, setResolvedGrant] = useState<{ canSendPayments: boolean } | null>(
+    currentGrant ?? null,
+  );
 
   useEffect(() => {
     async function load() {
@@ -56,6 +61,28 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
           redirectUri: info.redirectUri,
           scopes: info.scopes,
         });
+
+        // Best-effort: the screen must still render if this fails, and a
+        // failure must read as "no payment access" rather than silently
+        // implying there is some.
+        if (info.clientId && currentGrant === null) {
+          try {
+            const session = await supabaseClient.auth.getSession();
+            const token = session.data.session?.access_token;
+            if (token) {
+              const { clients } = await fetchHostedClients(
+                getPublicConfig().apiOrigin,
+                token,
+              );
+              const match = clients.find(
+                (client) => client.oauthClientId === info.clientId,
+              );
+              setResolvedGrant({ canSendPayments: match?.canSendPayments === true });
+            }
+          } catch {
+            setResolvedGrant({ canSendPayments: false });
+          }
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to load OAuth authorization request.";
         setErrorMsg(msg);
@@ -168,7 +195,7 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
             screen that still said "cannot move your funds" would be false to
             the person deciding whether to approve it.
           */}
-          {currentGrant?.canSendPayments ? (
+          {resolvedGrant?.canSendPayments ? (
             <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }} id="oauth-payment-granted">
               <span style={{ color: "var(--success-color)" }}>✓</span>
               <span>

@@ -223,11 +223,13 @@ export async function executeHostedArcApi(
       body: {
         clients: grants.map((grant) => ({
           oauthClientId: grant.oauthClientId,
-          // Reported as the effective authority, not the stored array: a
-          // revoked row still lists payment:send, and showing that verbatim
-          // would tell the owner a revoked client can still spend.
-          canRead: !grant.revoked && grant.capabilities.includes("wallet:read"),
-          canSendPayments: !grant.revoked && grant.capabilities.includes("payment:send"),
+          // The repository already reduced these to effective authority using
+          // the same conditions enforcement applies -- revocation, consent
+          // version, auth epoch. Re-deriving them here is how the two drifted:
+          // a revoked delegate still reads, so reporting canRead false would
+          // contradict what the payment path actually allows.
+          canRead: grant.capabilities.includes("wallet:read"),
+          canSendPayments: grant.capabilities.includes("payment:send"),
           revoked: grant.revoked,
           ...(grant.updatedAt ? { updatedAt: grant.updatedAt } : {}),
         })),
@@ -247,8 +249,8 @@ export async function executeHostedArcApi(
       status: 200,
       body: {
         oauthClientId: grant.oauthClientId,
-        canRead: !grant.revoked && grant.capabilities.includes("wallet:read"),
-        canSendPayments: !grant.revoked && grant.capabilities.includes("payment:send"),
+        canRead: grant.capabilities.includes("wallet:read"),
+        canSendPayments: grant.capabilities.includes("payment:send"),
         revoked: grant.revoked,
       },
     };

@@ -2,8 +2,18 @@ import React, { useState } from "react";
 import type { SafeAccountInfo, SafeActivityItem } from "../api.ts";
 import { prepareWithdrawal } from "../withdrawal.ts";
 
+export interface ConnectedClient {
+  readonly oauthClientId: string;
+  readonly canRead: boolean;
+  readonly canSendPayments: boolean;
+  readonly revoked: boolean;
+}
+
 export interface DashboardProps {
   readonly account: SafeAccountInfo;
+  /** Delegated MCP clients and what each may currently do. */
+  readonly clients?: readonly ConnectedClient[];
+  readonly onSetClientPayment?: (oauthClientId: string, allowPayment: boolean) => Promise<void>;
   readonly onProvisionWallet: () => Promise<void>;
   readonly onPauseAccount: () => Promise<void>;
   readonly onResumeAccount: () => Promise<void>;
@@ -19,6 +29,8 @@ export interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({
   account,
+  clients,
+  onSetClientPayment,
   onProvisionWallet,
   onPauseAccount,
   onResumeAccount,
@@ -293,6 +305,58 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {isLoading ? "Executing Withdrawal..." : "Confirm & Withdraw USDC"}
             </button>
           </form>
+        </div>
+      )}
+
+      {/*
+        The owner's view of who they have delegated to, and the control to
+        change it. Without this the consent screen would point at an account
+        setting that does not exist -- the gap that made an earlier version of
+        that screen describe a control nobody could find.
+      */}
+      {clients !== undefined && (
+        <div className="card" id="connected-clients-card">
+          <h3 className="card-title">Connected agents</h3>
+          {clients.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }} id="no-connected-clients">
+              No agent has been granted payment access yet. Agents you authorize can read your
+              balance; sending payments is granted here, separately.
+            </p>
+          ) : (
+            <ul style={{ listStyle: "none" }} id="connected-clients-list">
+              {clients.map((client) => (
+                <li
+                  key={client.oauthClientId}
+                  style={{ padding: "0.75rem 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", wordBreak: "break-all" }}>
+                    {client.oauthClientId}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "0.4rem" }}>
+                    <span
+                      style={{ fontSize: "0.9rem" }}
+                      id={`client-capability-${client.oauthClientId}`}
+                    >
+                      {client.canSendPayments ? "Can send payments" : "Read-only"}
+                    </span>
+                    {onSetClientPayment && (
+                      <button
+                        type="button"
+                        className={client.canSendPayments ? "btn btn-danger" : "btn btn-primary"}
+                        style={{ padding: "0.3rem 0.75rem", fontSize: "0.85rem" }}
+                        id={`client-toggle-${client.oauthClientId}`}
+                        onClick={() =>
+                          void onSetClientPayment(client.oauthClientId, !client.canSendPayments)
+                        }
+                      >
+                        {client.canSendPayments ? "Remove payment access" : "Allow payments"}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

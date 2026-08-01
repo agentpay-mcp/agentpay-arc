@@ -326,10 +326,11 @@ async function handleApiRequest(
       : "POST",
   );
   const identity = await authenticate(context, false);
+  // GET routes carry no body. Reading one turns a correct bodyless request
+  // into "JSON body is required", which is how /api/account/clients returned
+  // 400 to the browser helper that was calling it properly.
   const body =
-    pathname === "/api/account"
-      ? undefined
-      : await readApiBody(request);
+    request.method === "GET" ? undefined : await readApiBody(request);
   const result = await executeHostedArcApi({
     pathname,
     authUserId: identity.authUserId,

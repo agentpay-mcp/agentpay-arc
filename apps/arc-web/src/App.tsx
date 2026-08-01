@@ -11,6 +11,8 @@ import {
   withdrawHostedAccount,
   fetchWithdrawalStatus,
   ArcApiError,
+  fetchHostedClients,
+  setHostedClientPayment,
   type SafeAccountInfo,
 } from "./api.ts";
 import { pollWithdrawalUntilTerminal } from "./withdrawal-polling.ts";
@@ -93,9 +95,47 @@ export const App: React.FC<AppProps> = ({
     transactionHash?: string;
     reconciliationRequired: boolean;
   } | null>(null);
+  const [clients, setClients] = useState<
+    readonly {
+      oauthClientId: string;
+      canRead: boolean;
+      canSendPayments: boolean;
+      revoked: boolean;
+    }[]
+  >([]);
   const withdrawalPollRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<Session | null>(initialSession);
   const sessionEpochRef = useRef(0);
+
+  const refreshClients = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return;
+    try {
+      const result = await fetchHostedClients(activeConfig.apiOrigin, token, customFetch);
+      setClients(result.clients);
+    } catch {
+      // A failed listing must not blank the panel: showing an empty list would
+      // tell the owner nothing is delegated, which is a different claim from
+      // "could not load".
+    }
+  }, [activeConfig.apiOrigin, customFetch, supabase]);
+
+  const handleSetClientPayment = useCallback(
+    async (oauthClientId: string, allowPayment: boolean) => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return;
+      await setHostedClientPayment(
+        activeConfig.apiOrigin,
+        token,
+        { oauthClientId, allowPayment },
+        customFetch,
+      );
+      await refreshClients();
+    },
+    [activeConfig.apiOrigin, customFetch, refreshClients, supabase],
+  );
 
   const replaceSession = useCallback((nextSession: Session | null) => {
     if (getSessionIdentity(sessionRef.current) !== getSessionIdentity(nextSession)) {
@@ -195,7 +235,10 @@ export const App: React.FC<AppProps> = ({
 
   useEffect(() => {
     void loadAccountData();
-  }, [loadAccountData]);
+    // Delegated clients are part of the account picture, not a separate screen:
+    // an owner deciding whether to trust an agent should see both together.
+    void refreshClients();
+  }, [loadAccountData, refreshClients]);
 
   const handleSignIn = async () => {
     setIsSubmitting(true);
@@ -481,6 +524,8 @@ export const App: React.FC<AppProps> = ({
           isLoading={isSubmitting}
           errorMessage={errorMessage}
           withdrawalResult={withdrawalResult}
+          clients={clients}
+          onSetClientPayment={handleSetClientPayment}
         />
       </main>
     </>

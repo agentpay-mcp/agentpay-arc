@@ -111,6 +111,8 @@ const ArcHostedClientGrantListSchema = z.array(
     capabilities: z.array(ArcHostedCapabilitySchema),
     revoked_at: z.string().nullable().optional(),
     updated_at: z.string().nullable().optional(),
+    consent_version: z.string().trim().min(1),
+    auth_epoch: z.number().int().min(0),
   }),
 );
 
@@ -496,23 +498,58 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
 
   async listClientGrants(authUserId: string): Promise<readonly ArcHostedClientGrant[]> {
     const validUserId = UuidSchema.parse(authUserId);
+
+    // The account supplies the consent version and epoch a grant must match.
+    // Without them this endpoint would report a stale grant as live, telling
+    // the owner a client can spend when enforcement would refuse it.
+    const { data: accountData, error: accountError } = await this.supabaseClient
+      .from("arc_hosted_accounts")
+      .select("*, tenants!inner(id, status, auth_epoch)")
+      .eq("auth_user_id", validUserId)
+      .maybeSingle();
+
+    if (accountError) {
+      throw formatRepositoryError("Failed to resolve hosted account", accountError);
+    }
+    if (!accountData) {
+      return [];
+    }
+
+    const account = ClaimHostedAccountRpcRowSchema.parse(accountData);
+    const tenant = TenantJoinSchema.parse((accountData as any).tenants);
+
     const { data, error } = await this.supabaseClient
       .from("arc_hosted_client_grants")
-      .select("oauth_client_id, capabilities, revoked_at, updated_at")
+      .select("oauth_client_id, capabilities, revoked_at, updated_at, consent_version, auth_epoch")
       .eq("auth_user_id", validUserId);
 
     if (error) {
       throw formatRepositoryError("Failed to list hosted client grants", error);
     }
 
-    return ArcHostedClientGrantListSchema.parse(data ?? []).map((row) => ({
-      oauthClientId: row.oauth_client_id,
-      // Revoked rows keep their recorded capabilities so the owner can see what
-      // the client used to hold; `revoked` is what decides authority.
-      capabilities: row.capabilities,
-      revoked: row.revoked_at !== null && row.revoked_at !== undefined,
-      ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
-    }));
+    return ArcHostedClientGrantListSchema.parse(data ?? []).map((row) => {
+      // Computed exactly as resolveClientCapabilities does. Management and
+      // enforcement disagreeing about the same client is the defect this
+      // guards against, so the two derive from the same conditions.
+      const live =
+        (row.revoked_at === null || row.revoked_at === undefined)
+        && row.consent_version === account.consent_version
+        && row.auth_epoch === tenant.auth_epoch;
+
+      const capabilities: ArcHostedCapability[] =
+        live && row.capabilities.includes("payment:send")
+          ? ["wallet:read", "payment:send"]
+          : ["wallet:read"];
+
+      return {
+        oauthClientId: row.oauth_client_id,
+        capabilities,
+        // Reported for the owner's benefit; authority is decided by
+        // `capabilities` above, which already accounts for it.
+        revoked: row.revoked_at !== null && row.revoked_at !== undefined,
+        ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
+      };
+    });
   }
 
   async setClientPaymentCapability(input: {

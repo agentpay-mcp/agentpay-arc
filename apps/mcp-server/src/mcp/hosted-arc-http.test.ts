@@ -1194,6 +1194,62 @@ describe("hosted Arc Streamable MCP surface", () => {
     }
   });
 
+  it("serves the bodyless client list and reports enforcement-equivalent authority", async () => {
+    // Two defects in one place: the route used to reject a correct bodyless
+    // GET with 400, and it reported authority derived differently from the
+    // payment path, so the owner could be told a revoked or stale client
+    // could still spend.
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      repository: {
+        ...context.options.repository,
+        async resolveHostedAuthority(input: { oauthClientId?: string }) {
+          return input.oauthClientId
+            ? { ...baseAuthority, oauthClientId: input.oauthClientId }
+            : { ...baseAuthority, oauthClientId: undefined };
+        },
+        async listClientGrants() {
+          return [
+            // Live payment grant.
+            {
+              oauthClientId: "granted-client",
+              capabilities: ["wallet:read", "payment:send"] as never,
+              revoked: false,
+            },
+            // Revoked: enforcement still lets it read, so the report must too.
+            {
+              oauthClientId: "revoked-client",
+              capabilities: ["wallet:read"] as never,
+              revoked: true,
+            },
+          ];
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(new URL("/api/account/clients", server.url), {
+        method: "GET",
+        headers: authHeaders(BROWSER_TOKEN),
+      });
+      assert.equal(response.status, 200, "a bodyless GET must not be rejected");
+
+      const body = (await response.json()) as { clients: Array<Record<string, unknown>> };
+      const granted = body.clients.find((c) => c.oauthClientId === "granted-client");
+      const revoked = body.clients.find((c) => c.oauthClientId === "revoked-client");
+
+      assert.equal(granted?.canSendPayments, true);
+      assert.equal(revoked?.canSendPayments, false);
+      assert.equal(
+        revoked?.canRead,
+        true,
+        "a revoked delegate still reads, so reporting otherwise would contradict enforcement",
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it("lets the owner grant and revoke a delegate, and refuses a delegate managing itself", async () => {
     const grants = new Map<string, { capabilities: string[]; revoked_at: string | null }>();
     const repository = {
