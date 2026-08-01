@@ -120,23 +120,31 @@ rather than leaving the user to infer it from a list of standard scopes:
 - **Send payments** — *not* granted by this approval; the client cannot move
   funds until payment access is granted separately.
 
-It deliberately does **not** mention revoking access from account settings.
-There is no self-service revocation screen or API — writes to the grant table
-are `service_role` only — and describing a control the user cannot find is
-worse than silence: it invites approval on the strength of an escape hatch that
-is not there. Restore that sentence when the control ships, not before.
+The payment line is rendered from the **resolved grant for that exact client**,
+not from a fixed sentence. A client that already holds `payment:send` is shown
+as holding it. This is what stops the screen becoming false the moment step 3
+grants a client payment access — the earlier draft would have told that
+client's user it could not move funds while it could.
 
-## The copy and the grants must move together
+An unresolved grant renders as "not granted", which is both what an absent
+grant means and the safe reading if the lookup failed.
 
-This screen tells a client it has no payment access. Step 3 above hands
-`payment:send` to a named client operationally, without the user seeing
-anything.
+## Owner-managed grants
 
-That is coherent only while the grant stays scoped to the first-party client
-the user is already using deliberately. Granting `payment:send` to a
-third-party OAuth client while this screen tells that same client's user it
-cannot move funds makes the screen a false statement.
+The owner grants and removes payment access themselves:
 
-So: widen the grant and change the screen together, or do neither. Revocation
-today is an operator action — set `revoked_at`, or rotate the tenant's
-`auth_epoch` to retire every grant at once.
+- `GET /api/account/clients` — every delegate and its effective capability.
+  Revoked rows report `canSendPayments: false` even though the stored array
+  still lists it, because reporting the stored value would tell the owner a
+  revoked client can still spend.
+- `POST /api/account/clients/payment` — `{ oauthClientId, allowPayment }`.
+
+Both routes refuse any bearer carrying an OAuth client id. A delegate must
+never be able to widen or restore its own capability, and binding these routes
+to the client-less owner session is what enforces that — the same distinction
+that separates the owner's withdrawal from a delegate's payment.
+
+Revocation clears payment and stamps `revoked_at` rather than deleting the row,
+so the owner keeps a record that the client was once trusted. Rotating a
+tenant's `auth_epoch` remains the blunt instrument that retires every grant at
+once.

@@ -39,6 +39,12 @@ function fakeRepository(): ArcHostedAccountRepository {
     async completeProvisioning() {},
     async failProvisioning() {},
     async setAccountStatus() {},
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
+    },
     async getPrivateWalletBinding() {
       return null;
     },

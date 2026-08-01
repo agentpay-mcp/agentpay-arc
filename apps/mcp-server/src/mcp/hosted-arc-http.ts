@@ -80,6 +80,8 @@ const API_PATHS = new Set([
   "/api/account/resume",
   "/api/account/withdraw",
   "/api/account/withdraw/status",
+  "/api/account/clients",
+  "/api/account/clients/payment",
 ]);
 
 export interface HostedArcHttpServer {
@@ -319,7 +321,9 @@ async function handleApiRequest(
   const { request, response, options } = context;
   requireMethod(
     request,
-    pathname === "/api/account" ? "GET" : "POST",
+    pathname === "/api/account" || pathname === "/api/account/clients"
+      ? "GET"
+      : "POST",
   );
   const identity = await authenticate(context, false);
   const body =

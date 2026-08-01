@@ -12,6 +12,13 @@ export interface OAuthConsentProps {
   readonly initialDetails?: { clientName: string; redirectUri: string; scopes: readonly string[] } | null;
   readonly initialErrorMsg?: string;
   readonly initialLoading?: boolean;
+  /**
+   * The capability this exact client currently holds, resolved server-side.
+   * Undefined means it has not been looked up, which is rendered as "not
+   * granted" -- the same thing an absent grant means, and the safe reading if
+   * the lookup failed.
+   */
+  readonly currentGrant?: { readonly canSendPayments: boolean } | null;
 }
 
 export const OAuthConsent: React.FC<OAuthConsentProps> = ({
@@ -20,6 +27,7 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
   initialDetails = null,
   initialErrorMsg = "",
   initialLoading = true,
+  currentGrant = null,
 }) => {
   const [details, setDetails] = useState<{ clientName: string; redirectUri: string; scopes: readonly string[] } | null>(initialDetails);
   const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
@@ -154,24 +162,33 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
               <strong>Read your balance and payment history.</strong> Granted by approving here.
             </span>
           </li>
-          <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <span style={{ color: "var(--text-dim)" }}>✕</span>
-            <span>
-              <strong>Send payments.</strong> Not granted by this approval. This client cannot move
-              your funds until you grant it payment access separately.
-            </span>
-          </li>
+          {/*
+            Rendered from the resolved grant rather than from a fixed sentence.
+            Once an operator or the owner grants payment to this client, a
+            screen that still said "cannot move your funds" would be false to
+            the person deciding whether to approve it.
+          */}
+          {currentGrant?.canSendPayments ? (
+            <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }} id="oauth-payment-granted">
+              <span style={{ color: "var(--success-color)" }}>✓</span>
+              <span>
+                <strong>Send payments from your wallet.</strong> This client already holds payment
+                access. You can remove it from your account settings.
+              </span>
+            </li>
+          ) : (
+            <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }} id="oauth-payment-not-granted">
+              <span style={{ color: "var(--text-dim)" }}>✕</span>
+              <span>
+                <strong>Send payments.</strong> Not granted. This client cannot move your funds
+                until you grant it payment access from your account settings.
+              </span>
+            </li>
+          )}
         </ul>
-        {/*
-          No self-service revocation screen exists yet, so this does not claim
-          one. Saying "revoke from account settings" would describe a control
-          the user cannot find, which is worse than silence: it invites them to
-          approve on the strength of an escape hatch that is not there. Restore
-          a concrete instruction here only when the control ships.
-        */}
         <p style={{ fontSize: "0.85rem", color: "var(--text-dim)", marginTop: "0.5rem" }} id="oauth-authority-note">
-          Approving grants read access only. Payment access is issued separately and is not part of
-          this approval.
+          Payment access is granted and removed from your account settings, separately from this
+          approval. Removing it takes effect on the client's next request.
         </p>
       </div>
 

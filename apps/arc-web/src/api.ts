@@ -99,6 +99,53 @@ async function requestJson<T>(
   return parsed.data;
 }
 
+export const HostedClientGrantSchema = z.object({
+  oauthClientId: z.string(),
+  canRead: z.boolean(),
+  canSendPayments: z.boolean(),
+  revoked: z.boolean(),
+  updatedAt: z.string().optional(),
+});
+export type HostedClientGrant = z.infer<typeof HostedClientGrantSchema>;
+
+export const HostedClientListSchema = z.object({
+  clients: z.array(HostedClientGrantSchema),
+});
+export type HostedClientList = z.infer<typeof HostedClientListSchema>;
+
+export async function fetchHostedClients(
+  apiOrigin: string,
+  accessToken: string,
+  customFetch?: typeof fetch,
+): Promise<HostedClientList> {
+  return requestJson<HostedClientList>(`${apiOrigin}/api/account/clients`, {
+    method: "GET",
+    accessToken,
+    customFetch,
+  }, HostedClientListSchema);
+}
+
+/**
+ * Grants or revokes payment capability for one delegated client.
+ *
+ * Only usable with an owner session token: the server refuses this route for
+ * any bearer carrying an OAuth client id, so a delegate cannot widen or restore
+ * its own access even if it reaches this function.
+ */
+export async function setHostedClientPayment(
+  apiOrigin: string,
+  accessToken: string,
+  input: { oauthClientId: string; allowPayment: boolean },
+  customFetch?: typeof fetch,
+): Promise<HostedClientGrant> {
+  return requestJson<HostedClientGrant>(`${apiOrigin}/api/account/clients/payment`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    accessToken,
+    customFetch,
+  }, HostedClientGrantSchema);
+}
+
 export async function fetchHostedAccount(
   apiOrigin: string,
   accessToken: string,

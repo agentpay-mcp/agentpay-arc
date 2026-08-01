@@ -198,6 +198,12 @@ function createHttpTestContext(): HttpTestContext {
             : null;
       }
     },
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
+    },
     async getPrivateWalletBinding() {
       return null;
     },
@@ -650,6 +656,12 @@ describe("hosted Arc HTTP configuration and OAuth metadata", () => {
         async completeProvisioning() {},
         async failProvisioning() {},
         async setAccountStatus() {},
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
+    },
         async getPrivateWalletBinding() {
           return null;
         },
@@ -1178,6 +1190,82 @@ describe("hosted Arc Streamable MCP surface", () => {
       assert.ok(ALL_ARC_MCP_TOOL_NAMES.includes("batch_payout"));
     } finally {
       await client.close();
+      await server.close();
+    }
+  });
+
+  it("lets the owner grant and revoke a delegate, and refuses a delegate managing itself", async () => {
+    const grants = new Map<string, { capabilities: string[]; revoked_at: string | null }>();
+    const repository = {
+      // The shared harness returns one fixed authority regardless of token,
+      // which would make the owner look like a delegate. Honour the input so
+      // the owner-versus-delegate distinction is actually exercised.
+      async resolveHostedAuthority(input: { oauthClientId?: string }) {
+        return input.oauthClientId
+          ? { ...baseAuthority, oauthClientId: input.oauthClientId }
+          : { ...baseAuthority, oauthClientId: undefined };
+      },
+      async listClientGrants() {
+        return [...grants.entries()].map(([oauthClientId, row]) => ({
+          oauthClientId,
+          capabilities: row.capabilities as never,
+          revoked: row.revoked_at !== null,
+        }));
+      },
+      async setClientPaymentCapability(input: {
+        oauthClientId: string;
+        allowPayment: boolean;
+      }) {
+        const row = input.allowPayment
+          ? { capabilities: ["wallet:read", "payment:send"], revoked_at: null }
+          : { capabilities: ["wallet:read"], revoked_at: "2026-08-01T00:00:00.000Z" };
+        grants.set(input.oauthClientId, row);
+        return {
+          oauthClientId: input.oauthClientId,
+          capabilities: row.capabilities as never,
+          revoked: row.revoked_at !== null,
+        };
+      },
+    };
+
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      repository: { ...context.options.repository, ...repository },
+    });
+
+    try {
+      // The owner grants payment to a delegate.
+      const grantedResponse = await postJson(server, "/api/account/clients/payment", BROWSER_TOKEN, {
+        oauthClientId: "codex-client",
+        allowPayment: true,
+      });
+      assert.equal(grantedResponse.status, 200);
+      const granted = (await grantedResponse.json()) as Record<string, unknown>;
+      assert.equal(granted.canSendPayments, true);
+
+      // The owner revokes it again.
+      const revokedResponse = await postJson(server, "/api/account/clients/payment", BROWSER_TOKEN, {
+        oauthClientId: "codex-client",
+        allowPayment: false,
+      });
+      assert.equal(revokedResponse.status, 200);
+      const revoked = (await revokedResponse.json()) as Record<string, unknown>;
+      assert.equal(revoked.canSendPayments, false);
+      assert.equal(revoked.revoked, true);
+
+      // The load-bearing one: a delegate must not be able to restore or widen
+      // its own capability, even holding a valid session.
+      const selfGrant = await postJson(server, "/api/account/clients/payment", MCP_TOKEN, {
+        oauthClientId: "codex-client",
+        allowPayment: true,
+      });
+      assert.equal(selfGrant.status, 403, "a delegate must not manage its own permissions");
+      assert.equal(
+        grants.get("codex-client")?.revoked_at !== null,
+        true,
+        "the delegate's revoked state must be unchanged by its own attempt",
+      );
+    } finally {
       await server.close();
     }
   });

@@ -487,40 +487,54 @@ test("App component renders loading spinner, unauthenticated form, OAuth banner,
   assert.ok(dashboardHtml.includes("0x1111111111111111111111111111111111111111"));
 });
 
-test("OAuthConsent discloses wallet capability and the revocation path", () => {
-  // A consent screen that lists only OAuth scopes leaves the user to guess
-  // whether approving lets the client spend. These assertions are about what
-  // the user is told, so they read the rendered copy rather than a prop.
+test("OAuthConsent renders the capability this exact client actually holds", () => {
+  // A fixed sentence would be false the moment the client is granted payment
+  // access, and the person reading it is deciding whether to trust that client.
   const mockClient = {} as unknown as Parameters<typeof OAuthConsent>[0]["supabaseClient"];
-  const html = renderToString(
+  const details = {
+    clientName: "Some MCP Client",
+    redirectUri: "http://localhost:6274/oauth/callback",
+    scopes: ["openid", "email"],
+  };
+
+  const ungranted = renderToString(
     <OAuthConsent
       supabaseClient={mockClient}
       authorizationId="auth-123"
       initialLoading={false}
-      initialDetails={{
-        clientName: "Some MCP Client",
-        redirectUri: "http://localhost:6274/oauth/callback",
-        scopes: ["openid", "email"],
-      }}
+      initialDetails={details}
+      currentGrant={{ canSendPayments: false }}
     />,
   );
+  assert.ok(ungranted.includes("oauth-payment-not-granted"));
+  assert.match(ungranted, /Not granted/i);
+  assert.ok(!ungranted.includes("oauth-payment-granted\""));
 
-  assert.ok(html.includes("oauth-capability-list"), "capability disclosure must be rendered");
-  assert.match(html, /Read your balance/i);
-
-  // The load-bearing claim: approving must not read as granting spend
-  // authority, because it does not.
-  assert.match(html, /Send payments/i);
-  assert.match(html, /Not granted by this approval/i);
-
-  // Deliberately asserts the absence of a revocation claim. A previous version
-  // of this screen told users they could revoke access from account settings;
-  // no such screen or API exists, and a copy-only test proved the sentence
-  // rendered rather than that the control was there.
-  assert.ok(html.includes("oauth-authority-note"));
-  assert.doesNotMatch(
-    html,
-    /revoke/i,
-    "must not promise a revocation control that is not implemented",
+  const granted = renderToString(
+    <OAuthConsent
+      supabaseClient={mockClient}
+      authorizationId="auth-123"
+      initialLoading={false}
+      initialDetails={details}
+      currentGrant={{ canSendPayments: true }}
+    />,
   );
+  assert.ok(granted.includes("oauth-payment-granted"));
+  assert.match(granted, /already holds payment access/i);
+
+  // An unresolved grant must read as "not granted" -- the same as an absent
+  // one, and the safe reading if the lookup failed.
+  const unknown = renderToString(
+    <OAuthConsent
+      supabaseClient={mockClient}
+      authorizationId="auth-123"
+      initialLoading={false}
+      initialDetails={details}
+    />,
+  );
+  assert.ok(unknown.includes("oauth-payment-not-granted"));
+
+  // Read access and the removal path are stated in every case.
+  assert.match(granted, /Read your balance/i);
+  assert.ok(granted.includes("oauth-authority-note"));
 });

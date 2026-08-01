@@ -89,6 +89,34 @@ export interface HostedArcApiResponse {
   readonly body: Readonly<Record<string, unknown>>;
 }
 
+
+const clientPaymentBodySchema = z
+  .object({
+    oauthClientId: z.string().trim().min(1).max(256),
+    allowPayment: z.boolean(),
+  })
+  .strict();
+
+/**
+ * Refuses any caller acting through an OAuth client.
+ *
+ * These routes decide what delegates may do, so a delegate must not reach them
+ * even with a valid session -- otherwise a client the owner limited to reading
+ * could grant itself payment access. A bearer with no client id is the owner
+ * acting directly; that is the only authority allowed here.
+ */
+async function requireOwnerSession(
+  options: ExecuteHostedArcApiOptions,
+): Promise<void> {
+  const authority = await options.resolveAuthority();
+  if (authority.oauthClientId) {
+    throw new HostedArcApiError(
+      403,
+      "Delegated clients cannot manage client permissions",
+    );
+  }
+}
+
 export async function executeHostedArcApi(
   options: ExecuteHostedArcApiOptions,
 ): Promise<HostedArcApiResponse> {
@@ -187,6 +215,45 @@ export async function executeHostedArcApi(
       },
     });
   }
+  if (options.pathname === "/api/account/clients") {
+    await requireOwnerSession(options);
+    const grants = await options.repository.listClientGrants(options.authUserId);
+    return {
+      status: 200,
+      body: {
+        clients: grants.map((grant) => ({
+          oauthClientId: grant.oauthClientId,
+          // Reported as the effective authority, not the stored array: a
+          // revoked row still lists payment:send, and showing that verbatim
+          // would tell the owner a revoked client can still spend.
+          canRead: !grant.revoked && grant.capabilities.includes("wallet:read"),
+          canSendPayments: !grant.revoked && grant.capabilities.includes("payment:send"),
+          revoked: grant.revoked,
+          ...(grant.updatedAt ? { updatedAt: grant.updatedAt } : {}),
+        })),
+      },
+    };
+  }
+
+  if (options.pathname === "/api/account/clients/payment") {
+    await requireOwnerSession(options);
+    const input = clientPaymentBodySchema.parse(options.body);
+    const grant = await options.repository.setClientPaymentCapability({
+      authUserId: options.authUserId,
+      oauthClientId: input.oauthClientId,
+      allowPayment: input.allowPayment,
+    });
+    return {
+      status: 200,
+      body: {
+        oauthClientId: grant.oauthClientId,
+        canRead: !grant.revoked && grant.capabilities.includes("wallet:read"),
+        canSendPayments: !grant.revoked && grant.capabilities.includes("payment:send"),
+        revoked: grant.revoked,
+      },
+    };
+  }
+
   if (options.pathname === "/api/account/withdraw") {
     const input = withdrawalBodySchema.parse(options.body);
     const authority = await options.resolveAuthority();

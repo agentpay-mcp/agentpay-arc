@@ -101,6 +101,10 @@ describe("CircleHostedWalletFacade", () => {
       completeProvisioning: async () => {},
       failProvisioning: async () => {},
       getHostedAccount: async () => null,
+    listClientGrants: async () => [],
+    setClientPaymentCapability: async () => {
+      throw new Error("not used in this test");
+    },
       getPrivateWalletBinding: async (authUserId: string) => {
         if (authUserId === VALID_USER_ID) {
           return {
