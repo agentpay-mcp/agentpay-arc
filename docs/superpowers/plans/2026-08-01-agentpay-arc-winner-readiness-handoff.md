@@ -1,6 +1,6 @@
 # AgentPay Arc Winner-Readiness Implementation Handoff
 
-**Status:** Ready for teammate implementation in this draft PR
+**Status:** Revised after teammate premise verification; implementation pending
 
 **Baseline commit:** `a1f4f39a753a3914e797a54dd5644a152e65530e`
 
@@ -12,6 +12,35 @@
 
 The numeric score is an internal prioritization heuristic. Encode publishes four
 judging dimensions but no numeric weights.
+
+## Revision decision — 2026-08-01
+
+This handoff was corrected after the teammate's live/code verification in
+[PR #24](https://github.com/agentpay-mcp/agentpay-arc/pull/24#issuecomment-5150933564):
+
+- Dynamic Client Registration is an explicitly authorized, persisted production
+  state. Readiness must assert DCR is enabled and `deploy/arc/README.md` must be
+  corrected; DCR being enabled is not itself a drift finding.
+- Supabase currently advertises only `openid`, `profile`, `email`, and `phone`.
+  The implementation path is therefore a server-side capability grant, not a
+  custom OAuth scope.
+- Do not add spend caps, maximum-per-payment settings, recipient/domain
+  allowlists, or per-payment approval prompts. The funded Circle Agent Wallet
+  balance remains the autonomous budget defined by the product owner.
+- Still prevent silent privilege escalation: an authenticated read-only client
+  must not be able to call `send_usdc`; payment capability must be explicit,
+  tenant/client bound, revocable, and revalidated at mutation time.
+- Submission artifacts are sequenced first because they are a deadline hard
+  gate, but draft scripts/outlines are not complete evidence until committed,
+  linked publicly, validated, and bound to the final exact release SHA.
+- Keep the internal `28.2/100` heuristic out of public submission materials.
+  Likewise, `864` Node tests at `63c6c48` and `141` Foundry tests are historical
+  snapshots until reproduced on the final exact head.
+
+Execution order: commit the P0-3 draft bundle first, implement and verify the
+P0-1 capability boundary, then complete the P0-2 live journey and final P0-3
+provenance freeze. Starting the bundle first does not make it submission-ready
+before the capability and journey evidence exist.
 
 ## Ownership and external-action boundary
 
@@ -31,66 +60,57 @@ judging dimensions but no numeric weights.
 
 Deliver one hosted, reproducible story:
 
-> A policy-bounded agent receives a service objective, observes real price and
-> trust signals, chooses whether to pay, executes a small USDC payment on Arc,
-> receives the protected result, and returns a verifiable receipt without being
-> able to exceed its authority.
+> A capability-controlled agent receives a service objective, observes real
+> price and trust signals, chooses whether to pay, executes a small USDC payment
+> from its funded Circle Agent Wallet on Arc, receives the protected result, and
+> returns a verifiable receipt.
 
 The completed implementation must make the following judge beliefs undeniable:
 
 1. this is a real decision-making agent, not a chatbot calling a fixed tool;
 2. the demonstrated value movement happened on Arc with meaningful USDC and
    Circle integration;
-3. a compromised or prompt-injected client cannot silently spend outside the
-   explicitly granted task authority;
+3. a compromised or prompt-injected read-only client cannot silently acquire
+   payment authority;
 4. the live demo, repository, receipt, video, and deck all represent the same
    exact release.
 
-## P0-1 — Close hosted OAuth and economic-authority gaps
+## P0-1 — Close hosted OAuth capability-authority gaps
 
 ### Current evidence
 
-- Live authorization metadata publishes a non-null `registration_endpoint`,
-  while `deploy/arc/README.md` says DCR must remain disabled until its readiness
-  review is complete.
+- Live authorization metadata publishes a non-null `registration_endpoint`
+  because Dynamic OAuth Apps were explicitly authorized and persisted. The
+  conflicting statement in `deploy/arc/README.md` is stale.
 - Hosted OAuth advertises only `openid`, `email`, `profile`, and `phone`.
-- The same authorized client can reach `send_usdc`, but the consent UI does not
-  explain that the client receives authority over the funded balance.
-- The product currently treats the entire funded balance as the budget, with no
-  task expiry, cumulative task cap, or recipient/service restriction.
+- Client identity is already bound and cross-checked, but the `send_usdc` path
+  does not distinguish read-only clients from payment-capable clients.
+- The product intentionally treats the entire funded Circle Agent Wallet
+  balance as the autonomous budget.
 
 ### Required implementation
 
-1. Add a deployment/readiness check for the authorization-server metadata.
-   Production readiness must fail closed when DCR state differs from the
-   reviewed policy. The check must not print credentials or full metadata.
+1. Correct `deploy/arc/README.md` and add a deployment/readiness check for the
+   authorization-server metadata. Production readiness must assert the reviewed
+   state: DCR enabled with the expected issuer and sanitized metadata. The check
+   must not print credentials or full metadata.
 2. Bind hosted tool authority to the OAuth `client_id` and an explicit internal
-   capability grant. Do not assume Supabase supports custom payment scopes:
-   verify the current official API first.
-3. If custom OAuth scopes are supported, use and enforce at least:
-   `wallet:read` and `payment:send`. If they are not supported, store an
-   equivalent server-side grant bound to `auth_user_id`, `client_id`, consent
-   version, and auth epoch.
-4. Require a task grant before `send_usdc`. The grant must contain:
-   - maximum cumulative USDC spend in six-decimal atomic units;
-   - expiry and maximum action count;
-   - exact recipient allowlist or exact paid-service origin binding;
-   - revocation state and immutable purpose/objective hash;
-   - atomically tracked consumed amount.
-   Every payment must atomically reserve budget before the Circle call using a
-   unique `(grant_id, idempotency_key)` binding. Reservations transition through
-   `RESERVED`, `SUBMITTED`, `CONFIRMED`, `FAILED_BEFORE_SUBMISSION`, or
-   `AMBIGUOUS`. Release budget only when submission is proven not to have
-   occurred; an ambiguous reservation remains unavailable until reconciliation
-   proves the final outcome.
-5. Render the effective authority in consent: client identity, read access,
-   payment access, maximum task spend, expiry, recipient/service boundary, and
-   revocation path.
-6. Revalidate the grant immediately before every mutation. A stale, revoked,
-   exhausted, expired, mismatched, or ambiguous grant must fail without a
-   transfer.
-7. Preserve the existing idempotency, one-attempt mutation, reconciliation,
+   capability grant.
+3. Implement the verified server-side path: store at least `wallet:read` versus
+   `payment:send`, bound to `auth_user_id`, `client_id`, consent version, auth
+   epoch, and revocation state. Do not wait on unsupported custom OAuth scopes.
+4. Make the consent/connection surface truthful about whether the client is
+   read-only or payment-capable and show the revocation path. This is a one-time
+   capability disclosure, not a per-payment prompt or budget configuration UI.
+5. Revalidate the capability immediately before every mutation. A stale,
+   revoked, wrong-tenant, wrong-client, read-only, or auth-epoch-mismatched grant
+   must fail before any Circle call.
+6. Preserve the existing idempotency, one-attempt mutation, reconciliation,
    tenant isolation, pause, withdrawal, and secret-redaction properties.
+
+Explicitly out of scope unless the product owner changes the model: spend caps,
+maximum-per-payment settings, recipient/domain allowlists, task expiry/action
+limits, and per-payment approval prompts.
 
 ### Tests first
 
@@ -99,21 +119,20 @@ Write RED tests before implementation for:
 - unexpected live DCR metadata makes readiness fail;
 - an identity-only or read-only grant cannot call `send_usdc`;
 - a grant cannot be replayed by another OAuth client or tenant;
-- cumulative spend, recipient/origin, expiry, action-count, revocation, and
-  auth-epoch boundaries fail closed;
-- two concurrent spends cannot exceed the same task cap;
-- crash-after-reserve cannot release authority prematurely;
-- concurrent duplicate idempotency keys reuse one reservation;
-- ambiguous receipts keep budget reserved until reconciliation, and a retry
-  after reconciliation cannot submit twice;
-- the consent UI accurately renders the granted economic authority;
+- revocation, consent-version, and auth-epoch boundaries fail closed;
+- a capability downgrade concurrent with `send_usdc` cannot pass revalidation;
+- concurrent duplicate idempotency keys still reuse one payment attempt;
+- ambiguous receipts still enter reconciliation, and a retry cannot submit
+  twice;
+- the consent UI accurately renders read-only versus payment capability;
 - raw tokens, Circle identifiers, metadata bodies, and secrets never appear in
   errors or logs.
 
 ### Acceptance evidence
 
 - Unit and integration tests covering every boundary above.
-- Browser E2E for approve, deny, revoke, expiry, and overspend rejection.
+- Browser E2E for read-only, payment-capable, deny, revoke, and auth-epoch
+  invalidation behavior.
 - Sanitized discovery/readiness output proving reviewed DCR state.
 - A written trust-boundary diagram and revocation runbook.
 - Fresh security review with no critical/high unresolved finding.
@@ -130,20 +149,20 @@ the autonomous trace.
 ### Product scenario
 
 Use one narrow buyer persona: a team operating an API-consuming AI agent. The
-agent needs a paid report or data resource and has a small task budget.
+agent needs a paid report or data resource and pays from its funded wallet.
 
 The canonical journey is:
 
-1. receive an objective and task grant;
+1. receive an objective under an authenticated, payment-capable client grant;
 2. inspect at least two real service offers;
-3. read price, service identity/trust, required parameters, and remaining task
-   budget as real signals;
+3. read price, service identity/trust, required parameters, and funded wallet
+   balance as real signals;
 4. apply deterministic policy to choose one offer or decline all offers;
 5. record the observation, selected action, reason, authority check, and stop
    condition in a sanitized trace;
 6. pay a small amount of Arc Testnet USDC without a per-payment human prompt;
 7. receive the protected resource;
-8. return the result, budget before/after, Circle transaction identifier,
+8. return the result, wallet balance before/after, Circle transaction identifier,
    Arcscan link, receipt status, and expected state change;
 9. demonstrate one negative branch and one replay/reconciliation branch.
 
@@ -155,7 +174,8 @@ The canonical journey is:
    alone is not integration proof.
 2. Implement the decision policy as a small, deterministic, independently
    testable module. The model may interpret the objective, but it must not be
-   able to bypass hard price, trust, budget, origin, expiry, or action limits.
+   able to bypass hard price/trust rules, Arc/token validation, available funded
+   balance, client capability, idempotency, or stop conditions.
 3. Use immutable inputs and outputs. Persist only a sanitized trace containing:
    observation, decision, selected tool/action, policy result, outcome,
    recovery, and termination reason.
@@ -164,7 +184,7 @@ The canonical journey is:
    reviewed commerce capability through the hosted authority boundary or host
    the runner beside it with equivalent protections.
 5. Keep live mutation mode opt-in and fail closed when required credentials,
-   task grant, Arc chain verification, or idempotency state is absent.
+   payment capability, Arc chain verification, or idempotency state is absent.
 6. Demonstrate why Arc matters with measured confirmation time and
    USDC-denominated cost, not only a network label.
 
@@ -173,10 +193,11 @@ The canonical journey is:
 Write RED tests before implementation for:
 
 - a price/trust signal change produces a different decision;
-- insufficient or expired task budget returns `DECLINED` without a mutation;
+- insufficient funded balance or a read-only client returns `DECLINED` without
+  a mutation;
 - prompt content cannot override the deterministic policy;
-- an inspected quote is cryptographically or deterministically bound to the
-  eventual payment request;
+- the selected offer and decision inputs are included in the immutable journey
+  trace that is bound to the eventual payment result;
 - duplicate execution reuses the receipt and never pays twice;
 - timeout or ambiguous receipt stops and enters reconciliation;
 - a successful local fixture is explicitly labeled simulated;
@@ -191,9 +212,9 @@ Write RED tests before implementation for:
 - Two publicly reachable offer responses with retrieval timestamps, normalized
   quote digests, signal provenance, expiry, seller/service origin, and expected
   recipient. Fixtures cannot satisfy this live evidence item.
-- One immutable journey ID joins the selected quote digest, task grant, payment
-  idempotency key, Arc receipt, and protected-response digest. Replaying that
-  journey returns the prior receipt and result without a second payment.
+- One immutable journey ID joins the selected quote digest, client capability,
+  payment idempotency key, Arc receipt, and protected-response digest. Replaying
+  that journey returns the prior receipt and result without a second payment.
 - A sanitized machine-readable trace tied to the exact Git SHA.
 - A judge runbook that reproduces the journey in under five minutes.
 - A decline branch, replay branch, and recovery/stop branch shown in evidence.
@@ -231,7 +252,9 @@ Also:
    health/version endpoint. Do not expose environment values.
 2. Bind the live transaction, trace, video, deck, repository, and MVP to that
    exact release.
-3. Produce a final public deck with eight concise slides and no placeholders.
+3. Treat the teammate's eleven-slide outline as a working draft. Produce a final
+   concise deck with no placeholders that covers the playbook's eight narrative
+   beats; condense slides when that improves the three-minute judge story.
 4. Produce a public pitch/demo video no longer than 180 seconds.
 5. State the buyer, quantified pain, measurable outcome, why Arc, and a credible
    business model. Do not invent traction or production metrics.
