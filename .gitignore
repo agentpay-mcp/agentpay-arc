@@ -17,5 +17,13 @@ blob-report/
 .worktrees/
 /AGENTS.md
 /AGENTPAY_CONCEPT.md
-/docs/
+# Contents rather than the directory itself: git cannot re-include anything
+# inside an excluded directory, so `/docs/` with a negation below would silently
+# do nothing.
+/docs/*
+# Public submission material is the one exception, and it is narrow on purpose.
+# Everything else under /docs/ stays untracked so private handoff notes cannot
+# reach this public repository; force-adding individual files instead would make
+# later evidence easy to omit without anyone noticing.
+!/docs/hackathon/
 **/PRODUCT.md
