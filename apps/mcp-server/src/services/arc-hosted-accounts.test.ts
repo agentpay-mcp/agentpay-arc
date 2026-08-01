@@ -44,8 +44,32 @@ describe("ArcHostedAccountRepository", () => {
   });
 
   it("resolves active tenant authority for a live account with tenant auth_epoch", async () => {
+    // Two reads now: the account, and the capability grant for this client.
+    // The grant query must filter out revoked rows in the database rather than
+    // fetching them and deciding in application code.
+    const tables: string[] = [];
     const fakeClient = {
       from(table: string) {
+        tables.push(table);
+        if (table === "arc_hosted_client_grants") {
+          const chain = {
+            select: () => chain,
+            eq: () => chain,
+            is(col: string, val: unknown) {
+              assert.equal(col, "revoked_at");
+              assert.equal(val, null, "a revoked grant must be excluded by the query");
+              return chain;
+            },
+            async maybeSingle() {
+              return {
+                data: { capabilities: ["wallet:read"], auth_epoch: 0, revoked_at: null },
+                error: null,
+              };
+            },
+          };
+          return chain;
+        }
+
         assert.equal(table, "arc_hosted_accounts");
         return {
           select(projection: string) {
@@ -79,6 +103,12 @@ describe("ArcHostedAccountRepository", () => {
     assert.equal(authority.accountStatus, "ACTIVE");
     assert.equal(authority.authEpoch, 0);
     assert.equal(authority.oauthClientId, "mcp-client-123");
+    assert.deepEqual(
+      authority.capabilities,
+      ["wallet:read"],
+      "capabilities must come from the grant row, not be assumed from a valid session",
+    );
+    assert.deepEqual(tables, ["arc_hosted_accounts", "arc_hosted_client_grants"]);
   });
 
   it("fails to resolve authority when tenant status is SUSPENDED or ARCHIVED", async () => {

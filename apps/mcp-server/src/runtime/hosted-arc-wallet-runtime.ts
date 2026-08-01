@@ -6,6 +6,7 @@ import {
   arcUsdcAmountSchema,
   uuidV4Schema,
   type ArcHostedAuthority,
+  type ArcHostedCapability,
 } from "@agentpay-ai/shared-arc";
 
 import type { ArcAppKitService } from "../services/arc-app-kit.js";
@@ -214,6 +215,12 @@ export function createHostedArcWalletRuntime(
     assertBoundWallet(authority.walletAddress, input);
     const currentAuthority = await freshAuthority();
 
+    // Checked against the freshly resolved authority, not the one captured at
+    // construction, so a grant revoked mid-session stops the next call rather
+    // than the one after it. Placed here rather than inside `send_usdc` so a
+    // tool added later cannot be introduced unguarded.
+    assertCapability(name, currentAuthority);
+
     switch (name) {
       case "setup_agent_wallet": {
         const wallet = await dependencies.facade.getWallet(currentAuthority);
@@ -270,6 +277,29 @@ export function createHostedArcWalletRuntime(
     toolNames: HOSTED_ARC_TOOL_NAMES,
     dispatch,
   }) as HostedArcWalletRuntime;
+}
+
+/**
+ * The capability each tool consumes. Stated as a total map rather than a list
+ * of guarded names: adding a tool without deciding what it costs becomes a
+ * type error instead of an unguarded surface.
+ */
+const TOOL_CAPABILITY: Readonly<Record<HostedArcToolName, ArcHostedCapability>> = Object.freeze({
+  setup_agent_wallet: "wallet:read",
+  get_agent_budget: "wallet:read",
+  send_usdc: "payment:send",
+  get_payment_receipt: "wallet:read",
+  get_unified_balance: "wallet:read",
+} satisfies Record<HostedArcToolName, ArcHostedCapability>);
+
+function assertCapability(name: HostedArcToolName, authority: ArcHostedAuthority): void {
+  const required = TOOL_CAPABILITY[name];
+  if (authority.capabilities.includes(required)) {
+    return;
+  }
+  // Names the capability, never the granted set: what a client was not given
+  // is not something an unauthorized caller should learn by probing.
+  throw new Error(`Hosted client is not permitted to use ${name}: capability ${required} was not granted`);
 }
 
 function isHostedArcToolName(name: string): name is HostedArcToolName {

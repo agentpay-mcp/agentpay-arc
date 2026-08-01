@@ -56,6 +56,7 @@ const baseAuthority: ArcHostedAuthority = {
   walletAddress: WALLET_ADDRESS,
   accountStatus: "ACTIVE",
   authEpoch: 7,
+  capabilities: ["wallet:read", "payment:send"],
   oauthClientId: "codex-client",
 };
 
@@ -191,6 +192,7 @@ function createHttpTestContext(): HttpTestContext {
                 ...authority,
                 accountStatus: "ACTIVE",
                 authEpoch: authority.authEpoch + 1,
+                capabilities: ["wallet:read", "payment:send"],
               }
             : null;
       }

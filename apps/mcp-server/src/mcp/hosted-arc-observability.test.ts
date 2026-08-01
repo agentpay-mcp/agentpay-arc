@@ -16,6 +16,7 @@ const authority: ArcHostedAuthority = {
   walletAddress: "0x1111111111111111111111111111111111111111",
   accountStatus: "ACTIVE",
   authEpoch: 3,
+  capabilities: ["wallet:read", "payment:send"],
 };
 const receipt: ArcPaymentReceiptRecord = {
   id: "44444444-4444-4444-8444-444444444444",

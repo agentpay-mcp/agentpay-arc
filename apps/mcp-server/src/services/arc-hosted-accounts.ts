@@ -6,7 +6,9 @@ import {
   ArcHostedAccountStatus,
   ArcHostedAuthority,
   ArcHostedAuthoritySchema,
+  ArcHostedCapabilitySchema,
   ArcWalletProvisioningState,
+  type ArcHostedCapability,
 } from "@agentpay-ai/shared-arc";
 
 export interface ArcHostedAccountRepository {
@@ -65,6 +67,18 @@ const UuidSchema = z.string().uuid("Invalid authUserId format: must be a valid U
 const WalletAddressSchema = z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Invalid walletAddress format: must be 0x-prefixed 40-character hex string");
 const BoundedIdentifierSchema = z.string().trim().min(1).max(256).regex(/^[a-zA-Z0-9_-]+$/, "Invalid Circle ID format");
 const BoundedErrorCodeSchema = z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/, "Invalid errorCode format");
+
+/**
+ * Validated rather than trusted: an unrecognised capability string reaching the
+ * enforcement layer would be compared against a known set and silently treated
+ * as "not granted", which reads as a working check while hiding a broken one.
+ * Failing the parse makes that state loud.
+ */
+const ArcHostedClientGrantRowSchema = z.object({
+  capabilities: z.array(ArcHostedCapabilitySchema),
+  auth_epoch: z.number().int().min(0),
+  revoked_at: z.string().nullable().optional(),
+});
 
 const TenantJoinSchema = z.object({
   id: UuidSchema,
@@ -269,7 +283,58 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       accountStatus: validatedAccount.account_status,
       authEpoch,
       oauthClientId: validOAuthClientId,
+      capabilities: await this.resolveClientCapabilities(
+        validUserId,
+        validOAuthClientId,
+        authEpoch,
+      ),
     });
+  }
+
+  /**
+   * What this client may do, resolved on every authority refresh so a
+   * revocation takes effect on the next call rather than the next session.
+   *
+   * Every path that is not an explicit, live, current-epoch grant returns
+   * nothing. A request with no client id cannot be attributed to a grant at
+   * all, so it cannot carry one.
+   */
+  private async resolveClientCapabilities(
+    authUserId: string,
+    oauthClientId: string | undefined,
+    authEpoch: number,
+  ): Promise<ArcHostedCapability[]> {
+    if (!oauthClientId) {
+      return [];
+    }
+
+    const { data, error } = await this.supabaseClient
+      .from("arc_hosted_client_grants")
+      .select("capabilities, auth_epoch, revoked_at")
+      .eq("auth_user_id", authUserId)
+      .eq("oauth_client_id", oauthClientId)
+      .is("revoked_at", null)
+      .maybeSingle();
+
+    if (error) {
+      // Never fall through to a permissive default: a database that cannot be
+      // read is not a database that granted anything.
+      throw formatRepositoryError("Failed to resolve hosted client grant", error);
+    }
+
+    if (!data) {
+      return [];
+    }
+
+    const grant = ArcHostedClientGrantRowSchema.parse(data);
+
+    // Credential rotation bumps the tenant epoch, retiring grants issued
+    // against the old one without having to find and delete each row.
+    if (grant.auth_epoch !== authEpoch) {
+      return [];
+    }
+
+    return grant.capabilities;
   }
 
   async claimProvisioningJob(authUserId: string): Promise<{

@@ -27,6 +27,7 @@ const authority: ArcHostedAuthority = {
   walletAddress: WALLET_ADDRESS,
   accountStatus: "ACTIVE",
   authEpoch: 7,
+  capabilities: ["wallet:read", "payment:send"],
   oauthClientId: "codex-client",
 };
 
