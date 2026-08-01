@@ -162,9 +162,16 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
             </span>
           </li>
         </ul>
-        <p style={{ fontSize: "0.85rem", color: "var(--text-dim)", marginTop: "0.5rem" }} id="oauth-revocation-note">
-          You can revoke this client's access at any time from your AgentPay Arc account settings.
-          Revocation takes effect on its next request.
+        {/*
+          No self-service revocation screen exists yet, so this does not claim
+          one. Saying "revoke from account settings" would describe a control
+          the user cannot find, which is worse than silence: it invites them to
+          approve on the strength of an escape hatch that is not there. Restore
+          a concrete instruction here only when the control ships.
+        */}
+        <p style={{ fontSize: "0.85rem", color: "var(--text-dim)", marginTop: "0.5rem" }} id="oauth-authority-note">
+          Approving grants read access only. Payment access is issued separately and is not part of
+          this approval.
         </p>
       </div>
 

@@ -67,6 +67,22 @@ interface QueueState {
   readonly queued: number;
 }
 
+/**
+ * Refuses a caller that was never granted payment authority.
+ *
+ * Used at two points on purpose: once before any durable work, so an
+ * unauthorized caller cannot cause a receipt claim or a balance read, and again
+ * on the freshly resolved authority immediately before the transfer, so a grant
+ * revoked in between stops this call rather than the next one.
+ */
+function assertPaymentCapability(authority: ArcHostedAuthority): void {
+  if (!authority.capabilities.includes("payment:send")) {
+    throw new Error(
+      "Hosted client is not permitted to send payments: capability payment:send was not granted",
+    );
+  }
+}
+
 export function createHostedArcMutationCoordinator(
   options: HostedArcMutationCoordinatorOptions,
 ): HostedArcMutationCoordinator {
@@ -173,6 +189,14 @@ export function createHostedArcMutationCoordinator(
     claimedAuthority: ArcHostedAuthority,
     input: z.output<typeof hostedMutationInputSchema>,
   ): Promise<HostedArcMutationOutput> {
+    // Refused before any durable work. Claiming a receipt and running a balance
+    // preflight for a caller that was never allowed to pay writes rows and
+    // burns an idempotency key on its behalf, which is an unauthorized effect
+    // even though no money moves. The check is repeated after the fresh
+    // authority resolution below, because this one is only as current as the
+    // authority handed in.
+    assertPaymentCapability(claimedAuthority);
+
     const payments =
       options.paymentsForTenant(claimedAuthority.tenantId);
     const claimedAt = clock().toISOString();
@@ -251,6 +275,9 @@ export function createHostedArcMutationCoordinator(
     // failed: "not permitted" and "authority went stale" are different events
     // and must not be reconciled as the same one.
     if (!transferAuthority.capabilities.includes("payment:send")) {
+      // Reached only when the grant was revoked after the pre-flight check, so
+      // a receipt already exists and has to be closed out rather than left in
+      // SUBMITTING.
       const failed = await transitionSafely(
         payments,
         {

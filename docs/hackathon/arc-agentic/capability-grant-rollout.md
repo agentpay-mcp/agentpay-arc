@@ -109,11 +109,23 @@ rather than leaving the user to infer it from a list of standard scopes:
 - **Send payments** — *not* granted by this approval; the client cannot move
   funds until payment access is granted separately.
 
-It also states that access can be revoked from account settings and that
-revocation takes effect on the client's next request, which is true because the
-coordinator re-resolves authority before every mutation.
+It deliberately does **not** mention revoking access from account settings.
+There is no self-service revocation screen or API — writes to the grant table
+are `service_role` only — and describing a control the user cannot find is
+worse than silence: it invites approval on the strength of an escape hatch that
+is not there. Restore that sentence when the control ships, not before.
 
-This copy is accurate only while the grant table stays empty of `payment:send`
-rows the user did not ask for. If step 3 above is ever widened beyond the
-first-party client, the screen becomes a lie -- so widen the grant and the copy
-together, or not at all.
+## The copy and the grants must move together
+
+This screen tells a client it has no payment access. Step 3 above hands
+`payment:send` to a named client operationally, without the user seeing
+anything.
+
+That is coherent only while the grant stays scoped to the first-party client
+the user is already using deliberately. Granting `payment:send` to a
+third-party OAuth client while this screen tells that same client's user it
+cannot move funds makes the screen a false statement.
+
+So: widen the grant and change the screen together, or do neither. Revocation
+today is an operator action — set `revoked_at`, or rotate the tenant's
+`auth_epoch` to retire every grant at once.

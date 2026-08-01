@@ -513,6 +513,14 @@ test("OAuthConsent discloses wallet capability and the revocation path", () => {
   assert.match(html, /Send payments/i);
   assert.match(html, /Not granted by this approval/i);
 
-  assert.ok(html.includes("oauth-revocation-note"), "the revocation path must be stated");
-  assert.match(html, /revoke/i);
+  // Deliberately asserts the absence of a revocation claim. A previous version
+  // of this screen told users they could revoke access from account settings;
+  // no such screen or API exists, and a copy-only test proved the sentence
+  // rendered rather than that the control was there.
+  assert.ok(html.includes("oauth-authority-note"));
+  assert.doesNotMatch(
+    html,
+    /revoke/i,
+    "must not promise a revocation control that is not implemented",
+  );
 });

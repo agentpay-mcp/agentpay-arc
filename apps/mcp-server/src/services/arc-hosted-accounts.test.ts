@@ -116,6 +116,49 @@ describe("ArcHostedAccountRepository", () => {
     assert.deepEqual(tables, ["arc_hosted_accounts", "arc_hosted_client_grants"]);
   });
 
+  it("treats a bearer with no OAuth client id as the account owner, not an ungranted client", () => {
+    // The hosted API authenticates browser sessions with
+    // requireOAuthClientId=false, and the MCP surface refuses them outright, so
+    // a token with no client id can only be the owner acting directly. Reading
+    // that as "no grant" locks owners out of their own withdrawal, which is the
+    // opposite of what the capability model is for.
+    const tables: string[] = [];
+    const fakeClient = {
+      from(table: string) {
+        tables.push(table);
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return { data: fakeAccountRow, error: null };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
+    return repo
+      .resolveHostedAuthority({ authUserId: "a0000000-0000-4000-8000-000000000001" })
+      .then((authority) => {
+        assert.ok(authority !== null);
+        assert.ok(
+          authority.capabilities.includes("payment:send"),
+          "the owner's own session must keep the authority to move their own funds",
+        );
+        assert.deepEqual(
+          tables,
+          ["arc_hosted_accounts"],
+          "there is no client to look up a delegation grant for",
+        );
+      });
+  });
+
   it("fails to resolve authority when tenant status is SUSPENDED or ARCHIVED", async () => {
     const fakeClient = {
       from() {

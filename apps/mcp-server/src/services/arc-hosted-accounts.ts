@@ -297,11 +297,20 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
    * What this client may do, resolved on every authority refresh so a
    * revocation takes effect on the next call rather than the next session.
    *
-   * `payment:send` is returned only for an explicit, live, current-epoch grant
-   * made under the consent wording in force. Every other path degrades to
-   * `wallet:read`, so a client that lost its payment grant can still show the
-   * user their own balance rather than appearing broken. A request carrying no
-   * client id cannot be attributed to any grant, so it gets nothing.
+   * Two different authorities reach this code and must not be conflated.
+   *
+   * A bearer with no OAuth client id is the account owner acting directly in
+   * their own browser session: the hosted API authenticates those with
+   * `requireOAuthClientId=false`, and the MCP surface refuses them outright, so
+   * such a token cannot belong to a third-party client. Withholding
+   * `payment:send` there does not restrain anyone -- it locks owners out of
+   * their own funds, which is the opposite of the autonomy they consented to.
+   *
+   * A bearer that does carry a client id is a delegate, and delegation is what
+   * this table governs. `payment:send` is returned only for an explicit, live,
+   * current-epoch grant made under the consent wording in force; every other
+   * path degrades to `wallet:read`, so a client that lost its payment grant can
+   * still show the user their balance rather than appearing broken.
    */
   private async resolveClientCapabilities(
     authUserId: string,
@@ -309,10 +318,8 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     authEpoch: number,
     accountConsentVersion: string,
   ): Promise<ArcHostedCapability[]> {
-    // No client id means the call cannot be attributed to a grant, so it
-    // carries none -- not even read.
     if (!oauthClientId) {
-      return [];
+      return ["wallet:read", "payment:send"];
     }
 
     const { data, error } = await this.supabaseClient

@@ -1220,9 +1220,13 @@ describe("hosted Arc Streamable MCP surface", () => {
       });
 
       assert.equal(result.isError, true, "a read-only client must be refused");
-      // The assertion that matters: refusing after the money moved would still
-      // report an error to the caller.
+      // Refusing after the money moved would still report an error to the
+      // caller, so the transfer count is the assertion that matters -- and a
+      // refusal that still claimed a receipt would burn this idempotency key
+      // and write a row on an unauthorized caller's behalf.
       assert.equal(wallet.transferCalls(), 0, "no transfer may be attempted");
+      assert.deepEqual(payment.calls.claims, [], "no receipt may be claimed");
+      assert.equal(wallet.balanceCalls(), 0, "no balance read may be performed");
     } finally {
       await transport.close().catch(() => {});
       await server.close();
