@@ -148,25 +148,41 @@ also do not receive or manage Circle API credentials.
 
 ## Install with npx
 
-The public CLI detects the target runtime and writes MCP configuration plus the
-`skills/agentpay/SKILL.md` instructions:
+The public CLI is available on npm as
+[`@agentpay-ai/agentpay-arc`](https://www.npmjs.com/package/@agentpay-ai/agentpay-arc).
+It detects the target runtime and writes MCP configuration plus the
+`skills/agentpay/SKILL.md` instructions.
+
+For Codex:
+
+```bash
+npx -y @agentpay-ai/agentpay-arc install --runtime codex
+```
+
+For another supported client, replace `<runtime>` with `claude`, `cursor`,
+`hermes`, or `generic`:
 
 ```bash
 npx @agentpay-ai/agentpay-arc install --runtime <runtime>
 ```
 
-Use `codex`, `claude`, `cursor`, `hermes`, or `generic` for `<runtime>`. To
-configure the hosted MCP alongside the complete local 31-tool wallet surface:
+The commands above install the complete local 31-tool wallet surface. To add
+the public OAuth-protected hosted MCP alongside it:
 
 ```bash
-npx @agentpay-ai/agentpay-arc install --runtime <runtime> \
+npx -y @agentpay-ai/agentpay-arc install --runtime <runtime> \
   --mcp-url https://mcp.arc.agentpay.site/mcp
 ```
+
+Add `-y` after `npx` to accept npm's one-time package execution prompt. This
+does not bypass the wallet signature or OAuth consent required by the hosted
+service. Users never need an npm account, Circle credential, Supabase key,
+OAuth client ID, or manually copied bearer token.
 
 For an operator-managed deployment:
 
 ```bash
-npx @agentpay-ai/agentpay-arc install --runtime <runtime> --self-hosted
+npx -y @agentpay-ai/agentpay-arc install --runtime <runtime> --self-hosted
 ```
 
 ## Components
