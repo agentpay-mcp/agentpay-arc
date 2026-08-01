@@ -113,6 +113,16 @@ export function createHostedArcMutationCoordinator(
         throw new Error("Hosted account is not active");
       }
       const input = hostedMutationInputSchema.parse(rawInput);
+
+      // Refused before taking a queue slot. The per-user queue is a scarce
+      // resource: a delegate that can never be allowed to pay could otherwise
+      // sit behind a legitimate pending transfer and push the owner's own
+      // requests into "queue is full". This reads the authority the HTTP layer
+      // already verified, so it is a cheap denial-of-service guard rather than
+      // the authoritative decision -- that still happens twice below, against
+      // freshly resolved state.
+      assertPaymentCapability(authority);
+
       return enqueue(authority.authUserId, async () => {
         const freshAuthority =
           await resolveFreshAuthority(authority);

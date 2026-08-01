@@ -30,6 +30,7 @@ import {
   type HostedArcVerifiedBearer,
   type StartHostedArcHttpServerOptions,
 } from "./hosted-arc-http.ts";
+import { ArcHostedAccountRepositoryImpl } from "../services/arc-hosted-accounts.ts";
 
 const AUTH_USER_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_AUTH_USER_ID =
@@ -1179,6 +1180,183 @@ describe("hosted Arc Streamable MCP surface", () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it("lets the owner withdraw through the real repository, and refuses an ungranted delegate", async () => {
+    // Drives the integrated path the previous tests stubbed past:
+    // browser bearer with no client_id -> real ArcHostedAccountRepositoryImpl
+    // capability derivation -> /api/account/withdraw -> real mutation
+    // coordinator. Injecting an authority that already carries payment:send is
+    // the fixture pattern that hid the owner lockout in the first place.
+    const accountRow = {
+      auth_user_id: AUTH_USER_ID,
+      tenant_id: TENANT_ID,
+      account_status: "ACTIVE",
+      consent_version: "arc-hosted-autonomy-v1",
+      consent_timestamp: "2026-07-29T00:00:00.000Z",
+      wallet_address: WALLET_ADDRESS,
+      wallet_status: "LIVE",
+      created_at: "2026-07-29T00:00:00.000Z",
+      updated_at: "2026-07-29T00:00:00.000Z",
+      tenants: { id: TENANT_ID, status: "ACTIVE", auth_epoch: 7 },
+    };
+    // No grant rows exist: the delegate has never been granted payment access.
+    const supabaseFake = {
+      from(table: string) {
+        if (table === "arc_hosted_client_grants") {
+          const chain: Record<string, unknown> = {};
+          chain.select = () => chain;
+          chain.eq = () => chain;
+          chain.is = () => chain;
+          chain.maybeSingle = async () => ({ data: null, error: null });
+          return chain;
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: accountRow, error: null }),
+            }),
+          }),
+        };
+      },
+    };
+    const realRepository = new ArcHostedAccountRepositoryImpl(supabaseFake as never);
+
+    const payment = createPaymentRepositoryFake();
+    const wallet = createMutationFacade({});
+    const mutationCoordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      resolveFreshAuthority: (trustedAuthority) =>
+        realRepository.resolveHostedAuthority({
+          authUserId: trustedAuthority.authUserId,
+          ...(trustedAuthority.oauthClientId
+            ? { oauthClientId: trustedAuthority.oauthClientId }
+            : {}),
+        }),
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
+        hasConflictingUnresolvedMutation(payment, authority, idempotencyKey),
+    });
+
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      repository: realRepository,
+      mutationCoordinator,
+    });
+
+    try {
+      // The owner, with no client_id, must still be able to move their funds.
+      const ownerResponse = await postJson(server, "/api/account/withdraw", BROWSER_TOKEN, {
+        destination: RECIPIENT_ADDRESS,
+        amount: "1",
+        idempotencyKey: IDEMPOTENCY_KEY,
+        confirmed: true,
+      });
+      assert.equal(ownerResponse.status, 200, "the owner's own withdrawal must not be blocked");
+      assert.equal(wallet.transferCalls(), 1);
+
+      // The delegate, with a client_id and no grant, must be refused outright.
+      const claimsBeforeDelegate = payment.calls.claims.length;
+      const balancesBeforeDelegate = wallet.balanceCalls();
+      await assert.rejects(
+        () =>
+          mutationCoordinator.sendUsdc(
+            { ...baseAuthority, oauthClientId: "codex-client", capabilities: ["wallet:read"] },
+            {
+              destination: RECIPIENT_ADDRESS,
+              amount: "1",
+              idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+              purpose: "delegate attempt",
+            },
+          ),
+        /permitted|capability/i,
+      );
+      assert.equal(wallet.transferCalls(), 1, "no delegate transfer");
+      assert.equal(payment.calls.claims.length, claimsBeforeDelegate, "no delegate receipt");
+      assert.equal(wallet.balanceCalls(), balancesBeforeDelegate, "no delegate balance read");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("does not let read-only delegates consume the owner's mutation queue", async () => {
+    // The per-user queue is a scarce resource. A delegate that can never be
+    // allowed to pay must not be able to sit behind a legitimate pending
+    // transfer and push the owner's own requests into "queue is full".
+    const payment = createPaymentRepositoryFake();
+    let releaseTransfer = () => {};
+    const transferGate = new Promise<void>((resolveGate) => {
+      releaseTransfer = resolveGate;
+    });
+    const wallet = createMutationFacade({
+      async transfer(call) {
+        if (call === 1) {
+          await transferGate;
+        }
+        return { transactionId: `circle-tx-${call}`, state: "INITIATED" };
+      },
+    });
+
+    let conflictGateCalls = 0;
+    const ownerAuthority = { ...baseAuthority, oauthClientId: undefined };
+    const readOnlyAuthority = {
+      ...baseAuthority,
+      capabilities: ["wallet:read"] as const,
+    };
+    const coordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      resolveFreshAuthority: async (trustedAuthority) => ({ ...trustedAuthority }),
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: async () => {
+        conflictGateCalls += 1;
+        return false;
+      },
+      maxQueuedPerUser: 2,
+    });
+
+    // One legitimate owner transfer, held open so the queue stays occupied.
+    const ownerSend = coordinator.sendUsdc(ownerAuthority, {
+      destination: RECIPIENT_ADDRESS,
+      amount: "1",
+      idempotencyKey: IDEMPOTENCY_KEY,
+      purpose: "owner withdrawal",
+    });
+    await waitFor(() => wallet.transferCalls() === 1);
+
+    const conflictGateAfterOwner = conflictGateCalls;
+    const claimsAfterOwner = payment.calls.claims.length;
+
+    // Far more read-only attempts than the queue could hold.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await assert.rejects(
+        () =>
+          coordinator.sendUsdc(readOnlyAuthority as unknown as typeof baseAuthority, {
+            destination: RECIPIENT_ADDRESS,
+            amount: "1",
+            idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+            purpose: "delegate attempt",
+          }),
+        /permitted|capability/i,
+      );
+    }
+
+    // Zero of everything downstream: no queue slot, so no conflict gate, no
+    // receipt, no balance read, no transfer.
+    assert.equal(conflictGateCalls, conflictGateAfterOwner, "no conflict-gate work");
+    assert.equal(payment.calls.claims.length, claimsAfterOwner, "no receipt claimed");
+    assert.equal(wallet.transferCalls(), 1, "only the owner's transfer ran");
+
+    releaseTransfer();
+    await ownerSend;
+
+    // The owner is still served after the flood, which is the point.
+    const secondOwnerSend = await coordinator.sendUsdc(ownerAuthority, {
+      destination: RECIPIENT_ADDRESS,
+      amount: "1",
+      idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+      purpose: "owner withdrawal 2",
+    });
+    assert.ok(secondOwnerSend.status);
   });
 
   it("refuses send_usdc over the real MCP transport for a read-only client", async () => {

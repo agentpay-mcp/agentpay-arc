@@ -16,12 +16,23 @@ consent could move that user's funds.
 After, a client can only spend if a grant records `payment:send` for it, and
 that grant is live, current-epoch, and made under the consent wording in force.
 
-Reads are unaffected. A client with no grant — including one that just
-registered through DCR — resolves to `wallet:read`, so it can show the user
-their own balance and nothing more. Losing or outgrowing a payment grant
-degrades a client to read; it does not lock the user out of their own account.
-A request carrying no client id at all cannot be attributed to any grant and
-gets nothing.
+## Two authorities, which must not be conflated
+
+**The account owner, acting directly.** A bearer with no OAuth client id. The
+hosted API authenticates browser sessions this way and the MCP surface refuses
+them outright, so such a token cannot belong to a third party. This is the
+owner, keeps full authority over their own wallet, and is unaffected by this
+table — `/api/account/withdraw` continues to work exactly as before. Nothing
+here is a restraint on the owner; withholding payment from them would only lock
+them out of their own funds.
+
+**A delegate, acting on the owner's behalf.** A bearer carrying an OAuth client
+id. This is what the grant table governs. A delegate with no grant — including
+one that just registered through DCR — resolves to `wallet:read`, so it can
+show the user their balance and nothing more. A grant that is revoked,
+epoch-retired, or made under older consent wording degrades the same way, so a
+delegate that loses payment access still works for reading rather than
+appearing broken.
 
 This is a capability, not a spending limit. The funded Circle Agent Wallet
 balance remains the autonomous budget: no cap, no per-payment maximum, no
