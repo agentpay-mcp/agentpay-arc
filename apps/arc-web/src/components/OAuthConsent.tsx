@@ -137,6 +137,37 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
         </ul>
       </div>
 
+      {/*
+        The standard scopes above describe the sign-in, not what the client can
+        do with money. Approving here grants read access only: spending needs a
+        separate capability grant, which this screen cannot issue. Saying so
+        plainly is the point -- a consent screen that lists "openid, profile,
+        email, phone" and stays silent about funds invites the user to assume
+        either extreme.
+      */}
+      <div style={{ marginBottom: "1.5rem" }} id="oauth-wallet-authority">
+        <label className="form-label">What this client can do with your wallet</label>
+        <ul style={{ listStyle: "none", fontSize: "0.9rem" }} id="oauth-capability-list">
+          <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ color: "var(--success-color)" }}>✓</span>
+            <span>
+              <strong>Read your balance and payment history.</strong> Granted by approving here.
+            </span>
+          </li>
+          <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ color: "var(--text-dim)" }}>✕</span>
+            <span>
+              <strong>Send payments.</strong> Not granted by this approval. This client cannot move
+              your funds until you grant it payment access separately.
+            </span>
+          </li>
+        </ul>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-dim)", marginTop: "0.5rem" }} id="oauth-revocation-note">
+          You can revoke this client's access at any time from your AgentPay Arc account settings.
+          Revocation takes effect on its next request.
+        </p>
+      </div>
+
       <div style={{ display: "flex", gap: "1rem" }}>
         <button
           type="button"

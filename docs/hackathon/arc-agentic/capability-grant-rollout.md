@@ -100,9 +100,20 @@ revoked grant stops the next payment rather than the one after it. Rotating a
 tenant's `auth_epoch` retires every grant issued against the old epoch without
 having to find each row.
 
-## What is still missing
+## What the consent screen now says
 
-The consent screen does not yet disclose read-only versus payment capability or
-the revocation path. Enforcement is real without it, but a user approving a
-client still cannot see what they are approving. That disclosure is the
-remaining piece of P0-1, and it is UI work, not authorization work.
+Approving OAuth grants read access and nothing else, and the screen says so
+rather than leaving the user to infer it from a list of standard scopes:
+
+- **Read your balance and payment history** — granted by approving.
+- **Send payments** — *not* granted by this approval; the client cannot move
+  funds until payment access is granted separately.
+
+It also states that access can be revoked from account settings and that
+revocation takes effect on the client's next request, which is true because the
+coordinator re-resolves authority before every mutation.
+
+This copy is accurate only while the grant table stays empty of `payment:send`
+rows the user did not ask for. If step 3 above is ever widened beyond the
+first-party client, the screen becomes a lie -- so widen the grant and the copy
+together, or not at all.

@@ -486,3 +486,33 @@ test("App component renders loading spinner, unauthenticated form, OAuth banner,
   assert.ok(dashboardHtml.includes("Arc Agent Wallet"));
   assert.ok(dashboardHtml.includes("0x1111111111111111111111111111111111111111"));
 });
+
+test("OAuthConsent discloses wallet capability and the revocation path", () => {
+  // A consent screen that lists only OAuth scopes leaves the user to guess
+  // whether approving lets the client spend. These assertions are about what
+  // the user is told, so they read the rendered copy rather than a prop.
+  const mockClient = {} as unknown as Parameters<typeof OAuthConsent>[0]["supabaseClient"];
+  const html = renderToString(
+    <OAuthConsent
+      supabaseClient={mockClient}
+      authorizationId="auth-123"
+      initialLoading={false}
+      initialDetails={{
+        clientName: "Some MCP Client",
+        redirectUri: "http://localhost:6274/oauth/callback",
+        scopes: ["openid", "email"],
+      }}
+    />,
+  );
+
+  assert.ok(html.includes("oauth-capability-list"), "capability disclosure must be rendered");
+  assert.match(html, /Read your balance/i);
+
+  // The load-bearing claim: approving must not read as granting spend
+  // authority, because it does not.
+  assert.match(html, /Send payments/i);
+  assert.match(html, /Not granted by this approval/i);
+
+  assert.ok(html.includes("oauth-revocation-note"), "the revocation path must be stated");
+  assert.match(html, /revoke/i);
+});
