@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   arcPaymentStatusSchema,
   decidePurchase,
@@ -26,6 +28,19 @@ export type PaymentStatus = ArcPaymentStatus;
 
 /** The only status that means the money moved and the result may be fetched. */
 const TERMINAL_SUCCESS: ArcPaymentStatus = "COMPLETED";
+
+/**
+ * Validated rather than trusted, for the same reason the observed service is:
+ * an unrecognised status would compare unequal to success and be filed as
+ * unresolved, hiding a contract change behind a plausible outcome. And a
+ * "completed" payment carrying no transaction identity is not evidence of
+ * anything -- there would be nothing to bind the protected result to, or to
+ * reconcile against later.
+ */
+const paymentResultSchema = z.object({
+  transactionId: z.string().trim().min(1).max(256),
+  status: arcPaymentStatusSchema,
+});
 
 export interface GoldenJourneyDependencies {
   /** Price and trust signals as observed, not as advertised by the seller. */
@@ -68,11 +83,17 @@ export async function runGoldenJourney(
 
   for (const candidate of candidates) {
     const decision = decidePurchase(objective, candidate);
+    // Everything downstream uses the validated snapshot, never the caller's
+    // object. `decidePurchase` parses into a fresh value, so a service that
+    // changes after being approved -- a mutable object, a lazy getter, a
+    // proxy -- cannot be the thing that gets paid. Approving one price and
+    // paying another is the whole failure this guards.
+    const approved = decision.observed;
     // Recorded before acting on it. A trace that keeps only the paid candidate
     // is indistinguishable from a fixed sequence that always pays, which is
     // exactly the claim this journey exists to answer.
     steps.push({
-      serviceId: candidate.id,
+      serviceId: approved.id,
       verdict: decision.verdict,
       reason: decision.reason,
       observed: decision.observed,
@@ -84,14 +105,11 @@ export async function runGoldenJourney(
 
     // The caller's key is passed through untouched: minting one per attempt
     // here would turn a retry into a second payment.
-    const payment = await dependencies.pay(candidate, idempotencyKey);
+    const payment = paymentResultSchema.parse(
+      await dependencies.pay(approved, idempotencyKey),
+    );
 
-    // Validated rather than trusted: an unrecognised status would compare
-    // unequal to the success value and be silently filed as unresolved, hiding
-    // a contract change behind a plausible-looking outcome.
-    const status = arcPaymentStatusSchema.parse(payment.status);
-
-    if (status !== TERMINAL_SUCCESS) {
+    if (payment.status !== TERMINAL_SUCCESS) {
       // An ambiguous payment is not a paid payment. Fetching the protected
       // result on optimism is how a demo ends up showing something the agent
       // never actually bought.
@@ -103,7 +121,7 @@ export async function runGoldenJourney(
       };
     }
 
-    const result = await dependencies.fetchResult(candidate, payment.transactionId);
+    const result = await dependencies.fetchResult(approved, payment.transactionId);
     return {
       objective: objective.description,
       steps,

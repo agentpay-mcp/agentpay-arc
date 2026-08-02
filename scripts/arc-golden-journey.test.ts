@@ -154,6 +154,66 @@ describe("runGoldenJourney", () => {
     );
   });
 
+  it("pays the object it validated, not the one the caller can still change", async () => {
+    // The decision and the action must be about the same thing. A service that
+    // mutates after approval -- a shared object, a lazy getter, a proxy --
+    // would otherwise be approved at one price and paid at another.
+    const mutable = { ...service("svc") } as ObservedService & { priceUsdc: string };
+    let priceAtPayment = "";
+    let priceAtFetch = "";
+
+    const trace = await runGoldenJourney(
+      objective,
+      {
+        async observe() {
+          return [mutable];
+        },
+        async pay(target) {
+          mutable.priceUsdc = "9.00";
+          priceAtPayment = target.priceUsdc;
+          return { transactionId: "tx-1", status: "COMPLETED" as const };
+        },
+        async fetchResult(target) {
+          priceAtFetch = target.priceUsdc;
+          return "result";
+        },
+      },
+      IDEMPOTENCY_KEY,
+    );
+
+    assert.equal(trace.steps[0]?.observed.priceUsdc, "0.01");
+    assert.equal(priceAtPayment, "0.01", "payment must receive the approved snapshot");
+    assert.equal(priceAtFetch, "0.01", "so must result retrieval");
+    assert.equal(trace.outcome, "PAID");
+  });
+
+  it("refuses a completed payment that carries no receipt identity", async () => {
+    // "COMPLETED" with an empty transaction id is not evidence of anything:
+    // there is nothing to bind the protected result to, and nothing to
+    // reconcile against later.
+    let fetched = false;
+    await assert.rejects(() =>
+      runGoldenJourney(
+        objective,
+        {
+          async observe() {
+            return [service("acceptable")];
+          },
+          async pay() {
+            return { transactionId: "", status: "COMPLETED" as const };
+          },
+          async fetchResult() {
+            fetched = true;
+            return "result";
+          },
+        },
+        IDEMPOTENCY_KEY,
+      ),
+    );
+
+    assert.equal(fetched, false, "no result may be fetched against a missing receipt");
+  });
+
   it("reports no qualifying service rather than paying the least bad one", async () => {
     const context = deps([
       service("a", { priceUsdc: "5.00" }),

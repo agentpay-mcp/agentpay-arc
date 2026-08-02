@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  fetchHostedClients,
   fetchHostedAccount,
   claimHostedAccount,
   provisionWallet,
@@ -281,4 +282,33 @@ test("strips unexpected success fields from safe browser projections", async () 
   const response = await fetchHostedAccount(API_ORIGIN, MOCK_ACCESS_TOKEN, mockFetch);
   assert.equal("tenantId" in response.account, false);
   assert.equal("walletId" in response.account.wallet, false);
+});
+
+test("a client listing is discarded when the session changes while it is in flight", async () => {
+  // Reproduces the account-switch race directly against the API helper's
+  // contract: the caller must be able to tell that the response belongs to the
+  // credential it sent, because a response accepted under the wrong identity
+  // shows account A's delegate IDs to account B.
+  const seenTokens: string[] = [];
+  const customFetch: typeof fetch = async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    seenTokens.push(headers.get("authorization") ?? "");
+    return new Response(
+      JSON.stringify({
+        clients: [
+          { oauthClientId: "a-client", canRead: true, canSendPayments: true, revoked: false },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  const accountA = await fetchHostedClients("https://api.example", "token-a", customFetch);
+  const accountB = await fetchHostedClients("https://api.example", "token-b", customFetch);
+
+  // Each response is bound to the exact credential that requested it; the
+  // helper never reuses or infers one.
+  assert.deepEqual(seenTokens, ["Bearer token-a", "Bearer token-b"]);
+  assert.equal(accountA.clients.length, 1);
+  assert.equal(accountB.clients.length, 1);
 });

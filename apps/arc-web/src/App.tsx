@@ -109,18 +109,31 @@ export const App: React.FC<AppProps> = ({
 
   const refreshClients = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const session = data.session;
+    const token = session?.access_token;
     if (!token) return;
-    // Bound to the identity in effect when the request started, the same way
-    // account loading is. Without this a slow response can land after a sign-out
-    // and repopulate the panel under a different account.
+
+    // Identity and credential are taken from the *same* session object, then
+    // checked against the live ref before the request goes out. Reading the
+    // token from one place and the identity from another leaves a window where
+    // a switch between the two reads pairs account A's token with account B's
+    // identity -- and the response would then be accepted as B's.
+    const requestIdentity = getSessionIdentity(session);
     const requestEpoch = sessionEpochRef.current;
-    const requestIdentity = getSessionIdentity(sessionRef.current);
+    if (
+      requestIdentity !== getSessionIdentity(sessionRef.current)
+      || token !== sessionRef.current?.access_token
+    ) {
+      return;
+    }
     try {
       const result = await fetchHostedClients(activeConfig.apiOrigin, token, customFetch);
+      // Re-checked on arrival, including the credential: the session may have
+      // been replaced while the request was in flight.
       if (
         requestEpoch !== sessionEpochRef.current
         || requestIdentity !== getSessionIdentity(sessionRef.current)
+        || token !== sessionRef.current?.access_token
       ) {
         return;
       }
@@ -132,6 +145,7 @@ export const App: React.FC<AppProps> = ({
       if (
         requestEpoch === sessionEpochRef.current
         && requestIdentity === getSessionIdentity(sessionRef.current)
+        && token === sessionRef.current?.access_token
       ) {
         setClients([]);
       }
