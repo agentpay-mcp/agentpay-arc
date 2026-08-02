@@ -117,6 +117,28 @@ describe("decidePurchase", () => {
     assert.match(decision.reason, /price|budget/i);
   });
 
+  it("refuses to decide on an observation it cannot trust", () => {
+    // The worst failure this module can have: a missing or non-numeric signal
+    // makes every comparison false, no rule refuses, and "nothing objected" is
+    // read as approval. It paid on both of these before the observed service
+    // was validated.
+    const nonNumeric = { ...service(), feedbackCount: "many", averageScore: "good" };
+    assert.throws(() => decidePurchase(objective, nonNumeric as unknown as ObservedService));
+
+    const missingFields = {
+      id: "s",
+      priceUsdc: "0.01",
+      token: "USDC",
+      chainId: 5042002,
+      endpointDomainVerified: true,
+    };
+    assert.throws(() => decidePurchase(objective, missingFields as unknown as ObservedService));
+
+    // `null` stays a decision, not an error: unrated is a state the rules
+    // understand. Absent is an incomplete observation, which is not.
+    assert.equal(decidePurchase(objective, service({ averageScore: null })).verdict, "DECLINE");
+  });
+
   it("rejects a malformed price instead of guessing at it", () => {
     assert.throws(() => decidePurchase(objective, service({ priceUsdc: "abc" })));
     assert.throws(() => decidePurchase(objective, service({ priceUsdc: "-0.01" })));

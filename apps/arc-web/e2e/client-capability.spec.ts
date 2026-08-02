@@ -82,7 +82,7 @@ async function installArcSession(
     await json(route, 200, {
       authorization_id: AUTHORIZATION_ID,
       redirect_uri: "http://localhost:6274/oauth/callback",
-      client: { name: "Some MCP Client", client_id: CLIENT_ID },
+      client: { name: "Some MCP Client", id: CLIENT_ID },
       user: { id: AUTH_USER_ID, email: "owner@example.test" },
       scope: "openid email",
     });
@@ -185,7 +185,7 @@ test.describe("client capability journeys", () => {
       await json(route, 200, {
         authorization_id: AUTHORIZATION_ID,
         redirect_uri: "http://localhost:6274/oauth/callback",
-        client: { name: "Some MCP Client", client_id: CLIENT_ID },
+        client: { name: "Some MCP Client", id: CLIENT_ID },
         user: { id: AUTH_USER_ID, email: "owner@example.test" },
         scope: "openid email",
       });

@@ -31,6 +31,9 @@ export const arcPaymentStatusSchema = z.enum([
   "RECONCILIATION_REQUIRED",
 ]);
 
+/** Named so callers state the payment domain rather than restating its shape. */
+export type ArcPaymentStatus = z.output<typeof arcPaymentStatusSchema>;
+
 export const arcBatchStatusSchema = z.enum([
   "PENDING",
   "SUBMITTED",

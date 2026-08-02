@@ -111,13 +111,30 @@ export const App: React.FC<AppProps> = ({
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return;
+    // Bound to the identity in effect when the request started, the same way
+    // account loading is. Without this a slow response can land after a sign-out
+    // and repopulate the panel under a different account.
+    const requestEpoch = sessionEpochRef.current;
+    const requestIdentity = getSessionIdentity(sessionRef.current);
     try {
       const result = await fetchHostedClients(activeConfig.apiOrigin, token, customFetch);
+      if (
+        requestEpoch !== sessionEpochRef.current
+        || requestIdentity !== getSessionIdentity(sessionRef.current)
+      ) {
+        return;
+      }
       setClients(result.clients);
     } catch {
-      // A failed listing must not blank the panel: showing an empty list would
-      // tell the owner nothing is delegated, which is a different claim from
-      // "could not load".
+      // A failed listing must not leave another account's delegates on screen.
+      // "Could not load" and "nothing is delegated" are different claims, but
+      // showing the wrong account's clients is worse than either.
+      if (
+        requestEpoch === sessionEpochRef.current
+        && requestIdentity === getSessionIdentity(sessionRef.current)
+      ) {
+        setClients([]);
+      }
     }
   }, [activeConfig.apiOrigin, customFetch, supabase]);
 
@@ -147,6 +164,10 @@ export const App: React.FC<AppProps> = ({
       setAccountFetchError("");
       setErrorMessage("");
       setWithdrawalResult(null);
+      // Delegate IDs belong to one account. Leaving them across an identity
+      // change shows account A's clients under account B, and a toggle on that
+      // stale row would be submitted with B's bearer.
+      setClients([]);
       setIsSubmitting(false);
     }
     sessionRef.current = nextSession;

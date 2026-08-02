@@ -1,7 +1,9 @@
 import {
+  arcPaymentStatusSchema,
   decidePurchase,
   type ObservedService,
   type PurchaseObjective,
+  type ArcPaymentStatus,
   type PurchaseVerdict,
 } from "@agentpay-ai/shared-arc";
 
@@ -14,7 +16,16 @@ import {
  * real payment. Nothing here reaches the network or holds a wallet on its own.
  */
 
-export type PaymentStatus = "COMPLETE" | "AMBIGUOUS" | "FAILED";
+/**
+ * Taken from the payment domain rather than invented here. An earlier draft
+ * accepted "COMPLETE"; receipts actually report "COMPLETED", so a real
+ * successful payment would have been read as unresolved and the protected
+ * result never fetched. The fixtures hid it by inventing the same wrong value.
+ */
+export type PaymentStatus = ArcPaymentStatus;
+
+/** The only status that means the money moved and the result may be fetched. */
+const TERMINAL_SUCCESS: ArcPaymentStatus = "COMPLETED";
 
 export interface GoldenJourneyDependencies {
   /** Price and trust signals as observed, not as advertised by the seller. */
@@ -75,7 +86,12 @@ export async function runGoldenJourney(
     // here would turn a retry into a second payment.
     const payment = await dependencies.pay(candidate, idempotencyKey);
 
-    if (payment.status !== "COMPLETE") {
+    // Validated rather than trusted: an unrecognised status would compare
+    // unequal to the success value and be silently filed as unresolved, hiding
+    // a contract change behind a plausible-looking outcome.
+    const status = arcPaymentStatusSchema.parse(payment.status);
+
+    if (status !== TERMINAL_SUCCESS) {
       // An ambiguous payment is not a paid payment. Fetching the protected
       // result on optimism is how a demo ends up showing something the agent
       // never actually bought.

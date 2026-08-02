@@ -116,6 +116,66 @@ describe("ArcHostedAccountRepository", () => {
     assert.deepEqual(tables, ["arc_hosted_accounts", "arc_hosted_client_grants"]);
   });
 
+  it("returns a usable grant from the real upsert path instead of throwing after the write", async () => {
+    // The dangerous shape: the row is written, then the response fails
+    // validation. Authority moves in the database while the owner sees an
+    // error, which is the worst outcome for a payment control. The HTTP test
+    // cannot catch it because it substitutes a mock repository.
+    const accountRow = {
+      ...fakeAccountRow,
+      tenants: { id: "b0000000-0000-4000-8000-000000000002", status: "ACTIVE", auth_epoch: 0 },
+    };
+    let selectedColumns = "";
+    const fakeClient = {
+      from(table: string) {
+        if (table === "arc_hosted_client_grants") {
+          const chain: Record<string, unknown> = {};
+          chain.upsert = () => chain;
+          chain.select = (columns: string) => {
+            selectedColumns = columns;
+            return chain;
+          };
+          chain.maybeSingle = async () => ({
+            // Returns exactly the columns that were asked for, the way the
+            // database would -- so an incomplete select fails here too.
+            data: Object.fromEntries(
+              selectedColumns.split(",").map((column) => {
+                const key = column.trim();
+                const values: Record<string, unknown> = {
+                  oauth_client_id: "codex-client",
+                  capabilities: ["wallet:read", "payment:send"],
+                  revoked_at: null,
+                  updated_at: "2026-08-02T00:00:00.000Z",
+                  consent_version: "arc-hosted-autonomy-v1",
+                  auth_epoch: 0,
+                };
+                return [key, values[key]];
+              }),
+            ),
+            error: null,
+          });
+          return chain;
+        }
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: accountRow, error: null }) }),
+          }),
+        };
+      },
+    };
+
+    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
+    const grant = await repo.setClientPaymentCapability({
+      authUserId: "a0000000-0000-4000-8000-000000000001",
+      oauthClientId: "codex-client",
+      allowPayment: true,
+    });
+
+    assert.equal(grant.oauthClientId, "codex-client");
+    assert.equal(grant.capabilities.includes("payment:send"), true);
+    assert.equal(grant.revoked, false);
+  });
+
   it("treats a bearer with no OAuth client id as the account owner, not an ungranted client", () => {
     // The hosted API authenticates browser sessions with
     // requireOAuthClientId=false, and the MCP surface refuses them outright, so

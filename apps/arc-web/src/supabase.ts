@@ -42,10 +42,12 @@ const OAuthConsentDetailsSchema = z.object({
   redirect_uri: SafeRedirectUrlSchema,
   client: z.object({
     name: z.string().trim().min(1).max(200),
-    // Optional because the authorization-details payload is the authorization
-    // server's shape, not ours. When absent the consent screen cannot look up
-    // this client's grant and falls back to reporting no payment access, which
-    // is the same thing an absent grant means.
+    // `id` is what @supabase/auth-js 2.110.0 actually returns for the OAuth
+    // client. An earlier version of this read `client_id`, which is absent from
+    // the real response, so the consent screen silently fell back to "not
+    // granted" for every client including payment-capable ones. `client_id` is
+    // still accepted in case a future server emits it.
+    id: z.string().trim().min(1).max(256).optional(),
     client_id: z.string().trim().min(1).max(256).optional(),
   }),
   user: z.object({
@@ -104,7 +106,9 @@ export async function fetchOAuthAuthorizationDetails(
     return {
       kind: "consent",
       clientName: details.client.name,
-      ...(details.client.client_id ? { clientId: details.client.client_id } : {}),
+      ...((details.client.id ?? details.client.client_id)
+        ? { clientId: details.client.id ?? details.client.client_id }
+        : {}),
       redirectUri: details.redirect_uri,
       scopes: details.scope.split(/\s+/),
     };

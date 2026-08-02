@@ -45,6 +45,26 @@ export interface PurchaseDecision {
   readonly observed: ObservedService;
 }
 
+/**
+ * The observed service is external input: it comes from a directory, a seller,
+ * or a discovery response, none of which this code controls. Validating it is
+ * not defensive style — without it a missing or non-numeric reputation field
+ * makes every comparison below false, and "no rule refused" is read as PAY.
+ * The rules must never see a shape they can silently pass.
+ */
+const observedServiceSchema = z.object({
+  id: z.string().trim().min(1),
+  priceUsdc: z.string().trim().min(1),
+  token: z.string().trim().min(1),
+  chainId: z.number().int().positive(),
+  endpointDomainVerified: z.boolean(),
+  feedbackCount: z.number().int().min(0),
+  // Explicitly nullable and explicitly required: `null` means unrated, which is
+  // a decision the rules make. Absent means the observation is incomplete,
+  // which is not something to decide on at all.
+  averageScore: z.number().min(0).max(5).nullable(),
+});
+
 const objectiveSchema = z.object({
   description: z.string().trim().min(1),
   maxPriceUsdc: z.string().trim().min(1),
@@ -99,9 +119,12 @@ const RULES: readonly Rule[] = Object.freeze([
 
 export function decidePurchase(
   rawObjective: PurchaseObjective,
-  service: ObservedService,
+  rawService: ObservedService,
 ): PurchaseDecision {
   const objective = objectiveSchema.parse(rawObjective) as PurchaseObjective;
+  // Snapshotted here so every rule and the recorded trace see the same
+  // validated values, not whatever the caller may mutate afterwards.
+  const service = observedServiceSchema.parse(rawService) as ObservedService;
 
   for (const rule of RULES) {
     const refusal = rule(objective, service);

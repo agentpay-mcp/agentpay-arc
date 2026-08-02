@@ -74,6 +74,11 @@ test("fetchOAuthAuthorizationDetails accepts a wallet-only Supabase user without
 
   assert.deepEqual(await fetchOAuthAuthorizationDetails(client, VALID_AUTH_ID), {
     kind: "consent",
+    // Read from `client.id`, which is the field @supabase/auth-js 2.110.0
+    // actually returns. This fixture always carried it; the parser was reading
+    // `client_id` and therefore dropping it, which left the consent screen
+    // unable to resolve a grant for any real client.
+    clientId: "22222222-2222-4222-8222-222222222222",
     clientName: "Agentic Tool",
     redirectUri: "https://client.example.com/oauth/callback",
     scopes: ["openid", "profile", "email"],

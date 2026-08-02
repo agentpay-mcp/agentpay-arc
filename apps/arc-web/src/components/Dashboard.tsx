@@ -39,6 +39,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   errorMessage,
   withdrawalResult,
 }) => {
+  const [newClientId, setNewClientId] = useState("");
   const [withdrawDest, setWithdrawDest] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawConfirmed, setWithdrawConfirmed] = useState(false);
@@ -356,6 +357,38 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </li>
               ))}
             </ul>
+          )}
+
+          {/*
+            A client that has only ever read has no grant row, so it cannot
+            appear in the list above — and without this it could never receive
+            its first payment grant from the very screen the consent page points
+            at. Entering the ID it was issued is the bootstrap.
+          */}
+          {onSetClientPayment && (
+            <form
+              id="grant-client-form"
+              style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                const id = newClientId.trim();
+                if (!id) return;
+                void onSetClientPayment(id, true).then(() => setNewClientId(""));
+              }}
+            >
+              <input
+                type="text"
+                className="form-input"
+                style={{ flex: 1, minWidth: "16rem" }}
+                id="grant-client-id-input"
+                placeholder="OAuth client ID from the agent you authorized"
+                value={newClientId}
+                onChange={(event) => setNewClientId(event.target.value)}
+              />
+              <button type="submit" className="btn btn-primary" id="grant-client-submit">
+                Allow payments
+              </button>
+            </form>
           )}
         </div>
       )}

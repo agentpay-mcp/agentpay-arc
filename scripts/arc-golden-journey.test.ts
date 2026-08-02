@@ -52,7 +52,7 @@ function deps(
     },
     async pay(target) {
       paid.push(target.id);
-      return { transactionId: `tx-${target.id}`, status: "COMPLETE" as const };
+      return { transactionId: `tx-${target.id}`, status: "COMPLETED" as const };
     },
     async fetchResult(target) {
       fetched.push(target.id);
@@ -109,7 +109,7 @@ describe("runGoldenJourney", () => {
     // demo ends up showing a result the agent never actually bought.
     const context = deps([service("acceptable")], {
       async pay() {
-        return { transactionId: "tx-1", status: "AMBIGUOUS" as const };
+        return { transactionId: "tx-1", status: "RECONCILIATION_REQUIRED" as const };
       },
     });
 
@@ -127,7 +127,7 @@ describe("runGoldenJourney", () => {
     const context = deps([service("acceptable")], {
       async pay(_target, idempotencyKey) {
         seen = idempotencyKey;
-        return { transactionId: "tx-1", status: "COMPLETE" as const };
+        return { transactionId: "tx-1", status: "COMPLETED" as const };
       },
     });
 

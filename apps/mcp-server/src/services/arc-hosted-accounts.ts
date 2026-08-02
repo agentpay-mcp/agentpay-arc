@@ -601,7 +601,11 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
         },
         { onConflict: "auth_user_id,oauth_client_id" },
       )
-      .select("oauth_client_id, capabilities, revoked_at, updated_at")
+      // Must return every column the row schema requires. Selecting fewer made
+      // the parse throw *after* the upsert had already changed authority: the
+      // database moved and the owner saw a failure, which is the worst possible
+      // outcome for a payment control.
+      .select("oauth_client_id, capabilities, revoked_at, updated_at, consent_version, auth_epoch")
       .maybeSingle();
 
     if (error) {
