@@ -15,6 +15,7 @@ import {
   setHostedClientPayment,
   type SafeAccountInfo,
 } from "./api.ts";
+import { loadClientListing } from "./client-listing.ts";
 import { pollWithdrawalUntilTerminal } from "./withdrawal-polling.ts";
 import { Header } from "./components/Header.tsx";
 import { AuthForm } from "./components/AuthForm.tsx";
@@ -113,42 +114,33 @@ export const App: React.FC<AppProps> = ({
     const token = session?.access_token;
     if (!token) return;
 
-    // Identity and credential are taken from the *same* session object, then
-    // checked against the live ref before the request goes out. Reading the
-    // token from one place and the identity from another leaves a window where
-    // a switch between the two reads pairs account A's token with account B's
-    // identity -- and the response would then be accepted as B's.
-    const requestIdentity = getSessionIdentity(session);
-    const requestEpoch = sessionEpochRef.current;
-    if (
-      requestIdentity !== getSessionIdentity(sessionRef.current)
-      || token !== sessionRef.current?.access_token
-    ) {
+    // Identity and credential come from the same session object; the staleness
+    // decision itself lives in loadClientListing so the account-switch race is
+    // testable rather than only describable.
+    const outcome = await loadClientListing(
+      {
+        identity: getSessionIdentity(session),
+        accessToken: token,
+        epoch: sessionEpochRef.current,
+      },
+      () => ({
+        identity: getSessionIdentity(sessionRef.current),
+        ...(sessionRef.current?.access_token
+          ? { accessToken: sessionRef.current.access_token }
+          : {}),
+        epoch: sessionEpochRef.current,
+      }),
+      (accessToken) => fetchHostedClients(activeConfig.apiOrigin, accessToken, customFetch),
+    );
+
+    if (outcome.apply) {
+      setClients(outcome.clients);
       return;
     }
-    try {
-      const result = await fetchHostedClients(activeConfig.apiOrigin, token, customFetch);
-      // Re-checked on arrival, including the credential: the session may have
-      // been replaced while the request was in flight.
-      if (
-        requestEpoch !== sessionEpochRef.current
-        || requestIdentity !== getSessionIdentity(sessionRef.current)
-        || token !== sessionRef.current?.access_token
-      ) {
-        return;
-      }
-      setClients(result.clients);
-    } catch {
-      // A failed listing must not leave another account's delegates on screen.
-      // "Could not load" and "nothing is delegated" are different claims, but
-      // showing the wrong account's clients is worse than either.
-      if (
-        requestEpoch === sessionEpochRef.current
-        && requestIdentity === getSessionIdentity(sessionRef.current)
-        && token === sessionRef.current?.access_token
-      ) {
-        setClients([]);
-      }
+    // Only a failure for the still-current session clears the panel. A stale
+    // outcome must leave the current account's list untouched.
+    if (outcome.reason === "failed") {
+      setClients([]);
     }
   }, [activeConfig.apiOrigin, customFetch, supabase]);
 

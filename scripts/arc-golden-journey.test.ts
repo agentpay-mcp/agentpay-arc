@@ -187,6 +187,34 @@ describe("runGoldenJourney", () => {
     assert.equal(trace.outcome, "PAID");
   });
 
+  it("reports a failed payment as unresolved instead of throwing on a missing id", async () => {
+    // A payment that failed before submission legitimately has no transaction
+    // id, and the payment record treats the field as optional. Demanding one
+    // for every status turned an ordinary failure into a thrown error rather
+    // than the outcome this journey declares.
+    let fetched = false;
+    const trace = await runGoldenJourney(
+      objective,
+      {
+        async observe() {
+          return [service("acceptable")];
+        },
+        async pay() {
+          return { transactionId: "", status: "FAILED" as const };
+        },
+        async fetchResult() {
+          fetched = true;
+          return "result";
+        },
+      },
+      IDEMPOTENCY_KEY,
+    );
+
+    assert.equal(trace.outcome, "PAYMENT_UNRESOLVED");
+    assert.equal(trace.transactionId, undefined);
+    assert.equal(fetched, false);
+  });
+
   it("refuses a completed payment that carries no receipt identity", async () => {
     // "COMPLETED" with an empty transaction id is not evidence of anything:
     // there is nothing to bind the protected result to, and nothing to

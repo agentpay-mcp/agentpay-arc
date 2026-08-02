@@ -30,17 +30,27 @@ export type PaymentStatus = ArcPaymentStatus;
 const TERMINAL_SUCCESS: ArcPaymentStatus = "COMPLETED";
 
 /**
- * Validated rather than trusted, for the same reason the observed service is:
- * an unrecognised status would compare unequal to success and be filed as
- * unresolved, hiding a contract change behind a plausible outcome. And a
- * "completed" payment carrying no transaction identity is not evidence of
- * anything -- there would be nothing to bind the protected result to, or to
- * reconcile against later.
+ * The status is always validated: an unrecognised one would compare unequal to
+ * success and be quietly filed as unresolved, hiding a contract change behind a
+ * plausible outcome.
+ *
+ * The transaction id is optional here on purpose. A payment that failed before
+ * submission legitimately has none, and the payment record itself treats it as
+ * optional; demanding one for every status would turn an ordinary failure into
+ * a thrown error instead of the declared PAYMENT_UNRESOLVED outcome.
  */
 const paymentResultSchema = z.object({
-  transactionId: z.string().trim().min(1).max(256),
+  transactionId: z.string().trim().max(256).optional(),
   status: arcPaymentStatusSchema,
 });
+
+/**
+ * Required only where it is evidence. A COMPLETED payment with no transaction
+ * id proves nothing: there is nothing to bind the protected result to and
+ * nothing to reconcile against later, so that specific combination fails
+ * closed rather than being reported as a successful purchase.
+ */
+const completedTransactionIdSchema = z.string().trim().min(1).max(256);
 
 export interface GoldenJourneyDependencies {
   /** Price and trust signals as observed, not as advertised by the seller. */
@@ -110,6 +120,8 @@ export async function runGoldenJourney(
     );
 
     if (payment.status !== TERMINAL_SUCCESS) {
+      // Reported, not thrown: a failed or still-settling payment is an outcome
+      // the journey declares, and the trace should record it as such.
       // An ambiguous payment is not a paid payment. Fetching the protected
       // result on optimism is how a demo ends up showing something the agent
       // never actually bought.
@@ -117,16 +129,18 @@ export async function runGoldenJourney(
         objective: objective.description,
         steps,
         outcome: "PAYMENT_UNRESOLVED",
-        transactionId: payment.transactionId,
+        ...(payment.transactionId ? { transactionId: payment.transactionId } : {}),
       };
     }
 
-    const result = await dependencies.fetchResult(approved, payment.transactionId);
+    const transactionId = completedTransactionIdSchema.parse(payment.transactionId);
+
+    const result = await dependencies.fetchResult(approved, transactionId);
     return {
       objective: objective.description,
       steps,
       outcome: "PAID",
-      transactionId: payment.transactionId,
+      transactionId,
       result,
     };
   }
