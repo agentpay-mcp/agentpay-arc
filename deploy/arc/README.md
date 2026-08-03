@@ -64,6 +64,12 @@ For a prepared server release:
 The validation command emits only the scope and success or error name. It never
 prints environment values.
 
+`ARC_RELEASE_SHA` is required in the MCP environment and must equal the exact
+40-character commit directory activated in `/opt/agentpay-arc/current`. The
+MCP `/healthz` and `/readyz` responses expose that same value so a hosted
+journey can prove which reviewed release served the request before authorizing
+any payment.
+
 ## New Supabase project checklist
 
 Complete these dashboard steps only during an explicitly authorized remote

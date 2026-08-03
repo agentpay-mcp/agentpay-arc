@@ -82,6 +82,7 @@ function hostedEnv(): Record<string, string> {
     ARC_MCP_ALLOWED_ORIGINS: "https://arc.agentpay.site",
     ARC_MCP_HOST: "127.0.0.1",
     ARC_MCP_PORT: "0",
+    ARC_RELEASE_SHA: "a".repeat(40),
   };
 }
 
@@ -577,6 +578,38 @@ describe("hosted Arc HTTP configuration and OAuth metadata", () => {
   it("uses the reviewed shared-host MCP port when no override is provided", () => {
     const { ARC_MCP_PORT: _ignoredPort, ...envWithoutPort } = hostedEnv();
     assert.equal(parseHostedArcHttpConfig(envWithoutPort).port, 3102);
+  });
+
+  it("normalizes a 40-character release SHA for health provenance", () => {
+    const releaseSha = "A".repeat(40);
+    assert.equal(
+      parseHostedArcHttpConfig({
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: releaseSha,
+      }).releaseSha,
+      releaseSha.toLowerCase(),
+    );
+    assert.throws(
+      () => parseHostedArcHttpConfig({
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: "not-a-commit",
+      }),
+      /ARC_RELEASE_SHA/,
+    );
+    assert.throws(
+      () => parseHostedArcHttpConfig({
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: undefined,
+      }),
+      /ARC_RELEASE_SHA is required/,
+    );
+    assert.throws(
+      () => parseHostedArcHttpConfig(
+        { ...hostedEnv(), ARC_RELEASE_SHA: "b".repeat(40) },
+        { releaseDirectory: `/opt/agentpay-arc/releases/${"a".repeat(40)}` },
+      ),
+      /active immutable release directory/,
+    );
   });
 
   it("fails closed on an invalid resource, issuer, origin, host, or port", () => {
@@ -2368,6 +2401,7 @@ describe("hosted Arc HTTP protocol hardening", () => {
       assert.deepEqual(await health.json(), {
         ok: true,
         version: "0.1.11",
+        releaseSha: "a".repeat(40),
       });
       assert.equal(probes, 0);
       assert.equal(
@@ -2389,8 +2423,33 @@ describe("hosted Arc HTTP protocol hardening", () => {
       assert.deepEqual(await readiness.json(), {
         ready: false,
         version: "0.1.11",
+        releaseSha: "a".repeat(40),
       });
       assert.equal(probes, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("publishes the configured release SHA on health and readiness", async () => {
+    const releaseSha = "b".repeat(40);
+    const { server } = await startTestServer(createHttpTestContext(), {
+      env: {
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: releaseSha,
+      },
+    });
+    try {
+      assert.deepEqual(await (await fetch(server.healthUrl)).json(), {
+        ok: true,
+        version: "0.1.11",
+        releaseSha,
+      });
+      assert.deepEqual(await (await fetch(server.readinessUrl)).json(), {
+        ready: true,
+        version: "0.1.11",
+        releaseSha,
+      });
     } finally {
       await server.close();
     }

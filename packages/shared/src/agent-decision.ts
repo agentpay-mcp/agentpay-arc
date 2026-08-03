@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 import { ARC_TESTNET } from "./arc.ts";
-import { parseUsdcAtomic } from "./batch-payout.ts";
+import {
+  arcUsdcBalanceSchema,
+  parseUsdcAtomic,
+  parseUsdcBalanceAtomic,
+} from "./batch-payout.ts";
 
 /**
  * The step that makes this an agent rather than a tool call.
@@ -29,6 +33,8 @@ export interface PurchaseObjective {
 export interface ObservedService {
   readonly id: string;
   readonly priceUsdc: string;
+  /** Optional wallet signal captured at observation time, in exact USDC decimals. */
+  readonly availableBalanceUsdc?: string;
   readonly token: string;
   readonly chainId: number;
   readonly endpointDomainVerified: boolean;
@@ -55,6 +61,7 @@ export interface PurchaseDecision {
 const observedServiceSchema = z.object({
   id: z.string().trim().min(1),
   priceUsdc: z.string().trim().min(1),
+  availableBalanceUsdc: arcUsdcBalanceSchema.optional(),
   token: z.string().trim().min(1),
   chainId: z.number().int().positive(),
   endpointDomainVerified: z.boolean(),
@@ -89,6 +96,14 @@ const RULES: readonly Rule[] = Object.freeze([
     const ceiling = parseUsdcAtomic(objective.maxPriceUsdc);
     return price > ceiling
       ? `price ${service.priceUsdc} USDC exceeds the ${objective.maxPriceUsdc} USDC budget`
+      : null;
+  },
+  (_objective, service) => {
+    if (service.availableBalanceUsdc === undefined) return null;
+    const price = parseUsdcAtomic(service.priceUsdc);
+    const available = parseUsdcBalanceAtomic(service.availableBalanceUsdc);
+    return available < price
+      ? `available balance ${service.availableBalanceUsdc} USDC is below the ${service.priceUsdc} USDC service price`
       : null;
   },
   (_objective, service) =>

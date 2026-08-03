@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createClient } from "@supabase/supabase-js";
@@ -48,7 +48,11 @@ const unresolvedMutationRowsSchema = z
 export async function startHostedArcFromEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<HostedArcHttpServer> {
-  const httpConfig = parseHostedArcHttpConfig(env);
+  const httpConfig = parseHostedArcHttpConfig(env, {
+    // npm runs workspace scripts from apps/mcp-server; resolve the immutable
+    // release root from this module instead of trusting that mutable cwd.
+    releaseDirectory: resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
+  });
   const userConfig = parseArcSupabaseUserConfig({ ...env });
   const secrets = hostedArcSecretConfigSchema.parse(env);
   const circleConfig = validateCircleDeveloperWalletsConfig({

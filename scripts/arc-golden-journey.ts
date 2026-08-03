@@ -58,7 +58,7 @@ export interface GoldenJourneyDependencies {
   pay(
     service: ObservedService,
     idempotencyKey: string,
-  ): Promise<{ readonly transactionId: string; readonly status: PaymentStatus }>;
+  ): Promise<{ readonly transactionId?: string; readonly status: PaymentStatus }>;
   fetchResult(service: ObservedService, transactionId: string): Promise<string>;
 }
 

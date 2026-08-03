@@ -17,6 +17,7 @@
     "contracts:deploy:celo:simulate": "npm run contracts:build && tsx scripts/deploy-celo-factory.ts",
     "contracts:deploy:celo:sepolia": "cd contracts && forge script script/DeployAgentPayAccountV2.s.sol:DeployAgentPayAccountV2 --rpc-url \"$CELO_SEPOLIA_RPC_URL\" --broadcast",
     "demo:local": "tsx scripts/demo-agentpay-arc.ts",
+    "journey:arc": "tsx scripts/arc-hosted-journey.ts",
     "erc8004": "tsx scripts/erc8004-registration.ts",
     "lint": "npm run lint --workspaces --if-present",
     "manifest:mainnet:shadow": "node scripts/generate-mainnet-shadow-manifest.mjs",

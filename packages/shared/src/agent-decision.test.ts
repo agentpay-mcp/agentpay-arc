@@ -58,6 +58,26 @@ describe("decidePurchase", () => {
     assert.equal(decidePurchase(objective, service({ priceUsdc: "0.05" })).verdict, "PAY");
   });
 
+  it("declines a service when the observed funded balance is insufficient", () => {
+    const decision = decidePurchase(
+      objective,
+      service({ availableBalanceUsdc: "0.009999" }),
+    );
+
+    assert.equal(decision.verdict, "DECLINE");
+    assert.match(decision.reason, /available balance 0\.009999/i);
+  });
+
+  it("treats a zero observed balance as a decline, not as malformed input", () => {
+    const decision = decidePurchase(
+      objective,
+      service({ availableBalanceUsdc: "0" }),
+    );
+
+    assert.equal(decision.verdict, "DECLINE");
+    assert.match(decision.reason, /available balance 0 USDC/i);
+  });
+
   it("compares price in atomic units, not as floating point", () => {
     // Chosen because Number() collapses these two to the same double: as
     // floats the price is *not* greater than the ceiling, so a float

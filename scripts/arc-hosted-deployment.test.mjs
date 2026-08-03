@@ -39,6 +39,7 @@ const validMcpEnv = Object.freeze({
   ARC_SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-value-with-32-bytes",
   ARC_CIRCLE_API_KEY: "fake-circle-api-key-with-32-bytes",
   ARC_CIRCLE_ENTITY_SECRET: "f".repeat(64),
+  ARC_RELEASE_SHA: "a".repeat(40),
   ARC_MCP_HOST: "127.0.0.1",
   ARC_MCP_PORT: ARC_MCP_PORT,
 });
@@ -239,6 +240,7 @@ describe("Arc-only hosted deployment artifacts", () => {
     assert.match(mcpEnv, /^ARC_SUPABASE_SERVICE_ROLE_KEY=$/m);
     assert.match(mcpEnv, /^ARC_CIRCLE_API_KEY=$/m);
     assert.match(mcpEnv, /^ARC_CIRCLE_ENTITY_SECRET=$/m);
+    assert.match(mcpEnv, /^ARC_RELEASE_SHA=$/m);
   });
 
   it("fails closed on missing, unsafe, or cross-product environment values", async () => {

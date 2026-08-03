@@ -32,6 +32,7 @@ import {
   parseHostedArcHttpConfig,
   type HostedArcBearerVerifier,
   type HostedArcHttpConfig,
+  type ParseHostedArcHttpConfigOptions,
   type HostedArcVerifiedBearer,
 } from "./hosted-arc-http-config.js";
 import type {
@@ -53,6 +54,7 @@ export {
   parseHostedArcHttpConfig,
   type HostedArcBearerVerifier,
   type HostedArcHttpConfig,
+  type ParseHostedArcHttpConfigOptions,
   type HostedArcVerifiedBearer,
 } from "./hosted-arc-http-config.js";
 export {
@@ -93,6 +95,7 @@ export interface HostedArcHttpServer {
 }
 export interface StartHostedArcHttpServerOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly releaseDirectory?: string;
   readonly config?: HostedArcHttpConfig;
   readonly verifier: HostedArcBearerVerifier;
   readonly repository: ArcHostedAccountRepository;
@@ -121,7 +124,11 @@ export async function startHostedArcHttpServer(
 ): Promise<HostedArcHttpServer> {
   const config =
     options.config
-    ?? parseHostedArcHttpConfig(options.env ?? process.env);
+    ?? parseHostedArcHttpConfig(options.env ?? process.env, {
+      ...(options.releaseDirectory
+        ? { releaseDirectory: options.releaseDirectory }
+        : {}),
+    });
   const clock = options.clock ?? (() => new Date());
   const readinessTimeoutMs = parsePositiveInteger(
     options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
@@ -256,6 +263,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
     writeJson(response, 200, {
       ok: true,
       version: SERVICE_VERSION,
+      releaseSha: config.releaseSha,
     });
     return;
   }
@@ -268,6 +276,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
     writeJson(response, ready ? 200 : 503, {
       ready,
       version: SERVICE_VERSION,
+      releaseSha: config.releaseSha,
     });
     return;
   }

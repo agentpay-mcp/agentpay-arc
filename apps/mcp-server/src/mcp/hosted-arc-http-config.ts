@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { basename, dirname, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -44,6 +45,9 @@ const clientIdSchema = z
   .min(1)
   .max(256)
   .regex(/^[A-Za-z0-9_-]+$/);
+const releaseShaSchema = z
+  .string()
+  .regex(/^[0-9a-f]{40}$/i, "ARC_RELEASE_SHA must be a 40-character commit SHA");
 
 export interface HostedArcHttpConfig {
   readonly resourceUrl: string;
@@ -54,6 +58,13 @@ export interface HostedArcHttpConfig {
   readonly hostname: string;
   readonly port: number;
   readonly protectedResourceMetadataUrl: string;
+  /** Immutable commit exposed by health/readiness for provenance checks. */
+  readonly releaseSha: string;
+}
+
+export interface ParseHostedArcHttpConfigOptions {
+  /** Immutable release directory used by the production entrypoint. */
+  readonly releaseDirectory?: string;
 }
 
 export interface HostedArcVerifiedBearer {
@@ -74,6 +85,7 @@ export interface HostedArcBearerVerifier {
 
 export function parseHostedArcHttpConfig(
   env: Readonly<Record<string, string | undefined>>,
+  options: ParseHostedArcHttpConfigOptions = {},
 ): HostedArcHttpConfig {
   const resourceUrl = parseExactHttpsUrl(
     env.ARC_MCP_RESOURCE_URL,
@@ -109,6 +121,21 @@ export function parseHostedArcHttpConfig(
     "/.well-known/oauth-protected-resource/mcp",
     resourceUrl.origin,
   ).toString();
+  const rawReleaseSha = env.ARC_RELEASE_SHA?.trim();
+  if (!rawReleaseSha) {
+    throw new Error("ARC_RELEASE_SHA is required for hosted Arc startup");
+  }
+  const releaseSha = releaseShaSchema.parse(rawReleaseSha).toLowerCase();
+  if (options.releaseDirectory !== undefined) {
+    const releaseDirectory = resolve(options.releaseDirectory);
+    const releaseDirectoryName = basename(releaseDirectory).toLowerCase();
+    if (
+      basename(dirname(releaseDirectory)) !== "releases"
+      || releaseDirectoryName !== releaseSha
+    ) {
+      throw new Error("ARC_RELEASE_SHA must match the active immutable release directory");
+    }
+  }
 
   return Object.freeze({
     resourceUrl: resourceUrl.toString(),
@@ -119,6 +146,7 @@ export function parseHostedArcHttpConfig(
     hostname,
     port,
     protectedResourceMetadataUrl,
+    releaseSha,
   });
 }
 
