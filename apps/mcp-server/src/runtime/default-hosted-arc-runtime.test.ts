@@ -19,6 +19,7 @@ const authority: ArcHostedAuthority = {
   walletAddress: "0x1111111111111111111111111111111111111111",
   accountStatus: "ACTIVE",
   authEpoch: 1,
+  capabilities: ["wallet:read", "payment:send"],
 };
 
 function fakeRepository(): ArcHostedAccountRepository {
@@ -38,6 +39,12 @@ function fakeRepository(): ArcHostedAccountRepository {
     async completeProvisioning() {},
     async failProvisioning() {},
     async setAccountStatus() {},
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
+    },
     async getPrivateWalletBinding() {
       return null;
     },

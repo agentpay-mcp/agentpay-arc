@@ -6,8 +6,17 @@ import {
   ArcHostedAccountStatus,
   ArcHostedAuthority,
   ArcHostedAuthoritySchema,
+  ArcHostedCapabilitySchema,
   ArcWalletProvisioningState,
+  type ArcHostedCapability,
 } from "@agentpay-ai/shared-arc";
+
+export interface ArcHostedClientGrant {
+  readonly oauthClientId: string;
+  readonly capabilities: readonly ArcHostedCapability[];
+  readonly revoked: boolean;
+  readonly updatedAt?: string;
+}
 
 export interface ArcHostedAccountRepository {
   claimHostedAccount(input: {
@@ -49,6 +58,23 @@ export interface ArcHostedAccountRepository {
     status: ArcHostedAccountStatus;
   }): Promise<void>;
 
+  /** Delegated clients and what each may currently do. */
+  listClientGrants(authUserId: string): Promise<readonly ArcHostedClientGrant[]>;
+
+  /**
+   * Grants or revokes payment capability for one delegate.
+   *
+   * Deliberately has no "client asks for more" shape: the caller must already
+   * be the account owner, which the HTTP layer enforces by binding these routes
+   * to a bearer carrying no client id. A delegate must never be able to widen
+   * or restore its own capability.
+   */
+  setClientPaymentCapability(input: {
+    authUserId: string;
+    oauthClientId: string;
+    allowPayment: boolean;
+  }): Promise<ArcHostedClientGrant>;
+
   getPrivateWalletBinding(authUserId: string): Promise<{
     authUserId: string;
     tenantId: string;
@@ -65,6 +91,30 @@ const UuidSchema = z.string().uuid("Invalid authUserId format: must be a valid U
 const WalletAddressSchema = z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, "Invalid walletAddress format: must be 0x-prefixed 40-character hex string");
 const BoundedIdentifierSchema = z.string().trim().min(1).max(256).regex(/^[a-zA-Z0-9_-]+$/, "Invalid Circle ID format");
 const BoundedErrorCodeSchema = z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/, "Invalid errorCode format");
+
+/**
+ * Validated rather than trusted: an unrecognised capability string reaching the
+ * enforcement layer would be compared against a known set and silently treated
+ * as "not granted", which reads as a working check while hiding a broken one.
+ * Failing the parse makes that state loud.
+ */
+const ArcHostedClientGrantRowSchema = z.object({
+  capabilities: z.array(ArcHostedCapabilitySchema),
+  auth_epoch: z.number().int().min(0),
+  revoked_at: z.string().nullable().optional(),
+  consent_version: z.string().trim().min(1),
+});
+
+const ArcHostedClientGrantListSchema = z.array(
+  z.object({
+    oauth_client_id: z.string().trim().min(1),
+    capabilities: z.array(ArcHostedCapabilitySchema),
+    revoked_at: z.string().nullable().optional(),
+    updated_at: z.string().nullable().optional(),
+    consent_version: z.string().trim().min(1),
+    auth_epoch: z.number().int().min(0),
+  }),
+);
 
 const TenantJoinSchema = z.object({
   id: UuidSchema,
@@ -269,7 +319,82 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
       accountStatus: validatedAccount.account_status,
       authEpoch,
       oauthClientId: validOAuthClientId,
+      capabilities: await this.resolveClientCapabilities(
+        validUserId,
+        validOAuthClientId,
+        authEpoch,
+        validatedAccount.consent_version,
+      ),
     });
+  }
+
+  /**
+   * What this client may do, resolved on every authority refresh so a
+   * revocation takes effect on the next call rather than the next session.
+   *
+   * Two different authorities reach this code and must not be conflated.
+   *
+   * A bearer with no OAuth client id is the account owner acting directly in
+   * their own browser session: the hosted API authenticates those with
+   * `requireOAuthClientId=false`, and the MCP surface refuses them outright, so
+   * such a token cannot belong to a third-party client. Withholding
+   * `payment:send` there does not restrain anyone -- it locks owners out of
+   * their own funds, which is the opposite of the autonomy they consented to.
+   *
+   * A bearer that does carry a client id is a delegate, and delegation is what
+   * this table governs. `payment:send` is returned only for an explicit, live,
+   * current-epoch grant made under the consent wording in force; every other
+   * path degrades to `wallet:read`, so a client that lost its payment grant can
+   * still show the user their balance rather than appearing broken.
+   */
+  private async resolveClientCapabilities(
+    authUserId: string,
+    oauthClientId: string | undefined,
+    authEpoch: number,
+    accountConsentVersion: string,
+  ): Promise<ArcHostedCapability[]> {
+    if (!oauthClientId) {
+      return ["wallet:read", "payment:send"];
+    }
+
+    const { data, error } = await this.supabaseClient
+      .from("arc_hosted_client_grants")
+      .select("capabilities, auth_epoch, revoked_at, consent_version")
+      .eq("auth_user_id", authUserId)
+      .eq("oauth_client_id", oauthClientId)
+      .is("revoked_at", null)
+      .maybeSingle();
+
+    if (error) {
+      // Never fall through to a permissive default: a database that cannot be
+      // read is not a database that granted anything.
+      throw formatRepositoryError("Failed to resolve hosted client grant", error);
+    }
+
+    // An authenticated client with no grant may read the account it was
+    // authorised for, and nothing more. Reading is not the threat this guards
+    // against; spending is, and that needs an explicit row.
+    if (!data) {
+      return ["wallet:read"];
+    }
+
+    const grant = ArcHostedClientGrantRowSchema.parse(data);
+
+    // A grant given under older consent wording is not evidence of agreement to
+    // the wording in force now. Drop to read rather than to nothing, so stale
+    // consent degrades the client instead of locking the user out of their own
+    // balance.
+    if (grant.consent_version !== accountConsentVersion) {
+      return ["wallet:read"];
+    }
+
+    // Credential rotation bumps the tenant epoch, retiring grants issued
+    // against the old one without having to find and delete each row.
+    if (grant.auth_epoch !== authEpoch) {
+      return ["wallet:read"];
+    }
+
+    return grant.capabilities;
   }
 
   async claimProvisioningJob(authUserId: string): Promise<{
@@ -369,6 +494,134 @@ export class ArcHostedAccountRepositoryImpl implements ArcHostedAccountRepositor
     if (error) {
       throw formatRepositoryError("Failed to set account status", error);
     }
+  }
+
+  async listClientGrants(authUserId: string): Promise<readonly ArcHostedClientGrant[]> {
+    const validUserId = UuidSchema.parse(authUserId);
+
+    // The account supplies the consent version and epoch a grant must match.
+    // Without them this endpoint would report a stale grant as live, telling
+    // the owner a client can spend when enforcement would refuse it.
+    const { data: accountData, error: accountError } = await this.supabaseClient
+      .from("arc_hosted_accounts")
+      .select("*, tenants!inner(id, status, auth_epoch)")
+      .eq("auth_user_id", validUserId)
+      .maybeSingle();
+
+    if (accountError) {
+      throw formatRepositoryError("Failed to resolve hosted account", accountError);
+    }
+    if (!accountData) {
+      return [];
+    }
+
+    const account = ClaimHostedAccountRpcRowSchema.parse(accountData);
+    const tenant = TenantJoinSchema.parse((accountData as any).tenants);
+
+    const { data, error } = await this.supabaseClient
+      .from("arc_hosted_client_grants")
+      .select("oauth_client_id, capabilities, revoked_at, updated_at, consent_version, auth_epoch")
+      .eq("auth_user_id", validUserId);
+
+    if (error) {
+      throw formatRepositoryError("Failed to list hosted client grants", error);
+    }
+
+    return ArcHostedClientGrantListSchema.parse(data ?? []).map((row) => {
+      // Computed exactly as resolveClientCapabilities does. Management and
+      // enforcement disagreeing about the same client is the defect this
+      // guards against, so the two derive from the same conditions.
+      const live =
+        (row.revoked_at === null || row.revoked_at === undefined)
+        && row.consent_version === account.consent_version
+        && row.auth_epoch === tenant.auth_epoch;
+
+      const capabilities: ArcHostedCapability[] =
+        live && row.capabilities.includes("payment:send")
+          ? ["wallet:read", "payment:send"]
+          : ["wallet:read"];
+
+      return {
+        oauthClientId: row.oauth_client_id,
+        capabilities,
+        // Reported for the owner's benefit; authority is decided by
+        // `capabilities` above, which already accounts for it.
+        revoked: row.revoked_at !== null && row.revoked_at !== undefined,
+        ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
+      };
+    });
+  }
+
+  async setClientPaymentCapability(input: {
+    authUserId: string;
+    oauthClientId: string;
+    allowPayment: boolean;
+  }): Promise<ArcHostedClientGrant> {
+    const validUserId = UuidSchema.parse(input.authUserId);
+    const validClientId = BoundedIdentifierSchema.parse(input.oauthClientId);
+
+    // The account row supplies tenant, consent version, and epoch rather than
+    // the caller: a grant must be anchored to the consent actually on record,
+    // not to whatever a request body claims.
+    const { data: accountData, error: accountError } = await this.supabaseClient
+      .from("arc_hosted_accounts")
+      .select("*, tenants!inner(id, status, auth_epoch)")
+      .eq("auth_user_id", validUserId)
+      .maybeSingle();
+
+    if (accountError) {
+      throw formatRepositoryError("Failed to resolve hosted account", accountError);
+    }
+    if (!accountData) {
+      throw new Error("Failed to update hosted client grant: Hosted account not found");
+    }
+
+    const account = ClaimHostedAccountRpcRowSchema.parse(accountData);
+    const tenant = TenantJoinSchema.parse((accountData as any).tenants);
+    const now = new Date().toISOString();
+
+    const capabilities: ArcHostedCapability[] = input.allowPayment
+      ? ["wallet:read", "payment:send"]
+      : ["wallet:read"];
+
+    const { data, error } = await this.supabaseClient
+      .from("arc_hosted_client_grants")
+      .upsert(
+        {
+          auth_user_id: validUserId,
+          tenant_id: account.tenant_id,
+          oauth_client_id: validClientId,
+          capabilities,
+          consent_version: account.consent_version,
+          auth_epoch: tenant.auth_epoch,
+          // Revoking clears payment rather than deleting the row, so the owner
+          // keeps a record that the client was once trusted.
+          revoked_at: input.allowPayment ? null : now,
+          updated_at: now,
+        },
+        { onConflict: "auth_user_id,oauth_client_id" },
+      )
+      // Must return every column the row schema requires. Selecting fewer made
+      // the parse throw *after* the upsert had already changed authority: the
+      // database moved and the owner saw a failure, which is the worst possible
+      // outcome for a payment control.
+      .select("oauth_client_id, capabilities, revoked_at, updated_at, consent_version, auth_epoch")
+      .maybeSingle();
+
+    if (error) {
+      throw formatRepositoryError("Failed to update hosted client grant", error);
+    }
+    if (!data) {
+      throw new Error("Failed to update hosted client grant: Empty result");
+    }
+
+    const row = ArcHostedClientGrantListSchema.parse([data])[0]!;
+    return {
+      oauthClientId: row.oauth_client_id,
+      capabilities: row.capabilities,
+      revoked: row.revoked_at !== null && row.revoked_at !== undefined,
+      ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
+    };
   }
 
   async getPrivateWalletBinding(authUserId: string): Promise<{

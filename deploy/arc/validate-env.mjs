@@ -16,6 +16,7 @@ const MANIFEST_SCHEMA_KEYS = Object.freeze([
   ARTIFACT_DIGESTS_KEY,
 ]);
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+const RELEASE_SHA_HEX = /^[a-f0-9]{40}$/i;
 
 const PUBLIC_ORIGIN = "https://arc.agentpay.site";
 const API_ORIGIN = "https://mcp.arc.agentpay.site";
@@ -40,6 +41,7 @@ const MCP_KEYS = Object.freeze([
   "ARC_SUPABASE_SERVICE_ROLE_KEY",
   "ARC_CIRCLE_API_KEY",
   "ARC_CIRCLE_ENTITY_SECRET",
+  "ARC_RELEASE_SHA",
   "ARC_MCP_HOST",
   "ARC_MCP_PORT",
 ]);
@@ -200,6 +202,10 @@ function validateMcpEnvironment(env) {
     "ARC_CIRCLE_ENTITY_SECRET",
     64,
   );
+  const releaseSha = requiredValue(env, "ARC_RELEASE_SHA");
+  if (!RELEASE_SHA_HEX.test(releaseSha)) {
+    throw new Error("ARC_RELEASE_SHA must be a 40-character commit SHA");
+  }
   if (!/^[a-fA-F0-9]{64}$/.test(circleEntitySecret)) {
     throw new Error("ARC_CIRCLE_ENTITY_SECRET must be a 32-byte hex value");
   }
@@ -220,6 +226,7 @@ function validateMcpEnvironment(env) {
     ARC_SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
     ARC_CIRCLE_API_KEY: circleApiKey,
     ARC_CIRCLE_ENTITY_SECRET: circleEntitySecret,
+    ARC_RELEASE_SHA: releaseSha.toLowerCase(),
     ARC_MCP_HOST: MCP_HOST,
     ARC_MCP_PORT: MCP_PORT,
   });

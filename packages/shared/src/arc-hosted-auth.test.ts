@@ -27,6 +27,7 @@ describe("Arc Hosted Auth & Account Schemas", () => {
       accountStatus: "ACTIVE",
       authEpoch: 0,
       oauthClientId: "client_123",
+      capabilities: ["wallet:read"],
     };
 
     const parsed = ArcHostedAuthoritySchema.parse(validAuthority);

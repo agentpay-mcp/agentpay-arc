@@ -4,6 +4,8 @@ import {
   approveOAuthAuthorization,
   denyOAuthAuthorization,
 } from "../supabase.ts";
+import { fetchHostedClients } from "../api.ts";
+import { getPublicConfig } from "../config.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface OAuthConsentProps {
@@ -12,6 +14,13 @@ export interface OAuthConsentProps {
   readonly initialDetails?: { clientName: string; redirectUri: string; scopes: readonly string[] } | null;
   readonly initialErrorMsg?: string;
   readonly initialLoading?: boolean;
+  /**
+   * The capability this exact client currently holds, resolved server-side.
+   * Undefined means it has not been looked up, which is rendered as "not
+   * granted" -- the same thing an absent grant means, and the safe reading if
+   * the lookup failed.
+   */
+  readonly currentGrant?: { readonly canSendPayments: boolean } | null;
 }
 
 export const OAuthConsent: React.FC<OAuthConsentProps> = ({
@@ -20,11 +29,15 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
   initialDetails = null,
   initialErrorMsg = "",
   initialLoading = true,
+  currentGrant = null,
 }) => {
   const [details, setDetails] = useState<{ clientName: string; redirectUri: string; scopes: readonly string[] } | null>(initialDetails);
   const [errorMsg, setErrorMsg] = useState(initialErrorMsg);
   const [isLoading, setIsLoading] = useState(initialLoading);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resolvedGrant, setResolvedGrant] = useState<{ canSendPayments: boolean } | null>(
+    currentGrant ?? null,
+  );
 
   useEffect(() => {
     async function load() {
@@ -48,6 +61,28 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
           redirectUri: info.redirectUri,
           scopes: info.scopes,
         });
+
+        // Best-effort: the screen must still render if this fails, and a
+        // failure must read as "no payment access" rather than silently
+        // implying there is some.
+        if (info.clientId && currentGrant === null) {
+          try {
+            const session = await supabaseClient.auth.getSession();
+            const token = session.data.session?.access_token;
+            if (token) {
+              const { clients } = await fetchHostedClients(
+                getPublicConfig().apiOrigin,
+                token,
+              );
+              const match = clients.find(
+                (client) => client.oauthClientId === info.clientId,
+              );
+              setResolvedGrant({ canSendPayments: match?.canSendPayments === true });
+            }
+          } catch {
+            setResolvedGrant({ canSendPayments: false });
+          }
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to load OAuth authorization request.";
         setErrorMsg(msg);
@@ -135,6 +170,53 @@ export const OAuthConsent: React.FC<OAuthConsentProps> = ({
             </li>
           ))}
         </ul>
+      </div>
+
+      {/*
+        The standard scopes above describe the sign-in, not what the client can
+        do with money. Approving here grants read access only: spending needs a
+        separate capability grant, which this screen cannot issue. Saying so
+        plainly is the point -- a consent screen that lists "openid, profile,
+        email, phone" and stays silent about funds invites the user to assume
+        either extreme.
+      */}
+      <div style={{ marginBottom: "1.5rem" }} id="oauth-wallet-authority">
+        <label className="form-label">What this client can do with your wallet</label>
+        <ul style={{ listStyle: "none", fontSize: "0.9rem" }} id="oauth-capability-list">
+          <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ color: "var(--success-color)" }}>✓</span>
+            <span>
+              <strong>Read your balance and payment history.</strong> Granted by approving here.
+            </span>
+          </li>
+          {/*
+            Rendered from the resolved grant rather than from a fixed sentence.
+            Once an operator or the owner grants payment to this client, a
+            screen that still said "cannot move your funds" would be false to
+            the person deciding whether to approve it.
+          */}
+          {resolvedGrant?.canSendPayments ? (
+            <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }} id="oauth-payment-granted">
+              <span style={{ color: "var(--success-color)" }}>✓</span>
+              <span>
+                <strong>Send payments from your wallet.</strong> This client already holds payment
+                access. You can remove it from your account settings.
+              </span>
+            </li>
+          ) : (
+            <li style={{ padding: "0.4rem 0", color: "var(--text-main)", display: "flex", alignItems: "center", gap: "0.5rem" }} id="oauth-payment-not-granted">
+              <span style={{ color: "var(--text-dim)" }}>✕</span>
+              <span>
+                <strong>Send payments.</strong> Not granted. This client cannot move your funds
+                until you grant it payment access from your account settings.
+              </span>
+            </li>
+          )}
+        </ul>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-dim)", marginTop: "0.5rem" }} id="oauth-authority-note">
+          Payment access is granted and removed from your account settings, separately from this
+          approval. Removing it takes effect on the client's next request.
+        </p>
       </div>
 
       <div style={{ display: "flex", gap: "1rem" }}>

@@ -44,8 +44,37 @@ describe("ArcHostedAccountRepository", () => {
   });
 
   it("resolves active tenant authority for a live account with tenant auth_epoch", async () => {
+    // Two reads now: the account, and the capability grant for this client.
+    // The grant query must filter out revoked rows in the database rather than
+    // fetching them and deciding in application code.
+    const tables: string[] = [];
     const fakeClient = {
       from(table: string) {
+        tables.push(table);
+        if (table === "arc_hosted_client_grants") {
+          const chain = {
+            select: () => chain,
+            eq: () => chain,
+            is(col: string, val: unknown) {
+              assert.equal(col, "revoked_at");
+              assert.equal(val, null, "a revoked grant must be excluded by the query");
+              return chain;
+            },
+            async maybeSingle() {
+              return {
+                data: {
+                  capabilities: ["wallet:read"],
+                  auth_epoch: 0,
+                  revoked_at: null,
+                  consent_version: "arc-hosted-autonomy-v1",
+                },
+                error: null,
+              };
+            },
+          };
+          return chain;
+        }
+
         assert.equal(table, "arc_hosted_accounts");
         return {
           select(projection: string) {
@@ -79,6 +108,115 @@ describe("ArcHostedAccountRepository", () => {
     assert.equal(authority.accountStatus, "ACTIVE");
     assert.equal(authority.authEpoch, 0);
     assert.equal(authority.oauthClientId, "mcp-client-123");
+    assert.deepEqual(
+      authority.capabilities,
+      ["wallet:read"],
+      "capabilities must come from the grant row, not be assumed from a valid session",
+    );
+    assert.deepEqual(tables, ["arc_hosted_accounts", "arc_hosted_client_grants"]);
+  });
+
+  it("returns a usable grant from the real upsert path instead of throwing after the write", async () => {
+    // The dangerous shape: the row is written, then the response fails
+    // validation. Authority moves in the database while the owner sees an
+    // error, which is the worst outcome for a payment control. The HTTP test
+    // cannot catch it because it substitutes a mock repository.
+    const accountRow = {
+      ...fakeAccountRow,
+      tenants: { id: "b0000000-0000-4000-8000-000000000002", status: "ACTIVE", auth_epoch: 0 },
+    };
+    let selectedColumns = "";
+    const fakeClient = {
+      from(table: string) {
+        if (table === "arc_hosted_client_grants") {
+          const chain: Record<string, unknown> = {};
+          chain.upsert = () => chain;
+          chain.select = (columns: string) => {
+            selectedColumns = columns;
+            return chain;
+          };
+          chain.maybeSingle = async () => ({
+            // Returns exactly the columns that were asked for, the way the
+            // database would -- so an incomplete select fails here too.
+            data: Object.fromEntries(
+              selectedColumns.split(",").map((column) => {
+                const key = column.trim();
+                const values: Record<string, unknown> = {
+                  oauth_client_id: "codex-client",
+                  capabilities: ["wallet:read", "payment:send"],
+                  revoked_at: null,
+                  updated_at: "2026-08-02T00:00:00.000Z",
+                  consent_version: "arc-hosted-autonomy-v1",
+                  auth_epoch: 0,
+                };
+                return [key, values[key]];
+              }),
+            ),
+            error: null,
+          });
+          return chain;
+        }
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: accountRow, error: null }) }),
+          }),
+        };
+      },
+    };
+
+    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
+    const grant = await repo.setClientPaymentCapability({
+      authUserId: "a0000000-0000-4000-8000-000000000001",
+      oauthClientId: "codex-client",
+      allowPayment: true,
+    });
+
+    assert.equal(grant.oauthClientId, "codex-client");
+    assert.equal(grant.capabilities.includes("payment:send"), true);
+    assert.equal(grant.revoked, false);
+  });
+
+  it("treats a bearer with no OAuth client id as the account owner, not an ungranted client", () => {
+    // The hosted API authenticates browser sessions with
+    // requireOAuthClientId=false, and the MCP surface refuses them outright, so
+    // a token with no client id can only be the owner acting directly. Reading
+    // that as "no grant" locks owners out of their own withdrawal, which is the
+    // opposite of what the capability model is for.
+    const tables: string[] = [];
+    const fakeClient = {
+      from(table: string) {
+        tables.push(table);
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return { data: fakeAccountRow, error: null };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    const repo = new ArcHostedAccountRepositoryImpl(fakeClient as any);
+    return repo
+      .resolveHostedAuthority({ authUserId: "a0000000-0000-4000-8000-000000000001" })
+      .then((authority) => {
+        assert.ok(authority !== null);
+        assert.ok(
+          authority.capabilities.includes("payment:send"),
+          "the owner's own session must keep the authority to move their own funds",
+        );
+        assert.deepEqual(
+          tables,
+          ["arc_hosted_accounts"],
+          "there is no client to look up a delegation grant for",
+        );
+      });
   });
 
   it("fails to resolve authority when tenant status is SUSPENDED or ARCHIVED", async () => {

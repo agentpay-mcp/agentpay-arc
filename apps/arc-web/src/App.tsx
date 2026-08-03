@@ -11,8 +11,11 @@ import {
   withdrawHostedAccount,
   fetchWithdrawalStatus,
   ArcApiError,
+  fetchHostedClients,
+  setHostedClientPayment,
   type SafeAccountInfo,
 } from "./api.ts";
+import { loadClientListing } from "./client-listing.ts";
 import { pollWithdrawalUntilTerminal } from "./withdrawal-polling.ts";
 import { Header } from "./components/Header.tsx";
 import { AuthForm } from "./components/AuthForm.tsx";
@@ -93,9 +96,69 @@ export const App: React.FC<AppProps> = ({
     transactionHash?: string;
     reconciliationRequired: boolean;
   } | null>(null);
+  const [clients, setClients] = useState<
+    readonly {
+      oauthClientId: string;
+      canRead: boolean;
+      canSendPayments: boolean;
+      revoked: boolean;
+    }[]
+  >([]);
   const withdrawalPollRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<Session | null>(initialSession);
   const sessionEpochRef = useRef(0);
+
+  const refreshClients = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    const session = data.session;
+    const token = session?.access_token;
+    if (!token) return;
+
+    // Identity and credential come from the same session object; the staleness
+    // decision itself lives in loadClientListing so the account-switch race is
+    // testable rather than only describable.
+    const outcome = await loadClientListing(
+      {
+        identity: getSessionIdentity(session),
+        accessToken: token,
+        epoch: sessionEpochRef.current,
+      },
+      () => ({
+        identity: getSessionIdentity(sessionRef.current),
+        ...(sessionRef.current?.access_token
+          ? { accessToken: sessionRef.current.access_token }
+          : {}),
+        epoch: sessionEpochRef.current,
+      }),
+      (accessToken) => fetchHostedClients(activeConfig.apiOrigin, accessToken, customFetch),
+    );
+
+    if (outcome.apply) {
+      setClients(outcome.clients);
+      return;
+    }
+    // Only a failure for the still-current session clears the panel. A stale
+    // outcome must leave the current account's list untouched.
+    if (outcome.reason === "failed") {
+      setClients([]);
+    }
+  }, [activeConfig.apiOrigin, customFetch, supabase]);
+
+  const handleSetClientPayment = useCallback(
+    async (oauthClientId: string, allowPayment: boolean) => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return;
+      await setHostedClientPayment(
+        activeConfig.apiOrigin,
+        token,
+        { oauthClientId, allowPayment },
+        customFetch,
+      );
+      await refreshClients();
+    },
+    [activeConfig.apiOrigin, customFetch, refreshClients, supabase],
+  );
 
   const replaceSession = useCallback((nextSession: Session | null) => {
     if (getSessionIdentity(sessionRef.current) !== getSessionIdentity(nextSession)) {
@@ -107,6 +170,10 @@ export const App: React.FC<AppProps> = ({
       setAccountFetchError("");
       setErrorMessage("");
       setWithdrawalResult(null);
+      // Delegate IDs belong to one account. Leaving them across an identity
+      // change shows account A's clients under account B, and a toggle on that
+      // stale row would be submitted with B's bearer.
+      setClients([]);
       setIsSubmitting(false);
     }
     sessionRef.current = nextSession;
@@ -195,7 +262,10 @@ export const App: React.FC<AppProps> = ({
 
   useEffect(() => {
     void loadAccountData();
-  }, [loadAccountData]);
+    // Delegated clients are part of the account picture, not a separate screen:
+    // an owner deciding whether to trust an agent should see both together.
+    void refreshClients();
+  }, [loadAccountData, refreshClients]);
 
   const handleSignIn = async () => {
     setIsSubmitting(true);
@@ -481,6 +551,8 @@ export const App: React.FC<AppProps> = ({
           isLoading={isSubmitting}
           errorMessage={errorMessage}
           withdrawalResult={withdrawalResult}
+          clients={clients}
+          onSetClientPayment={handleSetClientPayment}
         />
       </main>
     </>

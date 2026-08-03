@@ -32,6 +32,7 @@ import {
   parseHostedArcHttpConfig,
   type HostedArcBearerVerifier,
   type HostedArcHttpConfig,
+  type ParseHostedArcHttpConfigOptions,
   type HostedArcVerifiedBearer,
 } from "./hosted-arc-http-config.js";
 import type {
@@ -53,6 +54,7 @@ export {
   parseHostedArcHttpConfig,
   type HostedArcBearerVerifier,
   type HostedArcHttpConfig,
+  type ParseHostedArcHttpConfigOptions,
   type HostedArcVerifiedBearer,
 } from "./hosted-arc-http-config.js";
 export {
@@ -80,6 +82,8 @@ const API_PATHS = new Set([
   "/api/account/resume",
   "/api/account/withdraw",
   "/api/account/withdraw/status",
+  "/api/account/clients",
+  "/api/account/clients/payment",
 ]);
 
 export interface HostedArcHttpServer {
@@ -91,6 +95,7 @@ export interface HostedArcHttpServer {
 }
 export interface StartHostedArcHttpServerOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly releaseDirectory?: string;
   readonly config?: HostedArcHttpConfig;
   readonly verifier: HostedArcBearerVerifier;
   readonly repository: ArcHostedAccountRepository;
@@ -119,7 +124,11 @@ export async function startHostedArcHttpServer(
 ): Promise<HostedArcHttpServer> {
   const config =
     options.config
-    ?? parseHostedArcHttpConfig(options.env ?? process.env);
+    ?? parseHostedArcHttpConfig(options.env ?? process.env, {
+      ...(options.releaseDirectory
+        ? { releaseDirectory: options.releaseDirectory }
+        : {}),
+    });
   const clock = options.clock ?? (() => new Date());
   const readinessTimeoutMs = parsePositiveInteger(
     options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
@@ -254,6 +263,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
     writeJson(response, 200, {
       ok: true,
       version: SERVICE_VERSION,
+      releaseSha: config.releaseSha,
     });
     return;
   }
@@ -266,6 +276,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
     writeJson(response, ready ? 200 : 503, {
       ready,
       version: SERVICE_VERSION,
+      releaseSha: config.releaseSha,
     });
     return;
   }
@@ -319,13 +330,16 @@ async function handleApiRequest(
   const { request, response, options } = context;
   requireMethod(
     request,
-    pathname === "/api/account" ? "GET" : "POST",
+    pathname === "/api/account" || pathname === "/api/account/clients"
+      ? "GET"
+      : "POST",
   );
   const identity = await authenticate(context, false);
+  // GET routes carry no body. Reading one turns a correct bodyless request
+  // into "JSON body is required", which is how /api/account/clients returned
+  // 400 to the browser helper that was calling it properly.
   const body =
-    pathname === "/api/account"
-      ? undefined
-      : await readApiBody(request);
+    request.method === "GET" ? undefined : await readApiBody(request);
   const result = await executeHostedArcApi({
     pathname,
     authUserId: identity.authUserId,

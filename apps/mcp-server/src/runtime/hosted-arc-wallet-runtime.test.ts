@@ -27,6 +27,7 @@ const authority: ArcHostedAuthority = {
   walletAddress: WALLET_ADDRESS,
   accountStatus: "ACTIVE",
   authEpoch: 7,
+  capabilities: ["wallet:read", "payment:send"],
   oauthClientId: "codex-client",
 };
 
@@ -76,6 +77,12 @@ function createContext(): RuntimeTestContext {
     async completeProvisioning() {},
     async failProvisioning() {},
     async setAccountStatus() {},
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
+    },
     async getPrivateWalletBinding() {
       return null;
     },

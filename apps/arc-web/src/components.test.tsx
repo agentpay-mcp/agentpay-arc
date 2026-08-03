@@ -486,3 +486,55 @@ test("App component renders loading spinner, unauthenticated form, OAuth banner,
   assert.ok(dashboardHtml.includes("Arc Agent Wallet"));
   assert.ok(dashboardHtml.includes("0x1111111111111111111111111111111111111111"));
 });
+
+test("OAuthConsent renders the capability this exact client actually holds", () => {
+  // A fixed sentence would be false the moment the client is granted payment
+  // access, and the person reading it is deciding whether to trust that client.
+  const mockClient = {} as unknown as Parameters<typeof OAuthConsent>[0]["supabaseClient"];
+  const details = {
+    clientName: "Some MCP Client",
+    redirectUri: "http://localhost:6274/oauth/callback",
+    scopes: ["openid", "email"],
+  };
+
+  const ungranted = renderToString(
+    <OAuthConsent
+      supabaseClient={mockClient}
+      authorizationId="auth-123"
+      initialLoading={false}
+      initialDetails={details}
+      currentGrant={{ canSendPayments: false }}
+    />,
+  );
+  assert.ok(ungranted.includes("oauth-payment-not-granted"));
+  assert.match(ungranted, /Not granted/i);
+  assert.ok(!ungranted.includes("oauth-payment-granted\""));
+
+  const granted = renderToString(
+    <OAuthConsent
+      supabaseClient={mockClient}
+      authorizationId="auth-123"
+      initialLoading={false}
+      initialDetails={details}
+      currentGrant={{ canSendPayments: true }}
+    />,
+  );
+  assert.ok(granted.includes("oauth-payment-granted"));
+  assert.match(granted, /already holds payment access/i);
+
+  // An unresolved grant must read as "not granted" -- the same as an absent
+  // one, and the safe reading if the lookup failed.
+  const unknown = renderToString(
+    <OAuthConsent
+      supabaseClient={mockClient}
+      authorizationId="auth-123"
+      initialLoading={false}
+      initialDetails={details}
+    />,
+  );
+  assert.ok(unknown.includes("oauth-payment-not-granted"));
+
+  // Read access and the removal path are stated in every case.
+  assert.match(granted, /Read your balance/i);
+  assert.ok(granted.includes("oauth-authority-note"));
+});

@@ -30,6 +30,7 @@ import {
   type HostedArcVerifiedBearer,
   type StartHostedArcHttpServerOptions,
 } from "./hosted-arc-http.ts";
+import { ArcHostedAccountRepositoryImpl } from "../services/arc-hosted-accounts.ts";
 
 const AUTH_USER_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_AUTH_USER_ID =
@@ -56,6 +57,7 @@ const baseAuthority: ArcHostedAuthority = {
   walletAddress: WALLET_ADDRESS,
   accountStatus: "ACTIVE",
   authEpoch: 7,
+  capabilities: ["wallet:read", "payment:send"],
   oauthClientId: "codex-client",
 };
 
@@ -80,6 +82,7 @@ function hostedEnv(): Record<string, string> {
     ARC_MCP_ALLOWED_ORIGINS: "https://arc.agentpay.site",
     ARC_MCP_HOST: "127.0.0.1",
     ARC_MCP_PORT: "0",
+    ARC_RELEASE_SHA: "a".repeat(40),
   };
 }
 
@@ -191,9 +194,16 @@ function createHttpTestContext(): HttpTestContext {
                 ...authority,
                 accountStatus: "ACTIVE",
                 authEpoch: authority.authEpoch + 1,
+                capabilities: ["wallet:read", "payment:send"],
               }
             : null;
       }
+    },
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
     },
     async getPrivateWalletBinding() {
       return null;
@@ -570,6 +580,38 @@ describe("hosted Arc HTTP configuration and OAuth metadata", () => {
     assert.equal(parseHostedArcHttpConfig(envWithoutPort).port, 3102);
   });
 
+  it("normalizes a 40-character release SHA for health provenance", () => {
+    const releaseSha = "A".repeat(40);
+    assert.equal(
+      parseHostedArcHttpConfig({
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: releaseSha,
+      }).releaseSha,
+      releaseSha.toLowerCase(),
+    );
+    assert.throws(
+      () => parseHostedArcHttpConfig({
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: "not-a-commit",
+      }),
+      /ARC_RELEASE_SHA/,
+    );
+    assert.throws(
+      () => parseHostedArcHttpConfig({
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: undefined,
+      }),
+      /ARC_RELEASE_SHA is required/,
+    );
+    assert.throws(
+      () => parseHostedArcHttpConfig(
+        { ...hostedEnv(), ARC_RELEASE_SHA: "b".repeat(40) },
+        { releaseDirectory: `/opt/agentpay-arc/releases/${"a".repeat(40)}` },
+      ),
+      /active immutable release directory/,
+    );
+  });
+
   it("fails closed on an invalid resource, issuer, origin, host, or port", () => {
     assert.throws(
       () =>
@@ -647,6 +689,12 @@ describe("hosted Arc HTTP configuration and OAuth metadata", () => {
         async completeProvisioning() {},
         async failProvisioning() {},
         async setAccountStatus() {},
+    async listClientGrants() {
+      return [];
+    },
+    async setClientPaymentCapability() {
+      throw new Error("not used in this test");
+    },
         async getPrivateWalletBinding() {
           return null;
         },
@@ -1175,6 +1223,367 @@ describe("hosted Arc Streamable MCP surface", () => {
       assert.ok(ALL_ARC_MCP_TOOL_NAMES.includes("batch_payout"));
     } finally {
       await client.close();
+      await server.close();
+    }
+  });
+
+  it("serves the bodyless client list and reports enforcement-equivalent authority", async () => {
+    // Two defects in one place: the route used to reject a correct bodyless
+    // GET with 400, and it reported authority derived differently from the
+    // payment path, so the owner could be told a revoked or stale client
+    // could still spend.
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      repository: {
+        ...context.options.repository,
+        async resolveHostedAuthority(input: { oauthClientId?: string }) {
+          return input.oauthClientId
+            ? { ...baseAuthority, oauthClientId: input.oauthClientId }
+            : { ...baseAuthority, oauthClientId: undefined };
+        },
+        async listClientGrants() {
+          return [
+            // Live payment grant.
+            {
+              oauthClientId: "granted-client",
+              capabilities: ["wallet:read", "payment:send"] as never,
+              revoked: false,
+            },
+            // Revoked: enforcement still lets it read, so the report must too.
+            {
+              oauthClientId: "revoked-client",
+              capabilities: ["wallet:read"] as never,
+              revoked: true,
+            },
+          ];
+        },
+      },
+    });
+
+    try {
+      const response = await fetch(new URL("/api/account/clients", server.url), {
+        method: "GET",
+        headers: authHeaders(BROWSER_TOKEN),
+      });
+      assert.equal(response.status, 200, "a bodyless GET must not be rejected");
+
+      const body = (await response.json()) as { clients: Array<Record<string, unknown>> };
+      const granted = body.clients.find((c) => c.oauthClientId === "granted-client");
+      const revoked = body.clients.find((c) => c.oauthClientId === "revoked-client");
+
+      assert.equal(granted?.canSendPayments, true);
+      assert.equal(revoked?.canSendPayments, false);
+      assert.equal(
+        revoked?.canRead,
+        true,
+        "a revoked delegate still reads, so reporting otherwise would contradict enforcement",
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("lets the owner grant and revoke a delegate, and refuses a delegate managing itself", async () => {
+    const grants = new Map<string, { capabilities: string[]; revoked_at: string | null }>();
+    const repository = {
+      // The shared harness returns one fixed authority regardless of token,
+      // which would make the owner look like a delegate. Honour the input so
+      // the owner-versus-delegate distinction is actually exercised.
+      async resolveHostedAuthority(input: { oauthClientId?: string }) {
+        return input.oauthClientId
+          ? { ...baseAuthority, oauthClientId: input.oauthClientId }
+          : { ...baseAuthority, oauthClientId: undefined };
+      },
+      async listClientGrants() {
+        return [...grants.entries()].map(([oauthClientId, row]) => ({
+          oauthClientId,
+          capabilities: row.capabilities as never,
+          revoked: row.revoked_at !== null,
+        }));
+      },
+      async setClientPaymentCapability(input: {
+        oauthClientId: string;
+        allowPayment: boolean;
+      }) {
+        const row = input.allowPayment
+          ? { capabilities: ["wallet:read", "payment:send"], revoked_at: null }
+          : { capabilities: ["wallet:read"], revoked_at: "2026-08-01T00:00:00.000Z" };
+        grants.set(input.oauthClientId, row);
+        return {
+          oauthClientId: input.oauthClientId,
+          capabilities: row.capabilities as never,
+          revoked: row.revoked_at !== null,
+        };
+      },
+    };
+
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      repository: { ...context.options.repository, ...repository },
+    });
+
+    try {
+      // The owner grants payment to a delegate.
+      const grantedResponse = await postJson(server, "/api/account/clients/payment", BROWSER_TOKEN, {
+        oauthClientId: "codex-client",
+        allowPayment: true,
+      });
+      assert.equal(grantedResponse.status, 200);
+      const granted = (await grantedResponse.json()) as Record<string, unknown>;
+      assert.equal(granted.canSendPayments, true);
+
+      // The owner revokes it again.
+      const revokedResponse = await postJson(server, "/api/account/clients/payment", BROWSER_TOKEN, {
+        oauthClientId: "codex-client",
+        allowPayment: false,
+      });
+      assert.equal(revokedResponse.status, 200);
+      const revoked = (await revokedResponse.json()) as Record<string, unknown>;
+      assert.equal(revoked.canSendPayments, false);
+      assert.equal(revoked.revoked, true);
+
+      // The load-bearing one: a delegate must not be able to restore or widen
+      // its own capability, even holding a valid session.
+      const selfGrant = await postJson(server, "/api/account/clients/payment", MCP_TOKEN, {
+        oauthClientId: "codex-client",
+        allowPayment: true,
+      });
+      assert.equal(selfGrant.status, 403, "a delegate must not manage its own permissions");
+      assert.equal(
+        grants.get("codex-client")?.revoked_at !== null,
+        true,
+        "the delegate's revoked state must be unchanged by its own attempt",
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("lets the owner withdraw through the real repository, and refuses an ungranted delegate", async () => {
+    // Drives the integrated path the previous tests stubbed past:
+    // browser bearer with no client_id -> real ArcHostedAccountRepositoryImpl
+    // capability derivation -> /api/account/withdraw -> real mutation
+    // coordinator. Injecting an authority that already carries payment:send is
+    // the fixture pattern that hid the owner lockout in the first place.
+    const accountRow = {
+      auth_user_id: AUTH_USER_ID,
+      tenant_id: TENANT_ID,
+      account_status: "ACTIVE",
+      consent_version: "arc-hosted-autonomy-v1",
+      consent_timestamp: "2026-07-29T00:00:00.000Z",
+      wallet_address: WALLET_ADDRESS,
+      wallet_status: "LIVE",
+      created_at: "2026-07-29T00:00:00.000Z",
+      updated_at: "2026-07-29T00:00:00.000Z",
+      tenants: { id: TENANT_ID, status: "ACTIVE", auth_epoch: 7 },
+    };
+    // No grant rows exist: the delegate has never been granted payment access.
+    const supabaseFake = {
+      from(table: string) {
+        if (table === "arc_hosted_client_grants") {
+          const chain: Record<string, unknown> = {};
+          chain.select = () => chain;
+          chain.eq = () => chain;
+          chain.is = () => chain;
+          chain.maybeSingle = async () => ({ data: null, error: null });
+          return chain;
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: accountRow, error: null }),
+            }),
+          }),
+        };
+      },
+    };
+    const realRepository = new ArcHostedAccountRepositoryImpl(supabaseFake as never);
+
+    const payment = createPaymentRepositoryFake();
+    const wallet = createMutationFacade({});
+    const mutationCoordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      resolveFreshAuthority: (trustedAuthority) =>
+        realRepository.resolveHostedAuthority({
+          authUserId: trustedAuthority.authUserId,
+          ...(trustedAuthority.oauthClientId
+            ? { oauthClientId: trustedAuthority.oauthClientId }
+            : {}),
+        }),
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
+        hasConflictingUnresolvedMutation(payment, authority, idempotencyKey),
+    });
+
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, {
+      repository: realRepository,
+      mutationCoordinator,
+    });
+
+    try {
+      // The owner, with no client_id, must still be able to move their funds.
+      const ownerResponse = await postJson(server, "/api/account/withdraw", BROWSER_TOKEN, {
+        destination: RECIPIENT_ADDRESS,
+        amount: "1",
+        idempotencyKey: IDEMPOTENCY_KEY,
+        confirmed: true,
+      });
+      assert.equal(ownerResponse.status, 200, "the owner's own withdrawal must not be blocked");
+      assert.equal(wallet.transferCalls(), 1);
+
+      // The delegate, with a client_id and no grant, must be refused outright.
+      const claimsBeforeDelegate = payment.calls.claims.length;
+      const balancesBeforeDelegate = wallet.balanceCalls();
+      await assert.rejects(
+        () =>
+          mutationCoordinator.sendUsdc(
+            { ...baseAuthority, oauthClientId: "codex-client", capabilities: ["wallet:read"] },
+            {
+              destination: RECIPIENT_ADDRESS,
+              amount: "1",
+              idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+              purpose: "delegate attempt",
+            },
+          ),
+        /permitted|capability/i,
+      );
+      assert.equal(wallet.transferCalls(), 1, "no delegate transfer");
+      assert.equal(payment.calls.claims.length, claimsBeforeDelegate, "no delegate receipt");
+      assert.equal(wallet.balanceCalls(), balancesBeforeDelegate, "no delegate balance read");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("does not let read-only delegates consume the owner's mutation queue", async () => {
+    // The per-user queue is a scarce resource. A delegate that can never be
+    // allowed to pay must not be able to sit behind a legitimate pending
+    // transfer and push the owner's own requests into "queue is full".
+    const payment = createPaymentRepositoryFake();
+    let releaseTransfer = () => {};
+    const transferGate = new Promise<void>((resolveGate) => {
+      releaseTransfer = resolveGate;
+    });
+    const wallet = createMutationFacade({
+      async transfer(call) {
+        if (call === 1) {
+          await transferGate;
+        }
+        return { transactionId: `circle-tx-${call}`, state: "INITIATED" };
+      },
+    });
+
+    let conflictGateCalls = 0;
+    const ownerAuthority = { ...baseAuthority, oauthClientId: undefined };
+    const readOnlyAuthority = {
+      ...baseAuthority,
+      capabilities: ["wallet:read"] as const,
+    };
+    const coordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      resolveFreshAuthority: async (trustedAuthority) => ({ ...trustedAuthority }),
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: async () => {
+        conflictGateCalls += 1;
+        return false;
+      },
+      maxQueuedPerUser: 2,
+    });
+
+    // One legitimate owner transfer, held open so the queue stays occupied.
+    const ownerSend = coordinator.sendUsdc(ownerAuthority, {
+      destination: RECIPIENT_ADDRESS,
+      amount: "1",
+      idempotencyKey: IDEMPOTENCY_KEY,
+      purpose: "owner withdrawal",
+    });
+    await waitFor(() => wallet.transferCalls() === 1);
+
+    const conflictGateAfterOwner = conflictGateCalls;
+    const claimsAfterOwner = payment.calls.claims.length;
+
+    // Far more read-only attempts than the queue could hold.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await assert.rejects(
+        () =>
+          coordinator.sendUsdc(readOnlyAuthority as unknown as typeof baseAuthority, {
+            destination: RECIPIENT_ADDRESS,
+            amount: "1",
+            idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+            purpose: "delegate attempt",
+          }),
+        /permitted|capability/i,
+      );
+    }
+
+    // Zero of everything downstream: no queue slot, so no conflict gate, no
+    // receipt, no balance read, no transfer.
+    assert.equal(conflictGateCalls, conflictGateAfterOwner, "no conflict-gate work");
+    assert.equal(payment.calls.claims.length, claimsAfterOwner, "no receipt claimed");
+    assert.equal(wallet.transferCalls(), 1, "only the owner's transfer ran");
+
+    releaseTransfer();
+    await ownerSend;
+
+    // The owner is still served after the flood, which is the point.
+    const secondOwnerSend = await coordinator.sendUsdc(ownerAuthority, {
+      destination: RECIPIENT_ADDRESS,
+      amount: "1",
+      idempotencyKey: SECOND_IDEMPOTENCY_KEY,
+      purpose: "owner withdrawal 2",
+    });
+    assert.ok(secondOwnerSend.status);
+  });
+
+  it("refuses send_usdc over the real MCP transport for a read-only client", async () => {
+    // The transport special-cases send_usdc and routes it to the mutation
+    // coordinator rather than runtime.dispatch, so a guard proven only through
+    // dispatch proves a path production never takes for the one tool that
+    // moves money. This drives the route the hosted server actually uses.
+    const payment = createPaymentRepositoryFake();
+    const wallet = createMutationFacade({});
+    const mutationCoordinator = createHostedArcMutationCoordinator({
+      facade: wallet.facade,
+      resolveFreshAuthority: async (trustedAuthority) => ({
+        ...trustedAuthority,
+        capabilities: ["wallet:read"],
+      }),
+      paymentsForTenant: () => payment.repository,
+      hasConflictingUnresolvedMutation: (authority, idempotencyKey) =>
+        hasConflictingUnresolvedMutation(payment, authority, idempotencyKey),
+    });
+    const context = createHttpTestContext();
+    const { server } = await startTestServer(context, { mutationCoordinator });
+    const client = new Client({
+      name: "hosted-arc-readonly-client",
+      version: "1.0.0",
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(server.mcpUrl), {
+      requestInit: { headers: { authorization: `Bearer ${MCP_TOKEN}` } },
+    });
+
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({
+        name: "send_usdc",
+        arguments: {
+          recipient: RECIPIENT_ADDRESS,
+          amount: "1",
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
+      });
+
+      assert.equal(result.isError, true, "a read-only client must be refused");
+      // Refusing after the money moved would still report an error to the
+      // caller, so the transfer count is the assertion that matters -- and a
+      // refusal that still claimed a receipt would burn this idempotency key
+      // and write a row on an unauthorized caller's behalf.
+      assert.equal(wallet.transferCalls(), 0, "no transfer may be attempted");
+      assert.deepEqual(payment.calls.claims, [], "no receipt may be claimed");
+      assert.equal(wallet.balanceCalls(), 0, "no balance read may be performed");
+    } finally {
+      await transport.close().catch(() => {});
       await server.close();
     }
   });
@@ -1992,6 +2401,7 @@ describe("hosted Arc HTTP protocol hardening", () => {
       assert.deepEqual(await health.json(), {
         ok: true,
         version: "0.1.11",
+        releaseSha: "a".repeat(40),
       });
       assert.equal(probes, 0);
       assert.equal(
@@ -2013,8 +2423,33 @@ describe("hosted Arc HTTP protocol hardening", () => {
       assert.deepEqual(await readiness.json(), {
         ready: false,
         version: "0.1.11",
+        releaseSha: "a".repeat(40),
       });
       assert.equal(probes, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("publishes the configured release SHA on health and readiness", async () => {
+    const releaseSha = "b".repeat(40);
+    const { server } = await startTestServer(createHttpTestContext(), {
+      env: {
+        ...hostedEnv(),
+        ARC_RELEASE_SHA: releaseSha,
+      },
+    });
+    try {
+      assert.deepEqual(await (await fetch(server.healthUrl)).json(), {
+        ok: true,
+        version: "0.1.11",
+        releaseSha,
+      });
+      assert.deepEqual(await (await fetch(server.readinessUrl)).json(), {
+        ready: true,
+        version: "0.1.11",
+        releaseSha,
+      });
     } finally {
       await server.close();
     }

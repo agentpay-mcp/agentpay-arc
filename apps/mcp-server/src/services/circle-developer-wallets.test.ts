@@ -97,6 +97,10 @@ describe("CircleDeveloperWalletsAdapter & Config Validation", () => {
         }
       },
       getHostedAccount: async () => null,
+    listClientGrants: async () => [],
+    setClientPaymentCapability: async () => {
+      throw new Error("not used in this test");
+    },
       getPrivateWalletBinding: async () => null,
       ...overrides,
     };

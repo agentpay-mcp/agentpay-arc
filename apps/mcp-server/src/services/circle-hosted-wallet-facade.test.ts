@@ -67,6 +67,7 @@ describe("CircleHostedWalletFacade", () => {
     walletAddress: "0x1111111111111111111111111111111111111111",
     accountStatus: "ACTIVE",
     authEpoch: 1,
+    capabilities: ["wallet:read", "payment:send"],
   };
 
   const createTestContext = (
@@ -100,6 +101,10 @@ describe("CircleHostedWalletFacade", () => {
       completeProvisioning: async () => {},
       failProvisioning: async () => {},
       getHostedAccount: async () => null,
+    listClientGrants: async () => [],
+    setClientPaymentCapability: async () => {
+      throw new Error("not used in this test");
+    },
       getPrivateWalletBinding: async (authUserId: string) => {
         if (authUserId === VALID_USER_ID) {
           return {
@@ -153,6 +158,7 @@ describe("CircleHostedWalletFacade", () => {
       walletAddress: "0x1111111111111111111111111111111111111111",
       accountStatus: "ACTIVE",
       authEpoch: 1,
+      capabilities: ["wallet:read", "payment:send"],
     };
 
     await assert.rejects(
@@ -169,6 +175,7 @@ describe("CircleHostedWalletFacade", () => {
       walletAddress: "0x1111111111111111111111111111111111111111",
       accountStatus: "ACTIVE",
       authEpoch: 1,
+      capabilities: ["wallet:read", "payment:send"],
     };
 
     await assert.rejects(

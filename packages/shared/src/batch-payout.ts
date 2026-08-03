@@ -22,6 +22,15 @@ export const arcUsdcAmountSchema = z
   )
   .refine((amount) => /[1-9]/.test(amount), "Expected a positive USDC amount");
 
+/** A wallet balance may legitimately be zero; payment amounts may not. */
+export const arcUsdcBalanceSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/,
+    "Expected a non-negative USDC balance with at most six decimal places",
+  );
+
 export const arcPaymentStatusSchema = z.enum([
   "PENDING",
   "SUBMITTING",
@@ -30,6 +39,9 @@ export const arcPaymentStatusSchema = z.enum([
   "FAILED",
   "RECONCILIATION_REQUIRED",
 ]);
+
+/** Named so callers state the payment domain rather than restating its shape. */
+export type ArcPaymentStatus = z.output<typeof arcPaymentStatusSchema>;
 
 export const arcBatchStatusSchema = z.enum([
   "PENDING",
@@ -133,6 +145,12 @@ export type ParsedArcBatchPayoutInput = z.output<typeof arcBatchPayoutInputSchem
 
 export function parseUsdcAtomic(amount: string): bigint {
   const parsed = arcUsdcAmountSchema.parse(amount);
+  const [whole, fraction = ""] = parsed.split(".");
+  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
+}
+
+export function parseUsdcBalanceAtomic(amount: string): bigint {
+  const parsed = arcUsdcBalanceSchema.parse(amount);
   const [whole, fraction = ""] = parsed.split(".");
   return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
 }
